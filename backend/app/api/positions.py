@@ -101,22 +101,33 @@ async def create_position(
         setattr(position_data, field, value)
     if not position_data.hiring_manager_user_id:
         raise HTTPException(status_code=400, detail="Vui lòng chọn Hiring Manager phụ trách vị trí")
+    hm_id = str(position_data.hiring_manager_user_id)
     db = SessionLocal()
     try:
-        can_create = db.execute(text("""
-            SELECT EXISTS (SELECT 1 FROM app_private.user_role_assignments
-                           WHERE user_id = :user_id AND revoked_at IS NULL
-                             AND role_code IN ('ADMIN', 'HR_LEAD', 'HR_RECRUITER'))
-                OR EXISTS (SELECT 1 FROM app_private.position_assignments
-                           WHERE user_id = :user_id AND revoked_at IS NULL AND position_role IN ('HR_RECRUITER', 'HR_LEAD'))
-        """), {"user_id": user_id}).scalar_one()
-        if not can_create:
+        actor_status = db.execute(text("""
+            SELECT account_status FROM app_private.user_profiles WHERE user_id = :user_id FOR SHARE
+        """), {"user_id": user_id}).scalar_one_or_none()
+        actor_roles = db.execute(text("""
+            SELECT role_code FROM app_private.user_role_assignments WHERE user_id = :user_id
+              AND revoked_at IS NULL AND role_code IN ('ADMIN', 'HR_LEAD', 'HR_RECRUITER') FOR SHARE
+        """), {"user_id": user_id}).scalars().all()
+        position_roles = db.execute(text("""
+            SELECT position_role FROM app_private.position_assignments WHERE user_id = :user_id
+              AND revoked_at IS NULL AND position_role IN ('HR_RECRUITER', 'HR_LEAD') FOR SHARE
+        """), {"user_id": user_id}).scalars().all()
+        if actor_status != 'ACTIVE' or not (actor_roles or position_roles):
             raise HTTPException(status_code=403, detail="Chỉ HR được phép tạo vị trí tuyển dụng")
-        hm_id = str(position_data.hiring_manager_user_id)
-        if not db.execute(text("""
-            SELECT 1 FROM app_private.user_profiles WHERE user_id = :user_id AND account_status = 'ACTIVE'
-        """), {"user_id": hm_id}).first():
-            raise HTTPException(status_code=400, detail="Hiring Manager không tồn tại hoặc không còn hoạt động")
+        if hm_id == str(user_id):
+            raise HTTPException(status_code=400, detail="HR và Hiring Manager phải là hai tài khoản khác nhau.")
+        hm_status = db.execute(text("""
+            SELECT account_status FROM app_private.user_profiles WHERE user_id = :user_id FOR SHARE
+        """), {"user_id": hm_id}).scalar_one_or_none()
+        hm_roles = db.execute(text("""
+            SELECT role_code FROM app_private.user_role_assignments WHERE user_id = :user_id
+              AND role_code = 'HIRING_MANAGER' AND revoked_at IS NULL FOR SHARE
+        """), {"user_id": hm_id}).scalars().all()
+        if hm_status != 'ACTIVE' or not hm_roles:
+            raise HTTPException(status_code=400, detail="Hiring Manager phải có tài khoản hoạt động và vai trò HM.")
         params = position_data.model_dump(exclude={"jd_content", "hiring_manager_user_id"})
         params["created_by"] = user_id
         new_position = db.execute(text("""

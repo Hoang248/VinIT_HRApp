@@ -3,7 +3,7 @@
 import { useI18n } from '@/i18n/I18nProvider';
 import LanguageSwitcher from '@/i18n/LanguageSwitcher';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -23,7 +23,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    let active = true;
+    authApi.bootstrapStatus().then(response => { if (active) setBootstrapAvailable(Boolean(response.data.available)); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,8 +44,8 @@ export default function LoginPage() {
       // Store token in localStorage for MVP Phase 1
       localStorage.setItem('hra_access_token', access_token);
 
-      // Redirect to dashboard/positions
-      router.push('/positions');
+      // Temporary credentials can only reach the password-change screen.
+      router.push(response.data.user?.must_change_password ? '/change-password' : '/positions');
     } catch (err: any) {
       setError(
         err.response?.data?.detail || t("Đăng nhập thất bại, vui lòng kiểm tra lại email và mật khẩu")
@@ -117,6 +124,10 @@ export default function LoginPage() {
               {loading ? <CircularProgress size={24} color="inherit" /> : t("Đăng nhập")}
             </Button>
           </form>
+
+          {bootstrapAvailable && <Button fullWidth sx={{ mt: 2 }} onClick={() => router.push('/bootstrap')}>
+            {t("Khởi tạo Admin đầu tiên")}
+          </Button>}
 
           <Typography
             variant="caption"

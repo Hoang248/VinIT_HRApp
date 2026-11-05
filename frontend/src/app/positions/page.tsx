@@ -108,7 +108,7 @@ export default function PositionsPage() {
     setHmLoading(true);
     const t = setTimeout(async () => {
       try {
-        const res = await usersApi.list({ search: q });
+        const res = await usersApi.list({ search: q, role: 'HIRING_MANAGER' });
         setHmOptions(res.data || []);
       } catch {
         setHmOptions([]);
@@ -365,7 +365,7 @@ export default function PositionsPage() {
                     {...params}
                     label="Hiring Manager" required
                     placeholder={t("Tìm theo tên người dùng...")}
-                    helperText={t("Người này sẽ duyệt chuyên môn cho vị trí")}
+                    helperText={t("Chỉ chọn HM đang hoạt động và khác tài khoản HR; người này sẽ duyệt chuyên môn.")}
                     InputProps={{
                       ...params.InputProps,
                       endAdornment: (

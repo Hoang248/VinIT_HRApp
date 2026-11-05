@@ -30,6 +30,7 @@ def seed():
             conn.execute(text("INSERT INTO auth.users(id) VALUES (:id)"), {"id": ids[key]})
             conn.execute(text("INSERT INTO app_private.user_profiles(user_id, display_name) VALUES (:id, :name)"), {"id": ids[key], "name": key.upper()})
         conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id, role_code) VALUES (:id, 'HR_RECRUITER')"), {"id": ids["hr"]})
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id, role_code) VALUES (:id, 'HIRING_MANAGER')"), {"id": ids["hm"]})
         for key in ("pos", "pos2"):
             creator = ids["hr"] if key == "pos" else ids["hr2"]
             conn.execute(text("INSERT INTO app_private.positions(position_id, position_code, title, created_by) VALUES (:id, :code, :title, :creator)"),

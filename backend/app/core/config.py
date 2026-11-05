@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
     SUPABASE_JWT_SECRET: str = ""
 
+    # Disabled by default. Set a unique random token only during first-admin
+    # setup, over HTTPS and a restricted network; remove it afterwards.
+    ADMIN_BOOTSTRAP_TOKEN: str = ""
+
     # Storage (local or Supabase)
     STORAGE_BACKEND: str = "local"  # "local" or "supabase"
     LOCAL_STORAGE_PATH: str = "./storage"

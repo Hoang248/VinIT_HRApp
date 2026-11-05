@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.exceptions import HRAException
 from app.core.config import settings
@@ -33,6 +34,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(HRAException)
     async def handle_hra_error(request: Request, exc: HRAException):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.message, "code": exc.code})
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        # Pydantic/FastAPI validation details can echo the submitted body,
+        # including passwords and setup tokens. Never return those to callers.
+        return JSONResponse(status_code=422, content={"detail": "Dữ liệu gửi đi không hợp lệ."})
 
     # Include API routers
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,7 +12,8 @@ router = APIRouter()
 
 
 @router.get("")
-async def list_users(search: Optional[str] = Query(None), position_id: Optional[UUID] = Query(None),
+async def list_users(search: Optional[str] = Query(None, max_length=120), position_id: Optional[UUID] = Query(None),
+                     role: Optional[Literal["HIRING_MANAGER"]] = None,
                      current_user: dict = Depends(get_current_user)):
     """Search active basic profiles, optionally restricted to a visible position."""
     if position_id:
@@ -40,10 +41,15 @@ async def list_users(search: Optional[str] = Query(None), position_id: Optional[
             WHERE p.account_status = 'ACTIVE'
               AND (CAST(:position_id AS uuid) IS NULL OR pa.user_id IS NOT NULL)
               AND (CAST(:search AS text) IS NULL OR p.display_name ILIKE :pattern)
+              AND (CAST(:role AS text) IS NULL OR (p.user_id <> CAST(:current_user AS uuid) AND EXISTS (
+                  SELECT 1 FROM app_private.user_role_assignments r WHERE r.user_id = p.user_id
+                    AND r.role_code = :role AND r.revoked_at IS NULL
+              )))
             GROUP BY p.user_id, p.display_name, p.preferred_locale
             ORDER BY p.display_name LIMIT 50
         """), {"position_id": str(position_id) if position_id else None,
-                "search": search, "pattern": f"%{search}%" if search else None}).mappings().all()
+                "search": search, "pattern": f"%{search}%" if search else None,
+                "role": role, "current_user": current_user["user_id"]}).mappings().all()
         return [dict(row) for row in rows]
     finally:
         db.close()

@@ -43,6 +43,11 @@ export const authApi = {
   login: (email: string, password: string) =>
     apiClient.post('/auth/login', { email, password }),
   me: () => apiClient.get('/auth/me'),
+  bootstrapStatus: () => apiClient.get('/auth/bootstrap-status'),
+  bootstrap: (data: { email: string; display_name: string; password: string; setup_token: string }) =>
+    apiClient.post('/auth/bootstrap', data),
+  changePassword: (current_password: string, new_password: string) =>
+    apiClient.post('/auth/change-password', { current_password, new_password }),
 };
 
 export const positionsApi = {
@@ -134,7 +139,7 @@ export const assessmentsApi = {
 };
 
 export const usersApi = {
-  list: (params?: { search?: string; position_id?: string }) =>
+  list: (params?: { search?: string; position_id?: string; role?: 'HIRING_MANAGER' }) =>
     apiClient.get('/users', { params }),
 };
 
@@ -157,6 +162,12 @@ export const dashboardApi = {
 };
 
 export const adminApi = {
+  listUsers: (params: { search?: string; role?: string; account_status?: string; page?: number }) =>
+    apiClient.get('/admin/users', { params }),
+  createUser: (data: { email: string; display_name: string; password: string; roles: string[] }) =>
+    apiClient.post('/admin/users', data),
+  updateUser: (id: string, data: { display_name: string; account_status: string; roles: string[] }) =>
+    apiClient.patch(`/admin/users/${id}`, data),
   listAiConfigs: () => apiClient.get('/admin/ai/config'),
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),
   enableAiConfig: (id: string) => apiClient.post(`/admin/ai/config/${id}/enable`),

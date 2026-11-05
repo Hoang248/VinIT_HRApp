@@ -22,7 +22,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (pathname === '/') { setIsLoading(false); setAuthenticated(false); return; }
+    if (['/', '/bootstrap', '/change-password'].includes(pathname)) { setIsLoading(false); setAuthenticated(false); return; }
     let active = true;
     const checkAuth = async () => {
       const token = localStorage.getItem('hra_access_token');
@@ -30,6 +30,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       try {
         if (!authenticated) setIsLoading(true);
         const response = await authApi.me();
+        if (active && response.data.must_change_password) {
+          setAuthenticated(false); router.replace('/change-password'); return;
+        }
         if (active) { setSystemRoles(response.data.system_roles || []); setAuthenticated(true); setAuthError(null); }
       } catch (err: any) {
         if (active && err.response?.status !== 401) {
@@ -45,7 +48,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, router, attempt]);
 
-  if (pathname === '/') return <>{children}</>;
+  if (['/', '/bootstrap', '/change-password'].includes(pathname)) return <>{children}</>;
   if (isLoading || (!authenticated && !authError)) return (
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', bgcolor: '#F8FAFC' }}>
       <CircularProgress color="secondary" aria-label={t("Đang xác thực")} />

@@ -13,9 +13,9 @@ Backend + worker --> PostgreSQL/Supabase Auth + Storage; model được phê duy
 Ví dụ dùng Ubuntu 24.04 LTS, DNS `hr.example.com` đã trỏ đến IP VPS, SSH quản trị và quyền `sudo`, Docker Engine 28+ với Compose plugin hiện hành, Nginx và Certbot. Mở cổng 80/443 và cổng SSH thực tế ở firewall nhà cung cấp/OS; nếu có bản ghi AAAA, IPv6 cũng phải hoạt động. Ước lượng ban đầu cho app/OCR thử nghiệm: 2 vCPU, 4 GB RAM và 30 GB ổ đĩa, sau đó đo tải; model local thường cần RAM/VRAM riêng lớn hơn nhiều. Upload tối đa 250 MB/lô có thể tăng bộ nhớ/đĩa tạm. Giới hạn truy cập staging bằng VPN/IP allowlist; không coi HTTPS là đủ bảo mật.
 
 - Supabase/PostgreSQL, Auth, hai bucket private `cv-originals`/`cv-extracted-text` và model **phải được chuẩn bị riêng**. Compose không tạo các dịch vụ đó. Backend đang xác minh JWT `HS256` audience `authenticated`; project phát token chỉ dùng asymmetric/JWKS chưa tương thích. Kiểm tra tương thích trước, không tự thay đổi signing key của project.
-- Có tài khoản Auth và profile/role tương ứng; tại lần kiểm tra project kết nối sau migration chưa có auth user/profile/ADMIN. Dùng tối thiểu hai người/tài khoản HR và HM khác nhau cho hai bước duyệt.
+- Cần tài khoản Auth và profile/role tương ứng; ở snapshot trước 00004, project kết nối chưa có auth user/profile/ADMIN (không khẳng định trạng thái hiện tại). HR và HM phải là hai người/tài khoản khác nhau cho hai bước duyệt. Tài khoản mới tạo từ app phải đổi mật khẩu tạm trước khi truy cập nghiệp vụ.
 - Dùng PostgreSQL direct connection qua TLS; chỉ dùng session pooler sau khi xác minh session/backend PID và advisory lock được giữ xuyên các transaction. **Không dùng transaction/statement pooling** cho worker. Direct Supabase có thể cần IPv6; xác minh tuyến mạng hoặc session pooler phù hợp với project.
-- `00004` đã được áp riêng vào project `myrymlqdbyqmpynesiwk`, version remote `20261105152817 recovery_and_privacy`. Với môi trường khác, trước hết đọc [lịch sử và checklist migration](../DEPLOYMENT.md#lịch-sử-project-đã-kết-nối), xin phê duyệt, thử staging/backup/restore và drain worker cũ. Tên/version remote không giống tiền tố file local; **không chạy `supabase db push`, reset hoặc migration repair mù quáng**.
+- `00004` đã được áp riêng vào project `myrymlqdbyqmpynesiwk`, version remote `20261105152817 recovery_and_privacy`. **00005 mới chỉ có trong repo, chưa áp vào project; backend mới phụ thuộc 00005 và không được rollout lên DB chưa nâng cấp.** Đối chiếu [lịch sử và checklist migration](../DEPLOYMENT.md#lịch-sử-project-đã-kết-nối), xin phê duyệt riêng, thử staging/backup/restore và drain worker cũ. Tên/version remote không giống tiền tố file local; **không chạy `supabase db push`, reset hoặc migration repair mù quáng**.
 - Service-role key từng xuất hiện trong lịch sử Git phải được thu hồi/rotate theo kế hoạch; đổi legacy JWT secret có thể vô hiệu hóa anon key, phiên và tích hợp. Chưa xác nhận việc rotate. Backend cần secret/DB credential; browser không được nhận service-role key hay DB URL.
 
 ## 2. Cài phần mềm trên VPS
@@ -82,6 +82,8 @@ SUPABASE_URL=https://PROJECT_REF.supabase.co
 SUPABASE_ANON_KEY=THAY_BANG_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY=THAY_BANG_SERVICE_ROLE_KEY_DA_ROTATE
 SUPABASE_JWT_SECRET=THAY_BANG_LEGACY_HS256_SECRET_TUONG_UNG
+# Để trống; chỉ cấu hình tạm trong thời gian bootstrap được phê duyệt.
+ADMIN_BOOTSTRAP_TOKEN=
 STORAGE_BACKEND=supabase
 SUPABASE_STORAGE_BUCKET_CV=cv-originals
 SUPABASE_STORAGE_BUCKET_EXTRACTED=cv-extracted-text
@@ -96,7 +98,7 @@ CORS_ORIGINS=["https://hr.example.com"]
 ```
 
 - Dùng DB host/user/port thực tế và tài khoản backend được cấp quyền tối thiểu cần thiết trên `app_private`, có kết nối session ổn định. Backend kết nối SQL trực tiếp, không đặt `auth.uid()` theo từng request: role DB phải được DBA cấu hình quyền table/schema **và** khả năng truy cập phù hợp với RLS (ví dụ một role backend-only được phê duyệt có BYPASSRLS); chỉ grant table cho role thường là chưa đủ. Đây là quyền mạnh, không cấp cho browser, và phải test đầy đủ nghiệp vụ. Service-role API key không tự trở thành tài khoản đăng nhập PostgreSQL. URL-encode các ký tự đặc biệt trong password; `verify-full` kiểm tra cả CA và hostname. `docker-compose.vps.yml` mount file CA host từ `HRA_DB_CA_PATH` vào `/run/secrets/supabase-db-ca.crt` chỉ đọc và báo lỗi nếu file nguồn không tồn tại. `/health/ready` chỉ chứng minh kết nối, không chứng minh quyền RLS/CRUD; kiểm tra nghiệp vụ riêng và không hạ TLS chỉ để bỏ qua lỗi.
-- `SUPABASE_ANON_KEY`, service-role key và JWT secret phải thuộc đúng project; service-role/JWT secret chỉ nằm trong môi trường backend. Restrict `.env`, backups và quyền Docker; environment container có thể đọc bởi quản trị viên Docker. Không chạy `docker compose config` thông thường trong log vì có thể in secret; dùng `config --quiet`.
+- `SUPABASE_ANON_KEY`, service-role key và JWT secret phải thuộc đúng project; service-role/JWT secret chỉ nằm trong môi trường backend. Để quản lý tài khoản, role DB backend còn cần quyền `SELECT` trên **hai cột `id`, `email` của `auth.users`**, và quyền phù hợp trên bảng `app_private.account_initialization`/trigger mới; DBA cấp/test theo chính sách, không cấp quyền đọc toàn bộ Auth cho browser. Đồng bộ đồng hồ Auth, DB, API: chặn token cũ dựa trên `iat` và thời gian DB. Restrict `.env`, backups và quyền Docker; environment container có thể đọc bởi quản trị viên Docker. Không chạy `docker compose config` thông thường trong log vì có thể in secret; dùng `config --quiet`.
 - `10.20.0.12` chỉ minh họa một model endpoint private đã được phép; thay bằng địa chỉ **từ container backend** có thể truy cập. `127.0.0.1`/`localhost` bên trong container là chính container backend, không phải model chạy trên host. Endpoint mặc định và model mặc định tự nằm trong allowlist; các giá trị bổ sung dùng JSON array. Nếu chưa có model thì không chạy xử lý AI.
 - Cấu hình AI ACTIVE đã có trong DB được ưu tiên hơn env. Project đã kiểm tra đang có endpoint ACTIVE dạng loopback, vì vậy sau khi có ADMIN hãy vào **Admin → Cấu hình AI**, tạo/kích hoạt version với model/endpoint nằm trong allowlist và reachable từ backend. Không tự sửa hàng ACTIVE qua SQL. Thay env/secret cần restart/redeploy mọi process; job đang chạy giữ snapshot cũ. `allowed_by_this_process` không chứng minh model hoạt động.
 - Nếu sử dụng endpoint public, phải được phê duyệt, dùng HTTPS và đặt `ALLOW_EXTERNAL_API=true`. Che PII và guardrails hiện chỉ best effort; egress firewall, DLP, TLS, đánh giá bias và giám sát vẫn bắt buộc. Nhãn `azure` chỉ hoạt động qua gateway OpenAI-compatible/Bearer, không hỗ trợ Azure native. Xem [chính sách AI](../DEPLOYMENT.md#cấu-hình-ai-và-egress).
@@ -158,29 +160,17 @@ Kiểm tra `https://<domain>/` từ ngoài VPS, certificate/redirect và lịch 
 
 ## 7. Bootstrap người dùng và smoke test
 
-1. Tạo/invite các user qua Supabase Auth dashboard theo quy trình được duyệt; không chèn password trực tiếp bằng SQL. Xác minh login/email confirmation và thuật toán token phù hợp. Dùng ba UUID đã xác minh cho ADMIN, HR và HM; HR và HM phải là **hai tài khoản khác nhau**.
-2. DBA được ủy quyền chạy ví dụ sau trong SQL Editor sau khi thay UUID và tên. `DO NOTHING` không ghi đè profile đã có và **không tự khôi phục role bị thu hồi**; kiểm tra các tài khoản/role hiện hữu riêng, ghi nhận thay đổi theo change-control. Chỉ cấp quyền cần thiết và chỉ làm trên môi trường được phê duyệt.
+> Các bước dưới đây chỉ dùng **sau khi 00005 đã được phê duyệt riêng và áp thành công** cho đúng môi trường. Phiên phát triển này chưa áp 00005 lên project Supabase kết nối và chưa kiểm thử Supabase Auth thật.
 
-```sql
-BEGIN;
-INSERT INTO app_private.user_profiles (user_id, display_name, preferred_locale, account_status)
-VALUES
-  ('<ADMIN_USER_UUID>'::uuid, 'Quản trị viên', 'vi', 'ACTIVE'),
-  ('<HR_USER_UUID>'::uuid, 'HR thử nghiệm', 'vi', 'ACTIVE'),
-  ('<HM_USER_UUID>'::uuid, 'HM thử nghiệm', 'vi', 'ACTIVE')
-ON CONFLICT (user_id) DO NOTHING;
-
-INSERT INTO app_private.user_role_assignments (user_id, role_code)
-VALUES
-  ('<ADMIN_USER_UUID>'::uuid, 'ADMIN'),
-  ('<HR_USER_UUID>'::uuid, 'HR_RECRUITER'),
-  ('<HM_USER_UUID>'::uuid, 'HIRING_MANAGER')
-ON CONFLICT (user_id, role_code) DO NOTHING;
-COMMIT;
-```
-
-3. Đăng nhập ADMIN qua HTTPS, chọn và kích hoạt AI config được phép, kiểm tra worker health; kiểm tra model thật bằng dữ liệu giả được phê duyệt. HR tạo vị trí và gán HM, HR rồi HM duyệt, tải CV giả, theo dõi job/ranking, sửa profile và thử chia sẻ chỉ tóm tắt, feedback/thu hồi. Kiểm tra HM không xem được ghi chú HR, contact/CV/evidence khi chỉ có summary share. Đây là kiểm thử bắt buộc tại môi trường đích, chưa được thực hiện ở đây.
-4. Thiết lập backup PostgreSQL và hai bucket, mã hóa, thử restore; giám sát liveness, readiness, worker, queue, ổ đĩa, TLS và chi phí model. Xem [runbook recovery](../DEPLOYMENT.md#phục-hồi-worker-và-giám-sát). Xem log qua `sudo docker compose -f docker-compose.yml -f docker-compose.vps.yml logs --tail=100` chỉ trong môi trường quản trị; rà/xóa dữ liệu nhạy cảm trước khi chia sẻ.
+1. Kiểm tra lịch sử người dùng/role và marker `app_private.account_initialization` bằng quyền DBA trước khi mở setup. Migration đánh dấu đã khởi tạo nếu có **bất kỳ** assignment ADMIN nào, kể cả đã thu hồi; trigger cũng đóng setup nếu ADMIN được cấp ngoài app. Nếu ADMIN từng bị xóa **trước** migration thì lịch sử đó có thể không còn trong bảng role: phải kiểm tra nguồn audit/backup, không mở bootstrap mù. Marker không bị reset khi tài khoản Admin bị khóa, mất role hoặc bị xóa.
+2. Chỉ nếu đây là hệ thống chưa từng có ADMIN, người vận hành tạo một mã ngẫu nhiên mạnh (ít nhất 32 byte entropy, ví dụ `secrets.token_urlsafe(32)` trong secret manager), đặt vào `ADMIN_BOOTSTRAP_TOKEN` trên các backend. Không ghi mã vào Git, log, command history, ticket hay chat. Chỉ mở trang setup qua HTTPS và mạng/VPN/IP allowlist tin cậy; áp rate limit/chống brute force ở gateway. Biến để trống mặc định thì setup đóng. Kiểm tra service key và JWT/Auth của project tương thích; service key chỉ ở backend.
+3. Người được ủy quyền mở trang đăng nhập → **Khởi tạo Admin đầu tiên**, nhập mã và tự đặt email, tên, mật khẩu. API dùng Supabase Admin tạo Auth identity và `email_confirm=true`, vì vậy **phải xác minh email/đúng người qua kênh độc lập** trước; không gửi password hay mã setup qua chat. Khởi tạo chỉ được chấp nhận một lần, kể cả khi có hai yêu cầu đồng thời. Đây là giới hạn cho **bootstrap**, không giới hạn tổng số ADMIN về sau.
+4. Sau khi tạo thành công, xóa `ADMIN_BOOTSTRAP_TOKEN` khỏi mọi instance/secret rollout, restart và kiểm tra setup đã đóng. Nếu mất/khóa tất cả ADMIN sau này, DBA được ủy quyền phải xác minh danh tính rồi khôi phục một **role/profile hiện hữu** theo quy trình có audit; không xóa/reset marker để mở bootstrap lại. Các can thiệp DB trực tiếp cần change-control riêng và có thể bỏ qua guard/audit ở API.
+5. ADMIN đăng nhập → **Quản lý tài khoản**, tạo HR (`HR_RECRUITER`) và HM (`HIRING_MANAGER`) khác nhau, hoặc quản lý trạng thái/role. Có thể cấp ADMIN bổ sung; ADMIN và HR Lead có quyền rộng. Admin xác minh email rồi chuyển mật khẩu tạm qua kênh an toàn; hệ thống yêu cầu người nhận đăng nhập và tự đổi mật khẩu (ít nhất 12 ký tự, tối đa 72 byte UTF-8 và đáp ứng chính sách Supabase nếu chặt hơn) trước khi dùng API nghiệp vụ. Sau đổi mật khẩu hoặc khóa/mở tài khoản, app chặn token cũ theo `iat`; đăng nhập mới có thể cần chờ vài giây. Các kiểm tra này nằm ở **API app**, không thay thế kiểm soát truy cập Supabase REST/Storage trực tiếp. Không mở các view/bucket/policy cho browser để bỏ qua API.
+6. Thay đổi role HR/HM qua app thu hồi phân công vị trí tương ứng; khi bỏ role cuối cùng cho phép làm HR (`ADMIN`, `HR_LEAD`, `HR_RECRUITER`), app cũng thu hồi mọi phân công HR của tài khoản, kể cả phân công tạo khi còn là Admin/HR Lead. Cấp lại role **không tự khôi phục** phân công. Khóa/mở tài khoản giữ phân công và share để có thể tiếp tục khi mở lại; link CV đã ký vẫn có thể sống tới 10 phút. Granular access grants cấp ngoài app vẫn cần được DBA rà soát. Chưa có UI đổi HM của vị trí đã tạo, mời email, quên/reset mật khẩu, đổi email hay xóa user; cần quy trình được phê duyệt để xử lý các trường hợp này, không tự sửa DB mù quáng.
+7. Auth và database không có transaction chung. Khi lỗi xảy ra **trước** DB commit, backend thử xóa Auth identity mới; lỗi mạng/commit không xác định có thể để lại Auth user mồ côi hoặc user đã tạo thành công. Nếu nhận lỗi “không xác nhận được”, **không thử liên tục và không xóa mù**: người vận hành kiểm tra cả Auth, profile/role, marker và log ID tổng hợp; xác minh chính xác identity, tác động rồi reconcile/xóa hoặc hoàn thiện theo change-control. Password và mã setup không được ghi audit.
+8. Smoke test bằng dữ liệu giả: ADMIN xem tài khoản/role, tạo HR và HM, xác nhận HR/HM đổi mật khẩu và người không phải ADMIN bị từ chối trang/API quản trị. HR tạo vị trí chọn HM hoạt động khác mình, HR rồi HM duyệt; kiểm tra không tự duyệt được cả hai bước. Kiểm tra AI config/worker health, upload CV giả, ranking, HR notes và chia sẻ summary-only. Đây là kiểm thử bắt buộc tại môi trường đích, chưa được thực hiện ở đây.
+9. Thiết lập backup PostgreSQL và hai bucket, mã hóa, thử restore; giám sát liveness, readiness, worker, queue, ổ đĩa, TLS và chi phí model. Xem [runbook recovery](../DEPLOYMENT.md#phục-hồi-worker-và-giám-sát). Rà/xóa dữ liệu nhạy cảm trước khi chia sẻ log.
 
 ## 8. Cập nhật, rollback và sự cố
 

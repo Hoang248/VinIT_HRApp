@@ -33,26 +33,53 @@ async def verify_supabase_jwt(request: Request) -> Dict[str, Any]:
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-        UUID(user_id)
+        # Compare canonical UUIDs in self-action and dual-approval guards.
+        payload["sub"] = str(UUID(user_id))
         return payload
     except (PyJWTError, ValueError, TypeError):
         raise credentials_exception
 
 
-async def get_current_user(user_payload: Dict[str, Any] = Depends(verify_supabase_jwt)) -> Dict[str, Any]:
-    """Extract current user information from verified JWT"""
+def ensure_token_is_current(user_payload: Dict[str, Any], valid_after) -> None:
+    """Reject pre-reset app tokens even if an account is later re-enabled.
+
+    Supabase uses integer-second iat values. Reject the cutoff second as well:
+    a freshly issued token may need one second before it can be used.
+    """
+    if valid_after is None:
+        return
+    issued_at = user_payload.get("iat")
+    if isinstance(issued_at, bool) or not isinstance(issued_at, (int, float)) or issued_at <= valid_after.timestamp():
+        raise HTTPException(status_code=401, detail="Vui lòng đăng nhập lại.", headers={"WWW-Authenticate": "Bearer"})
+
+
+async def get_active_user(user_payload: Dict[str, Any] = Depends(verify_supabase_jwt)) -> Dict[str, Any]:
+    """Allow an active user to inspect their own account/change a temporary password."""
     user_id = user_payload.get("sub")
-    # A still-valid JWT must not keep granting access after an account is disabled.
     from app.db.database import SessionLocal
     from sqlalchemy import text
     db = SessionLocal()
     try:
-        account_status = db.execute(text("SELECT account_status FROM app_private.user_profiles WHERE user_id = :id"), {"id": user_id}).scalar_one_or_none()
-        if account_status != "ACTIVE":
+        profile = db.execute(text("""
+            SELECT account_status, must_change_password, tokens_valid_after
+            FROM app_private.user_profiles WHERE user_id = :id
+        """), {"id": user_id}).mappings().first()
+        if not profile or profile["account_status"] != "ACTIVE":
             raise HTTPException(status_code=403, detail="Tài khoản chưa được kích hoạt hoặc đã bị khóa")
+        ensure_token_is_current(user_payload, profile["tokens_valid_after"])
+        return {"user_id": user_id, "email": user_payload.get("email"),
+                "role": user_payload.get("role", "authenticated"),
+                "must_change_password": bool(profile["must_change_password"]),
+                "token_payload": user_payload}
     finally:
         db.close()
-    return {"user_id": user_id, "email": user_payload.get("email"), "role": user_payload.get("role", "authenticated")}
+
+
+async def get_current_user(user: Dict[str, Any] = Depends(get_active_user)) -> Dict[str, Any]:
+    """Business routes are unavailable until a temporary password is changed."""
+    if user["must_change_password"]:
+        raise HTTPException(status_code=403, detail="Bạn cần đổi mật khẩu tạm thời trước khi sử dụng hệ thống.")
+    return user
 
 
 def require_role(allowed_roles: list[str]):

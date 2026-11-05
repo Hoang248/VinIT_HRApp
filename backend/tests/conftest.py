@@ -1,7 +1,8 @@
 """Tests may use only a disposable, migrated local PostgreSQL *_test database.
 
-Integration fixtures TRUNCATE positions and their dependent data. Never point
-TEST_DATABASE_URL at a real Supabase project or an existing development database.
+Integration fixtures TRUNCATE positions and auth.users CASCADE, deleting most
+application data. Never point TEST_DATABASE_URL at a real Supabase project or
+an existing development database; do not share it with another test process.
 See backend/tests/README.md for setup and safety requirements.
 """
 import os
