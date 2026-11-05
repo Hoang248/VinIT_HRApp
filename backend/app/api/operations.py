@@ -1,0 +1,50 @@
+from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+from app.core.security import get_current_user
+from app.db.database import SessionLocal
+from app.core.exceptions import NotFoundError
+from sqlalchemy import text
+
+router = APIRouter()
+
+
+@router.get("/{operation_id}")
+async def get_operation_status(
+    operation_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get status of an async operation (for progress tracking)"""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT operation_id, capability, status, error_code, error_message,
+                   created_at, started_at, completed_at
+            FROM app_private.operations
+            WHERE operation_id = :operation_id
+        """), {"operation_id": str(operation_id)})
+        row = result.fetchone()
+        if not row:
+            raise NotFoundError("Operation")
+
+        # Get batch progress if this is a CV processing operation
+        op = dict(zip(["operation_id", "capability", "status", "error_code", "error_message",
+                       "created_at", "started_at", "completed_at"], row))
+
+        if op["capability"] == "CV_PROCESSING":
+            batch_result = db.execute(text("""
+                SELECT b.batch_id, b.total_files, b.processed_files, b.failed_files, b.status as batch_status
+                FROM app_private.cv_batches b
+                WHERE b.operation_id = :operation_id
+            """), {"operation_id": str(operation_id)})
+            batch_row = batch_result.fetchone()
+            if batch_row:
+                op["progress"] = {
+                    "total": batch_row[1],
+                    "processed": batch_row[2],
+                    "failed": batch_row[3],
+                    "percent_complete": round((batch_row[2] + batch_row[3]) / batch_row[1] * 100) if batch_row[1] > 0 else 0
+                }
+
+        return op
+    finally:
+        db.close()

@@ -11,13 +11,19 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/v1"
     DEBUG: bool = True
 
-    # Supabase
-    SUPABASE_URL: str
-    SUPABASE_ANON_KEY: str
-    SUPABASE_SERVICE_ROLE_KEY: str
-    SUPABASE_JWT_SECRET: str
+    # Database - direct PostgreSQL connection string
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/hra"
+    DATABASE_POOL_SIZE: int = 5
 
-    # Storage
+    # Supabase (optional - used for Auth and Storage if provided)
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_ANON_KEY: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    SUPABASE_JWT_SECRET: str = ""
+
+    # Storage (local or Supabase)
+    STORAGE_BACKEND: str = "local"  # "local" or "supabase"
+    LOCAL_STORAGE_PATH: str = "./storage"
     SUPABASE_STORAGE_BUCKET_CV: str = "cv-originals"
     SUPABASE_STORAGE_BUCKET_EXTRACTED: str = "cv-extracted-text"
 

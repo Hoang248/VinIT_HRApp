@@ -21,7 +21,8 @@ from app.schemas.applications import (
 from app.schemas.common import OperationResponse
 from app.db.supabase import get_supabase_client
 from app.services.document_processor import document_processor
-import asyncio
+import os
+import aiofiles
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -121,12 +122,28 @@ async def create_cv_batch(
             file_ext = file.filename.split(".")[-1] if "." in file.filename else "pdf"
             storage_path = f"{position_id_str}/{application_id}/{uuid4()}.{file_ext}"
 
-            # Upload to Supabase Storage
-            supabase.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).upload(
-                path=storage_path,
-                file=content,
-                file_options={"content-type": file.content_type or "application/octet-stream"}
-            )
+            # Upload file to configured storage backend
+            if settings.STORAGE_BACKEND == "local":
+                # Local filesystem storage
+                full_dir = os.path.join(
+                    settings.LOCAL_STORAGE_PATH,
+                    settings.SUPABASE_STORAGE_BUCKET_CV,
+                    str(position_id),
+                    application_id
+                )
+                os.makedirs(full_dir, exist_ok=True)
+                full_file_path = os.path.join(settings.LOCAL_STORAGE_PATH, settings.SUPABASE_STORAGE_BUCKET_CV, storage_path)
+                async with aiofiles.open(full_file_path, "wb") as f:
+                    await f.write(content)
+            elif settings.STORAGE_BACKEND == "supabase":
+                # Upload to Supabase Storage
+                supabase.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).upload(
+                    path=storage_path,
+                    file=content,
+                    file_options={"content-type": file.content_type or "application/octet-stream"}
+                )
+            else:
+                raise HTTPException(status_code=500, detail=f"Unknown storage backend: {settings.STORAGE_BACKEND}")
 
             # Create document record
             doc_result = supabase.table("application_documents").insert({
@@ -205,8 +222,13 @@ async def create_cv_batch(
         "started_at": "now()"
     }).eq("operation_id", operation_id).execute()
 
-    # TODO: Queue async processing task for worker (document processing → extraction → assessment)
-    # For now, this will be triggered by worker polling
+    # Mark operation as PENDING for worker pickup
+    supabase.table("operations").update({
+        "status": "PENDING"
+    }).eq("operation_id", operation_id).execute()
+
+    # Worker will automatically pick up this operation and start processing
+    # No need to trigger manually; it polls every POLL_INTERVAL_SECONDS seconds
 
     # Log audit
     supabase.table("audit_events").insert({
@@ -402,13 +424,30 @@ async def get_cv_download_url(
     doc = doc_result.data[0]
 
     # TODO: Check user permission (must be HR assigned or on shortlist share with cv_view permission)
-    # For MVP, generate signed URL valid for 10 minutes
+    # For MVP, generate access URL valid for 10 minutes
     try:
-        signed_url = supabase.storage.from_(doc["bucket"]).create_signed_url(
-            path=doc["storage_path"],
-            expires_in=600  # 10 minutes
-        )
-        return {"signed_url": signed_url, "filename": doc["original_filename"]}
+        if settings.STORAGE_BACKEND == "local":
+            # For local development, serve file directly through API
+            # In production, use proper static file serving with authentication
+            from fastapi.responses import FileResponse
+            file_path = os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"], doc["storage_path"])
+            if not os.path.exists(file_path):
+                raise NotFoundError("CV file not found on disk")
+            return FileResponse(
+                path=file_path,
+                filename=doc["original_filename"],
+                media_type=doc["mime_type"]
+            )
+        elif settings.STORAGE_BACKEND == "supabase":
+            signed_url = supabase.storage.from_(doc["bucket"]).create_signed_url(
+                path=doc["storage_path"],
+                expires_in=600  # 10 minutes
+            )
+            return {"signed_url": signed_url, "filename": doc["original_filename"]}
+        else:
+            raise HTTPException(status_code=500, detail="Unknown storage backend")
+    except NotFoundError:
+        raise
     except Exception as e:
-        logger.error("Failed to generate signed URL", error=str(e))
+        logger.error("Failed to generate file access URL", error=str(e))
         raise HTTPException(status_code=500, detail="Could not generate file access URL")

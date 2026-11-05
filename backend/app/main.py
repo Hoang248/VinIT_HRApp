@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 from app.api import api_router
+from app.workers.processor import worker
 
 # Setup logging first
 setup_logging()
@@ -45,10 +46,15 @@ def create_app() -> FastAPI:
             environment=settings.APP_ENV,
             debug=settings.DEBUG
         )
+        # Start background processing worker
+        if settings.APP_ENV != "testing":
+            worker.start()
+            logger.info("Background processing worker started automatically")
 
     @app.on_event("shutdown")
     async def shutdown_event():
         logger.info("Shutting down VinUni HRA Backend")
+        worker.stop()
 
     return app
 
