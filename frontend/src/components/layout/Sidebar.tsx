@@ -28,9 +28,9 @@ const menuItems = [
     href: '/positions',
   },
   {
-    text: 'Ứng viên',
+    text: 'Shortlist chia sẻ',
     icon: <PeopleIcon />,
-    href: '/applications',
+    href: '/shortlist',
   },
   {
     text: 'Báo cáo',
