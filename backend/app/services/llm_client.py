@@ -1,4 +1,7 @@
 import json
+import ipaddress
+import socket
+from urllib.parse import urlsplit
 import httpx
 from typing import Dict, Any, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -39,10 +42,26 @@ class LLMClient:
     """Client for calling local/remote LLM with structured output enforcement"""
 
     def __init__(self):
-        self.base_url = settings.LLM_API_BASE or "http://localhost:8000/v1"
+        self.base_url = settings.LLM_API_BASE
         self.model = settings.LLM_MODEL_NAME
         self.default_temp = settings.LLM_TEMPERATURE_DEFAULT
-        self.allowed_external = settings.ALLOW_EXTERNAL_API
+
+    def _check_endpoint_policy(self) -> None:
+        """Fail closed before sending candidate data to an unapproved endpoint."""
+        if not self.base_url:
+            raise LLMError("LLM_API_BASE is not configured")
+        parsed = urlsplit(self.base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise LLMError("Invalid LLM API endpoint")
+        if settings.ALLOW_EXTERNAL_API:
+            return
+        try:
+            addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)}
+            if addresses and all(ipaddress.ip_address(address).is_private or ipaddress.ip_address(address).is_loopback for address in addresses):
+                return
+        except (OSError, ValueError):
+            pass
+        raise LLMError("External AI endpoints are disabled by configuration")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -57,6 +76,7 @@ class LLMClient:
         json_schema: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Make LLM API call with retry logic"""
+        self._check_endpoint_policy()
         temp = temperature if temperature is not None else self.default_temp
 
         # Add schema enforcement to prompt for guided JSON output
@@ -80,7 +100,9 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {settings.LLM_API_KEY}"
 
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            # Environment proxy variables must not silently reroute CV text to
+            # a third party after the endpoint policy has checked a private host.
+            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     json=payload,
@@ -95,7 +117,7 @@ class LLMClient:
                 return parsed
 
         except json.JSONDecodeError as e:
-            logger.error("LLM returned invalid JSON", error=str(e), content_sample=content[:500])
+            logger.error("LLM returned invalid JSON", error=str(e))
             raise LLMError("Failed to parse LLM response as JSON")
         except httpx.HTTPStatusError as e:
             logger.error("LLM API error", status_code=e.response.status_code, error=str(e))
@@ -117,6 +139,7 @@ RULES:
 3. For each criterion, identify 3-5 explicit evidence keywords expected in candidate resumes.
 4. DO NOT invent requirements not mentioned in the JD.
 5. STRICTLY FORBIDDEN: Do not generate criteria related to age, gender, marital status, nationality, appearance, or personality traits.
+6. Return JSON with keys requisition_id, job_title and criteria. Each criterion must have name, description, category, numeric weight (0 to 100), and expected_evidence_keywords (an array of strings).
 """
 
         user_prompt = f"""Requisition ID: {requisition_id}
@@ -150,6 +173,7 @@ STRICT PRIVACY & ANTI-BIAS RULES:
 - COMPLETELY OMIT AND STRIP: Candidate photo, age, date of birth, gender, marital status, religion, ethnicity, residential address.
 - Retain ONLY: Professional experience, education history, technical/soft skills, languages, and verifiable certifications.
 - Record the exact page number where each block of information is located.
+- Return JSON with candidate_identifier, total_years_experience (number), education (array of objects), work_history (array of objects), skills (array of strings) and certifications (array of objects). Use empty arrays when information is missing.
 """
 
         user_prompt = f"""Candidate Identifier: {candidate_identifier}
@@ -193,7 +217,9 @@ EVALUATION RULES:
 3. EVIDENCE REQUIREMENT:
    - For "STRONG_MATCH" and "MATCH", you MUST provide an exact, verbatim text quote copied directly from the CV and its page number.
    - If no verbatim quote exists in the text, you CANNOT assign "MATCH" or "STRONG_MATCH".
-4. Reasoning must be concise, objective, and neutral. Do not assume or extrapolate.
+4. A NO_MATCH also requires a verbatim quote that explicitly contradicts the criterion; otherwise use UNCLEAR.
+5. Reasoning must be concise, objective, and neutral. Do not assume or extrapolate.
+6. Return JSON with candidate_identifier, rubric_version, and findings (one entry per criterion). Each finding must have criterion_id, outcome, confidence (number 0 to 1), confidence_band (HIGH, MEDIUM, or LOW), reasoning, and evidence: {verbatim_quote, page_number}. Use an empty quote and null page for UNCLEAR when no evidence exists.
 """
 
         user_prompt = f"""Candidate Identifier: {candidate_identifier}

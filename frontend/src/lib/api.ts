@@ -2,10 +2,10 @@
 
 import axios, { AxiosInstance } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
-
+// The browser always uses the same origin. Next.js proxies /v1 to the backend,
+// which also works when the UI is viewed through a remote preview host.
 const apiClient: AxiosInstance = axios.create({
-  baseURL: `${API_BASE_URL}/v1`,
+  baseURL: '/v1',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -26,7 +26,7 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
+    if (error.response?.status === 401 && typeof window !== 'undefined' && !error.config?.url?.includes('/auth/login')) {
       localStorage.removeItem('hra_access_token');
       window.location.href = '/';
     }
@@ -46,6 +46,14 @@ export const authApi = {
 export const positionsApi = {
   list: (status?: string) =>
     apiClient.get('/positions', { params: { status } }),
+  listAll: async () => {
+    const all: any[] = [];
+    for (let page = 1; ; page += 1) {
+      const response = await apiClient.get('/positions', { params: { page, page_size: 100 } });
+      all.push(...response.data);
+      if (response.data.length < 100) return all;
+    }
+  },
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
@@ -59,6 +67,11 @@ export const criteriaApi = {
     apiClient.post(`/criteria/generate/${positionId}`),
   approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
+  getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
+  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; weight_in_group: number }) =>
+    apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
+  updateWeights: (versionId: string, mandatory: number, nice: number) =>
+    apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/approved`),
 };
@@ -78,14 +91,28 @@ export const applicationsApi = {
   },
   list: (positionId: string, params?: any) =>
     apiClient.get('/applications', { params: { position_id: positionId, ...params } }),
+  listAll: async (positionId: string) => {
+    const all: any[] = [];
+    const pageSize = 100;
+    for (let page = 1; ; page += 1) {
+      const response = await apiClient.get('/applications', {
+        params: { position_id: positionId, page, page_size: pageSize },
+      });
+      all.push(...response.data);
+      if (response.data.length < pageSize) return all;
+    }
+  },
   getById: (id: string) => apiClient.get(`/applications/${id}`),
+  getStatusEvents: (id: string) => apiClient.get(`/applications/${id}/status-events`),
   updateStatus: (id: string, newStatus: string, reason?: string, note?: string) =>
     apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note }),
   getCvUrl: (id: string) => apiClient.get(`/applications/${id}/cv-download-url`),
+  getCvBlob: (id: string) => apiClient.get(`/applications/${id}/cv-file`, { responseType: 'blob' }),
 };
 
 export const operationsApi = {
   getStatus: (id: string) => apiClient.get(`/operations/${id}`),
+  getActiveForPosition: (id: string) => apiClient.get(`/operations/position/${id}/active`),
 };
 
 export const assessmentsApi = {

@@ -1,206 +1,67 @@
-# VinUni HRApp — AI-Native CV Matching & Ranking
+# VinUni HRApp — hỗ trợ sàng lọc CV
 
-Sản phẩm AI-Native hỗ trợ sàng lọc và xếp hạng CV theo JD cho bộ phận HR VinUniversity.
+Ứng dụng Phase 1 hỗ trợ HR quản lý vị trí, duyệt tiêu chí, xử lý CV và xem xếp hạng tư vấn. **AI không tự shortlist, loại hay chuyển trạng thái ứng viên**; các quyết định tuyển dụng do HR thực hiện.
 
----
+## Luồng đã triển khai trong mã
 
-## 📋 Tổng quan Kiến trúc Phase 1 (MVP)
+1. HR tạo vị trí, JD và gán Hiring Manager; cập nhật tên, mở/tạm dừng/đóng vị trí.
+2. AI đề xuất bộ tiêu chí nháp; HR chỉnh từng tiêu chí và trọng số hai nhóm (mặc định 70/30, tổng 100%), duyệt quy trình; Hiring Manager được gán duyệt chuyên môn hoặc yêu cầu sửa. Phiên bản đã duyệt được khóa.
+3. HR tải lô PDF/DOCX (tối đa 50 file, 10 MB/file, 250 MB/lô); worker xử lý, đánh giá và tạo ranking trong cùng vị trí. Giao diện tự theo dõi tiến trình, kể cả sau khi quay lại trang.
+4. HR xem cảnh báo lỗi/trùng, điểm và độ phủ, đối chiếu bằng chứng, cập nhật trạng thái và lý do; lịch sử quyết định chỉ hiển thị cho HR có quyền.
+5. HR chia sẻ các hồ sơ shortlist cho HM được gán, chọn có/không cho xem CV. HM xem nội dung được chia sẻ và phản hồi; HR có thể thu hồi. Link CV đã ký có thể tiếp tục hoạt động tối đa 10 phút sau thu hồi.
+6. Dashboard tổng hợp số liệu thật trong phạm vi người dùng được phép xem; chỉ số chưa có dữ liệu đáng tin cậy hiển thị `—`/`null` thay vì số giả.
 
-Kiến trúc theo dạng **Modular Monolith**, gồm 3 tiến trình chính:
+Điểm/độ phủ được tính trong backend từ trọng số phiên bản tiêu chí đã duyệt; trích dẫn được kiểm tra khớp văn bản và số trang PDF. Độ phủ hiện tính theo **trọng số có bằng chứng đáng tin cậy**, không phải số lượng tiêu chí, và được làm tròn xuống tới 2 chữ số thập phân; thiếu bằng chứng hoặc confidence thấp được gắn `UNCLEAR`/cần xác minh. Xếp hạng chỉ gồm hồ sơ đang sàng lọc và bản tiêu chí đã duyệt mới nhất; thứ hạng là snapshot từ lần chạy gần nhất. Điểm và thứ hạng chỉ có tính tham khảo, đặc biệt khi độ phủ thấp. Công thức và policy điểm cần được HR/HM xác nhận trước pilot.
 
-| Thành phần | Công nghệ | Vai trò |
-|---|---|---|
-| 🖥️ Frontend | Next.js 14 (React/TypeScript) + MUI | Giao diện người dùng song ngữ Việt/Anh cho HR, Hiring Manager, HR Lead |
-| 🚀 Backend API | Python + FastAPI + Pydantic | Cung cấp REST API v1, xác thực, phân quyền và điều phối tác vụ |
-| ⚙️ Worker xử lý | Python (chung codebase với API) | Xử lý upload CV, OCR, trích xuất thông tin, gọi LLM và matching bất đồng bộ |
-| 🗄️ Cơ sở dữ liệu | Supabase PostgreSQL + PostgREST | Lưu dữ liệu nghiệp vụ, xác thực người dùng, lưu trữ file CV |
-| 📥 Lưu trữ file | Supabase Storage (bucket private) | Lưu CV gốc và văn bản trích xuất, cấp URL truy cập có thời hạn |
-| 🔐 Xác thực | Supabase Auth | Đăng nhập email/mật khẩu nội bộ, Phase 1 chưa có SSO/MFA |
-| 🤖 AI/LLM | Model cục bộ vLLM (khuyến nghị) | Trích xuất tiêu chí từ JD, cấu trúc thông tin CV và đối chiếu bằng chứng |
-| 📑 Queue | PostgreSQL/pgmq hoặc Redis/Celery | Điều phối các tác vụ xử lý CV và AI bất đồng bộ |
+## Kiến trúc hiện tại
 
----
+- **Frontend:** Next.js 15 + React + MUI, tiếng Việt; gọi API qua proxy `/v1` cùng origin.
+- **Backend:** FastAPI, xác thực JWT Supabase HS256 và phân quyền nghiệp vụ theo vị trí/hồ sơ; kết nối PostgreSQL trực tiếp.
+- **Worker:** thread trong process API, poll bảng PostgreSQL và gọi LLM qua endpoint tương thích OpenAI. Chưa có cơ chế lease/khôi phục task sau crash.
+- **Lưu trữ:** Supabase Storage bucket private qua service role backend hoặc filesystem cục bộ dùng thử.
 
-## ✨ Tính năng chính Phase 1
+Các migration trong `supabase/migrations/` yêu cầu môi trường có Supabase Auth và các role tương ứng. Migration 00003 đã được áp dụng vào project Supabase được kết nối sau xác nhận; xem [DEPLOYMENT.md](DEPLOYMENT.md) về lịch sử, tác động quyền và các bước cho môi trường khác. Không reset hoặc push migration mù quáng vào dữ liệu thật.
 
-- [x] Quản lý vị trí tuyển dụng và JD tiếng Anh
-- [x] AI đề xuất tiêu chí từ JD với bản nháp, chờ HR + Hiring Manager phê duyệt (dual approval)
-- [x] Upload CV theo batch (tối đa 50 file, ≤ 10MB/file, tổng ≤ 250MB)
-- [x] Hỗ trợ PDF văn bản, OCR PDF scan và DOCX tiếng Anh
-- [x] Phát hiện file lỗi, file cần HR kiểm tra (không tự động loại)
-- [x] Cảnh báo CV trùng trong cùng vị trí (qua email/số điện thoại, không tự gộp/xóa)
-- [x] Đánh giá theo từng tiêu chí với trích dẫn nguyên văn từ CV (verbatim evidence)
-- [x] Tính điểm trọng số và độ phủ bằng chứng **bằng mã tất định (không giao cho LLM tính toán)** để chống ảo giác
-- [x] Kiểm tra độ chính xác của trích dẫn (verbatim quote verification)
-- [x] Xếp hạng ứng viên trong cùng vị trí theo nguyên tắc: tiêu chí bắt buộc trước, điểm sau
-- [x] 3 miền trạng thái được tách biệt rõ ràng: **File processing**, **Matching advisory**, **Application status**
-- [x] AI không tự động thay đổi trạng thái tuyển dụng — chỉ HR mới có quyền cập nhật
-- [x] Phân quyền theo vai trò và vị trí tuyển dụng
-- [x] Audit log cho các thao tác quan trọng
-- [x] Tuân thủ UI Style Guide nhận diện VinUni (màu Navy #0A2B57, đỏ #C72127, font Roboto)
+## Chạy phát triển
 
----
-
-## 📂 Cấu trúc dự án
-
-```text
-VinIT_HRApp/
-├── doc/                            # Tài liệu thiết kế và nghiệp vụ
-│   ├── HRA_BRD.md                  # Business Requirements Document
-│   ├── HRA_PRD.md                  # Product Requirements Document
-│   ├── HRA_ArchitectureDesign.md   # Kiến trúc logic tổng thể
-│   ├── HRA_Phase1_Architecture.md  # Chi tiết kiến trúc Phase 1
-│   ├── HRA_DatabaseDesign.md       # Thiết kế cơ sở dữ liệu
-│   ├── HRA_LLM_Architecture.md     # Luồng điều phối và gọi LLM
-│   ├── HRA_InterfaceDesign.md      # Thiết kế API và giao diện
-│   ├── HRA_ui-style-guide.md       # Hướng dẫn style UI chuẩn VinUni
-│   ├── HRA_Wireframe.md            # Wireframe màn hình
-│   ├── demo_phase1.html            # Demo UI HTML tĩnh
-│   └── ...
-│
-├── backend/                        # Backend FastAPI Python
-│   ├── app/
-│   │   ├── api/                    # Các router API v1
-│   │   ├── core/                   # Config, logging, security, exceptions
-│   │   ├── db/                     # Supabase client
-│   │   ├── models/                 # (Pydantic models in schemas/)
-│   │   ├── schemas/                # Pydantic schemas cho request/response
-│   │   ├── services/               # Document processor, LLM client, Matching engine
-│   │   ├── workers/                # Celery/async worker cho xử lý CV
-│   │   └── main.py                 # Điểm vào FastAPI
-│   ├── pyproject.toml
-│   └── Dockerfile
-│
-├── frontend/                       # Frontend Next.js React/TypeScript
-│   ├── src/
-│   │   ├── app/                    # App Router Next.js
-│   │   ├── components/             # React components
-│   │   ├── lib/                    # Supabase client, MUI theme
-│   │   ├── types/                  # TypeScript types
-│   │   └── hooks/                  # Custom hooks
-│   ├── package.json
-│   └── Dockerfile
-│
-├── supabase/
-│   └── migrations/                 # SQL migrations cho PostgreSQL
-│       └── 00001_initial_schema.sql
-│
-├── docker-compose.yml              # Docker Compose cho local dev
-├── .env.example                    # File cấu hình mẫu
-└── README.md
-```
-
----
-
-## 🚀 Hướng dẫn chạy Local Development
-
-### Yêu cầu hệ thống
-- Node.js 20+
-- Python 3.11+
-- Docker & Docker Compose
-- Supabase CLI (tùy chọn, dùng để chạy Supabase local)
-
-### 1. Chuẩn bị môi trường
+Yêu cầu Node.js 22+, Python 3.11+, một Supabase/PostgreSQL đã được chuẩn bị, và endpoint LLM phù hợp nếu muốn chạy đánh giá. Với OCR PDF scan cần Tesseract tiếng Anh và Poppler.
 
 ```bash
-# Clone repository và chuyển vào thư mục
-cd VinIT_HRApp
-
-# Tạo file .env từ mẫu
-cp .env.example .env
-# Chỉnh sửa .env với các giá trị phù hợp (Supabase URL, keys, etc.)
-```
-
-### 2. Khởi động Supabase local (khuyến nghị)
-
-```bash
-# Cài đặt Supabase CLI nếu chưa có
-# https://supabase.com/docs/guides/cli
-
-# Khởi động Supabase local
-supabase start
-
-# Chạy migration tạo bảng
-supabase db reset
-```
-
-*Hoặc bạn có thể dùng Supabase Cloud và điền URL/key vào `.env`.*
-
-### 3. Chạy Backend API
-
-```bash
+# Backend: điền backend/.env từ mẫu, không commit secret
 cd backend
-
-# Tạo virtual environment
+cp .env.example .env
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Cài đặt dependencies
-pip install -e .
-pip install -e ".[dev]"
-
-# Chạy server development
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+.venv/bin/python -m pip install --upgrade "pip>=26.2" "setuptools>=84.1.0"
+.venv/bin/pip install -e .
+.venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-API sẽ chạy tại `http://localhost:8000`, tài liệu Swagger tại `http://localhost:8000/docs`.
-
-### 4. Chạy Frontend
-
 ```bash
+# Frontend: proxy mặc định tới backend trên cùng máy
 cd frontend
-
-# Cài đặt dependencies
-npm install
-
-# Chạy development server
+cp .env.local.example .env.local
+npm ci
 npm run dev
 ```
 
-Frontend sẽ chạy tại `http://localhost:3000`.
+Mở `http://localhost:3000`. Đăng nhập cần Supabase Auth thật, JWT secret tương ứng và profile/role đã cấp trong database. `/health` là liveness, `/health/ready` kiểm tra kết nối database; Swagger `/docs` chỉ bật khi `DEBUG=true`.
 
-### 5. (Tùy chọn) Chạy toàn bộ bằng Docker Compose
+Có thể dùng `docker compose up --build` sau khi chuẩn bị root `.env` và các dịch vụ Supabase/LLM bên ngoài. Compose không tự tạo Supabase hay LLM; xem [DEPLOYMENT.md](DEPLOYMENT.md) trước khi sử dụng. Docker chưa được kiểm thử trong phiên này.
+
+## Kiểm thử
 
 ```bash
-docker-compose up --build
+(cd frontend && npm ci && npm run lint && npm run type-check && npm run build)
+# Backend: xem backend/tests/README.md để tạo PostgreSQL cục bộ dùng một lần
+TEST_DATABASE_URL='postgresql://postgres@127.0.0.1:55432/hra_phase1_test' \
+  backend/.venv/bin/pytest -q backend/tests
 ```
 
----
+**Các integration test xóa dữ liệu trong database thử nghiệm.** Chỉ dùng database cục bộ rỗng tên `_test`; hướng dẫn đầy đủ và giới hạn có trong [backend/tests/README.md](backend/tests/README.md).
 
-## 🔒 Nguyên tắc thiết kế quan trọng
+## Chưa hoàn tất / chưa sẵn sàng production
 
-1. **Con người quyết định (Human-in-control):** Mọi kết quả AI chỉ là *tư vấn (advisory)*. HR là người duy nhất thay đổi trạng thái ứng viên. AI không tự động loại hồ sơ hay tạo shortlist.
-
-2. **Bằng chứng trước điểm số:** Mọi nhận định đánh giá đều kèm trích dẫn nguyên văn (`verbatim_quote`) và số trang. Hệ thống tự động kiểm tra xem trích dẫn có thực sự tồn tại trong CV hay không để chống ảo giác.
-
-3. **"Chưa rõ" không phải "Không đạt":** Trường hợp thiếu thông tin, OCR mờ hay confidence thấp được đưa vào nhóm **Cần HR xác minh**, tuyệt đối không quy thành điểm 0 hoặc tự động loại.
-
-4. **Tách tính toán khỏi LLM:** Tất cả phép tính điểm, độ phủ và xếp hạng được thực hiện bằng mã tất định trong backend, không giao cho LLM tự tính để loại trừ 100% lỗi ảo giác số học.
-
-5. **Phân lập theo vị trí:** Không đánh giá chéo hay xếp hạng hồ sơ giữa các vị trí khác nhau. Không trộn ngữ cảnh CV của ứng viên này với ứng viên khác.
-
-6. **Bảo vệ dữ liệu:** Ưu tiên chạy model AI trên hạ tầng cục bộ, không gửi CV production lên cloud công cộng khi chưa có phê duyệt. Loại bỏ hoàn toàn các thông tin nhạy cảm (tuổi, giới tính, ảnh, tôn giáo) khỏi quá trình đánh giá.
-
----
-
-## 🚧 Trạng thái hiện tại
-
-Đây là bản khởi tạo cấu trúc dự án theo tài liệu thiết kế Phase 1 MVP. Các phần đang triển khai:
-
-- [x] Cấu trúc cơ sở dữ liệu đầy đủ theo Database Design
-- [x] Core config, security, logging cho backend
-- [x] Document processing service (PDF, OCR, DOCX)
-- [x] LLM client với structured output validation
-- [x] Deterministic matching & ranking engine (scoring, quote verification, duplicate detection)
-- [x] Cơ sở API FastAPI
-- [x] Cấu hình frontend Next.js với theme theo UI Style Guide VinUni
-- [ ] Hoàn thiện các API endpoint còn lại
-- [ ] Trang Dashboard và danh sách vị trí
-- [ ] Màn hình duyệt tiêu chí/rubric
-- [ ] Màn hình upload CV và theo dõi tiến trình xử lý
-- [ ] Trang chi tiết CV đối chiếu với bằng chứng side-by-side
-- [ ] Chia sẻ shortlist cho Hiring Manager
-- [ ] Dashboard báo cáo pilot
-- [ ] Hàng đợi xử lý bất đồng bộ cho worker
-- [ ] Row Level Security policies cho Supabase
-- [ ] End-to-end testing
+- Chưa kiểm thử đầu-cuối với Supabase Auth/Storage, LLM thật và OCR scan; chưa có đánh giá chất lượng AI/bias trên tập pilot. CV text vẫn được gửi đến endpoint model; kiểm soát egress và bảo vệ dữ liệu nhạy cảm cần được hoàn thiện độc lập.
+- Chưa có UI sửa thông tin profile ứng viên, ghi chú riêng HR, quản lý retention/xác nhận xóa hay giao diện song ngữ Việt–Anh đầy đủ. Trang Admin AI chỉ đọc; cấu hình runtime qua environment và restart.
+- Chưa có phục hồi an toàn job `PROCESSING` sau crash; audit chưa được bảo đảm bất biến; access token hiện ở `localStorage`. Cần hoàn thiện vận hành và an ninh trước khi đưa vào production.
+- Service-role key từng xuất hiện trong Git history **phải được thu hồi/rotate** theo kế hoạch; Supabase thật và các dịch vụ AI/Storage chưa được kiểm thử đầu-cuối. Xem [PHASE1_GAP_ANALYSIS.md](PHASE1_GAP_ANALYSIS.md) và [DEPLOYMENT.md](DEPLOYMENT.md) để biết phạm vi, các giả định và việc còn lại.

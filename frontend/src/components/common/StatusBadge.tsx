@@ -3,7 +3,7 @@
 import { Box } from '@mui/material';
 import Chip from '@mui/material/Chip';
 
-type BadgeType =
+export type BadgeType =
   | 'file-completed'
   | 'file-processing'
   | 'file-review'

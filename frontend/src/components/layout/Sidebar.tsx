@@ -1,161 +1,60 @@
 'use client';
 
 import * as React from 'react';
-import {
-  Drawer,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  Box,
-  Divider,
-  Typography,
-} from '@mui/material';
+import { Box, Divider, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import WorkIcon from '@mui/icons-material/Work';
 import PeopleIcon from '@mui/icons-material/People';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import SettingsIcon from '@mui/icons-material/Settings';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 const DRAWER_WIDTH = 260;
-
 const menuItems = [
-  {
-    text: 'Vị trí tuyển dụng',
-    icon: <WorkIcon />,
-    href: '/positions',
-  },
-  {
-    text: 'Shortlist chia sẻ',
-    icon: <PeopleIcon />,
-    href: '/shortlist',
-  },
-  {
-    text: 'Báo cáo',
-    icon: <BarChartIcon />,
-    href: '/dashboard',
-  },
-  {
-    text: 'Quản trị',
-    icon: <SettingsIcon />,
-    href: '/admin',
-  },
+  { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
+  { text: 'Shortlist chia sẻ', icon: <PeopleIcon />, href: '/shortlist' },
+  { text: 'Bảng điều khiển', icon: <BarChartIcon />, href: '/dashboard' },
+  { text: 'Quản trị', icon: <SettingsIcon />, href: '/admin' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean }) {
   const pathname = usePathname();
-  const router = useRouter();
-
-  const isSelected = (href: string) => {
-    return pathname.startsWith(href);
-  };
-
-  return (
-    <Drawer
-      variant="permanent"
-      sx={{
-        width: DRAWER_WIDTH,
-        flexShrink: 0,
-        '& .MuiDrawer-paper': {
-          width: DRAWER_WIDTH,
-          boxSizing: 'border-box',
-          borderRight: 'none',
-          backgroundColor: '#0A2B57',
-          color: 'white',
-        },
-      }}
-    >
-      {/* Logo Area */}
+  const content = (
+    <>
       <Box sx={{ p: 3, pb: 2 }}>
-        <Box
-          sx={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: 1,
-            px: 2,
-            py: 1.5,
-            mb: 1.5,
-            display: 'flex',
-            justifyContent: 'center',
-          }}
-        >
-          <Box
-            component="img"
-            src="/vinuni-logo.png"
-            alt="VinUniversity Logo"
-            sx={{ height: 32, width: 'auto', maxWidth: '100%' }}
-          />
+        <Box sx={{ backgroundColor: '#fff', borderRadius: 1.5, px: 2, py: 1.5, mb: 1.5, display: 'flex', justifyContent: 'center' }}>
+          <Box component="img" src="/vinuni-logo.png" alt="VinUniversity" sx={{ height: 32, width: 'auto', maxWidth: '100%' }} />
         </Box>
-        <Typography
-          variant="subtitle2"
-          sx={{
-            color: 'rgba(255,255,255,0.75)',
-            fontSize: 12,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-            textAlign: 'center',
-            fontWeight: 600,
-          }}
-        >
-          AI CV Screening
-        </Typography>
+        <Typography variant="overline" sx={{ color: 'rgba(255,255,255,.75)', display: 'block', textAlign: 'center' }}>AI CV SCREENING</Typography>
       </Box>
-
-      <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-
-      {/* Navigation Menu */}
-      <List sx={{ pt: 2 }}>
-        {menuItems.map((item) => (
-          <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
-            <ListItemButton
-              component={Link}
-              href={item.href}
-              selected={isSelected(item.href)}
-              sx={{
-                mx: 1,
-                borderRadius: 2,
-                '&.Mui-selected': {
-                  backgroundColor: '#941616',
-                  color: 'white',
-                  '&:hover': {
-                    backgroundColor: '#7a1212',
-                  },
-                  '& .MuiListItemIcon-root': {
-                    color: 'white',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: 'rgba(255,255,255,0.7)', minWidth: 40 }}>
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText
-                primary={item.text}
-                primaryTypographyProps={{
-                  fontSize: 14,
-                  fontWeight: 500,
-                }}
-              />
+      <Divider sx={{ borderColor: 'rgba(255,255,255,.12)' }} />
+      <List sx={{ pt: 2 }} component="nav" aria-label="Điều hướng chính">
+        {menuItems.filter(item => item.href !== '/admin' || isAdmin).map(item => (
+          <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
+            <ListItemButton component={Link} href={item.href} onClick={onClose} selected={pathname.startsWith(item.href)}
+              aria-current={pathname.startsWith(item.href) ? 'page' : undefined}
+              sx={{ mx: 1, borderRadius: 2, minHeight: 46, transition: 'background-color .18s ease',
+                '&.Mui-selected': { backgroundColor: '#941616', '&:hover': { backgroundColor: '#7a1212' }, '& .MuiListItemIcon-root': { color: 'white' } },
+                '&:hover': { backgroundColor: 'rgba(255,255,255,.08)' } }}>
+              <ListItemIcon sx={{ color: 'rgba(255,255,255,.75)', minWidth: 40 }}>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.text} primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }} />
             </ListItemButton>
           </ListItem>
         ))}
       </List>
-
       <Box sx={{ flexGrow: 1 }} />
-
-      {/* Footer */}
-      <Box sx={{ p: 2, textAlign: 'center' }}>
-        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>
-          © {new Date().getFullYear()} VinUniversity
-          <br />
-          Nội bộ sử dụng
-        </Typography>
-      </Box>
-    </Drawer>
+      <Box sx={{ p: 2, textAlign: 'center' }}><Typography variant="caption" sx={{ color: 'rgba(255,255,255,.5)' }}>© {new Date().getFullYear()} VinUniversity<br />Nội bộ sử dụng</Typography></Box>
+    </>
+  );
+  const paper = { width: DRAWER_WIDTH, boxSizing: 'border-box', borderRight: 'none', backgroundColor: '#0A2B57', color: 'white' } as const;
+  return (
+    <>
+      <Drawer variant="temporary" open={mobileOpen} onClose={onClose} ModalProps={{ keepMounted: true }}
+        sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': paper }}>{content}</Drawer>
+      <Drawer variant="permanent" open sx={{ display: { xs: 'none', md: 'block' }, width: DRAWER_WIDTH, flexShrink: 0, '& .MuiDrawer-paper': paper }}>
+        {content}
+      </Drawer>
+    </>
   );
 }
 

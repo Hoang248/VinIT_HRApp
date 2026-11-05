@@ -21,19 +21,36 @@ import {
   DialogActions,
   TextField,
   MenuItem,
+  Select,
+  InputLabel,
+  FormControl,
+  Snackbar,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import GetAppIcon from '@mui/icons-material/GetApp';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CancelIcon from '@mui/icons-material/Cancel';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
-import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { applicationsApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
 import type { ApplicationWithAssessment } from '@/types';
+import { APPLICATION_STATUSES, APPLICATION_TRANSITIONS, isApplicationStatus } from '@/lib/applicationStatus';
+
+interface StatusEvent {
+  event_id: string;
+  previous_status: string | null;
+  new_status: string;
+  reason: string | null;
+  note: string | null;
+  changed_at: string;
+  changed_by_name: string | null;
+}
 
 // Outcome styling for evidence cards
 const outcomeStyles: Record<string, { borderColor: string; label: string; color: string }> = {
@@ -61,7 +78,6 @@ const outcomeStyles: Record<string, { borderColor: string; label: string; color:
 
 export default function ApplicantDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const positionId = params.id as string;
   const applicantId = params.applicantId as string;
 
@@ -70,58 +86,85 @@ export default function ApplicantDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [newStatus, setNewStatus] = useState('');
+  const [statusReason, setStatusReason] = useState('');
   const [statusNote, setStatusNote] = useState('');
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [history, setHistory] = useState<StatusEvent[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState(1);
   const [cvUrl, setCvUrl] = useState<string | null>(null);
+  const [cvError, setCvError] = useState<string | null>(null);
+  const blobUrl = useRef<string | null>(null);
+  const requestId = useRef(0);
+
+  const loadData = useCallback(async (initial = false) => {
+    const currentRequest = ++requestId.current;
+    try {
+      if (initial) setLoading(true);
+      const res = await applicationsApi.getById(applicantId);
+      if (currentRequest !== requestId.current) return;
+      if (res.data.position_id !== positionId) throw new Error('Hồ sơ không thuộc vị trí này');
+      setApplication(res.data);
+      setError(null);
+      if (res.data.can_update_status) {
+        applicationsApi.getStatusEvents(applicantId).then(events => {
+          if (currentRequest === requestId.current) { setHistory(events.data || []); setHistoryError(null); }
+        }).catch(() => { if (currentRequest === requestId.current) setHistoryError('Không thể tải lịch sử trạng thái.'); });
+      } else { setHistory([]); setHistoryError(null); }
+      if (res.data.can_view_cv) {
+        try {
+          const cvRes = await applicationsApi.getCvUrl(applicantId);
+          if (currentRequest !== requestId.current) return;
+          if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
+          setCvError(null);
+          if (typeof cvRes.data.signed_url === 'string') {
+            setCvUrl(cvRes.data.signed_url);
+          } else if (cvRes.data.source === 'local') {
+            const file = await applicationsApi.getCvBlob(applicantId);
+            if (currentRequest !== requestId.current) return;
+            blobUrl.current = URL.createObjectURL(file.data);
+            setCvUrl(blobUrl.current);
+          } else {
+            setCvUrl(null);
+            setCvError('Không thể lấy đường dẫn CV.');
+          }
+        } catch {
+          if (currentRequest === requestId.current) { setCvUrl(null); setCvError('Không thể tải CV gốc. Vui lòng thử lại sau.'); }
+        }
+      } else {
+        if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
+        setCvUrl(null); setCvError(null);
+      }
+    } catch (err: any) {
+      if (currentRequest === requestId.current) {
+        if (err.response?.status === 403 || err.response?.status === 404) setApplication(null);
+        setError(err.response?.data?.detail || err.message || 'Không thể tải thông tin hồ sơ');
+      }
+    } finally { if (currentRequest === requestId.current) setLoading(false); }
+  }, [applicantId, positionId]);
 
   useEffect(() => {
-    loadData();
-  }, [applicantId]);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const res = await applicationsApi.getById(applicantId);
-      setApplication(res.data);
-
-      // Get CV URL/PDF
-      const cvRes = await applicationsApi.getCvUrl(applicantId);
-      if (cvRes.data.signed_url) {
-        setCvUrl(cvRes.data.signed_url);
-      } else if (cvRes.config?.url) {
-        // Local file response will be handled as blob
-        setCvUrl(cvRes.config.url);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể tải thông tin hồ sơ');
-    } finally {
-      setLoading(false);
-    }
-  };
+    loadData(true);
+    return () => { requestId.current += 1; if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; } };
+  }, [loadData]);
 
   const handleStatusUpdate = async () => {
+    if (!newStatus || statusSubmitting) return;
+    const rejected = newStatus.startsWith('REJECTED');
+    if (rejected && !statusReason.trim()) { setStatusError('Vui lòng nhập lý do loại hồ sơ.'); return; }
     try {
-      await applicationsApi.updateStatus(applicantId, newStatus, '', statusNote);
-      setStatusDialogOpen(false);
+      setStatusSubmitting(true); setStatusError(null);
+      await applicationsApi.updateStatus(applicantId, newStatus, statusReason.trim() || undefined, statusNote.trim() || undefined);
+      setStatusDialogOpen(false); setSuccess(true);
       await loadData();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Cập nhật trạng thái không thành công');
-    }
+      setStatusError(err.response?.data?.detail || 'Cập nhật trạng thái không thành công');
+    } finally { setStatusSubmitting(false); }
   };
 
-  const jumpToPage = (page: number) => {
-    setSelectedPage(page);
-    // Try to navigate native PDF viewer iframe via #page=N anchor (Chrome/Edge/FF support)
-    if (cvUrl) {
-      const iframe = document.getElementById('cv-pdf-viewer') as HTMLIFrameElement | null;
-      if (iframe) {
-        try {
-          const sep = cvUrl.includes('#') ? '&' : '#';
-          iframe.src = `${cvUrl}${sep}page=${page}`;
-        } catch (_) { /* ignore */ }
-      }
-    }
-  };
+  const jumpToPage = (page: number) => { if (page >= 1) setSelectedPage(page); };
 
   if (loading) {
     return (
@@ -132,22 +175,27 @@ export default function ApplicantDetailPage() {
   }
 
   if (!application) {
-    return <Alert severity="error">Không tìm thấy hồ sơ ứng viên</Alert>;
+    return <Alert severity="error" action={<Button onClick={() => loadData(true)}>Thử lại</Button>}>{error || 'Không tìm thấy hồ sơ ứng viên'}</Alert>;
   }
 
   const assessment = application.latest_assessment;
   const criteriaResults = assessment?.criterion_results || [];
+  const currentStatus = isApplicationStatus(application.application_status) ? application.application_status : null;
+  const nextStatuses = currentStatus ? APPLICATION_TRANSITIONS[currentStatus] : [];
+  const statusLabel = currentStatus ? APPLICATION_STATUSES[currentStatus] : null;
+  const selectedLabel = isApplicationStatus(newStatus) ? APPLICATION_STATUSES[newStatus].label : newStatus;
+  const isPdf = application.documents?.[0]?.mime_type === 'application/pdf' || /\.pdf$/i.test(application.documents?.[0]?.original_filename || '');
 
   return (
     <Box>
       {/* Back button */}
       <Button
         component={Link}
-        href={`/positions/${positionId}/applicants`}
+        href={application.can_update_status ? `/positions/${positionId}/applicants` : '/shortlist'}
         startIcon={<ArrowBackIcon />}
         sx={{ color: '#0A2B57', mb: 2 }}
       >
-        Quay lại danh sách xếp hạng
+        {application.can_update_status ? 'Quay lại danh sách xếp hạng' : 'Quay lại shortlist'}
       </Button>
 
       {/* Warnings */}
@@ -170,7 +218,7 @@ export default function ApplicantDetailPage() {
       )}
 
       {/* Applicant Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap', mb: 2 }}>
         <Box>
           <Typography variant="h1" sx={{ fontSize: 24, color: '#0A2B57', mb: 0.5 }}>
             {application.identity?.display_name || 'Hồ sơ ứng viên'}
@@ -198,49 +246,76 @@ export default function ApplicantDetailPage() {
                 )}
               </>
             )}
-            <StatusBadge
-              type={
-                application.application_status === 'NEW' ? 'app-new' :
-                application.application_status === 'IN_REVIEW' ? 'app-review' :
-                application.application_status === 'SHORTLIST' ? 'app-shortlist' : 'app-rejected'
-              }
-              label={
-                application.application_status === 'NEW' ? 'Mới' :
-                application.application_status === 'IN_REVIEW' ? 'Đang xem' :
-                application.application_status === 'SHORTLIST' ? 'Shortlist' : 'Bị loại'
-              }
-            />
+            {statusLabel && <StatusBadge type={statusLabel.badge} label={statusLabel.label} />}
           </Box>
         </Box>
 
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Button
             variant="outlined"
             startIcon={<GetAppIcon />}
             href={cvUrl || '#'}
             target="_blank"
+            rel="noreferrer"
+            disabled={!cvUrl}
             sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
           >
             Tải CV gốc
           </Button>
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<CancelIcon />}
-            onClick={() => { setNewStatus('REJECTED_SCREENING'); setStatusDialogOpen(true); }}
-          >
-            Loại vòng sàng lọc
-          </Button>
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<CheckCircleIcon />}
-            onClick={() => { setNewStatus('SHORTLIST'); setStatusDialogOpen(true); }}
-          >
-            Đưa vào Shortlist
-          </Button>
+          {application.can_update_status && nextStatuses.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel>Cập nhật trạng thái</InputLabel>
+              <Select
+                value=""
+                label="Cập nhật trạng thái"
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setNewStatus(e.target.value);
+                    setStatusReason(''); setStatusNote(''); setStatusError(null);
+                    setStatusDialogOpen(true);
+                  }
+                }}
+              >
+                {nextStatuses.map(code => (
+                  <MenuItem key={code} value={code}>{APPLICATION_STATUSES[code].label}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {application.can_update_status && currentStatus && nextStatuses.length === 0 && (
+            <Chip label="Hồ sơ đã kết thúc" size="small" color="default" />
+          )}
         </Box>
       </Box>
+
+      {application.can_update_status && (
+        <Accordion disableGutters elevation={0} sx={{ mb: 3, border: '1px solid #E4E7EC', borderRadius: '8px !important', '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="status-history-content" id="status-history-header">
+            <Typography fontWeight={600}>Lịch sử trạng thái {history.length > 0 && `(${history.length})`}</Typography>
+          </AccordionSummary>
+          <AccordionDetails id="status-history-content">
+            {historyError ? <Alert severity="error">{historyError}</Alert> : history.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">Chưa có thay đổi trạng thái.</Typography>
+            ) : history.map(event => (
+              <Box key={event.event_id} sx={{ py: 1.5, borderTop: '1px solid #EDF1F5' }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {event.previous_status && isApplicationStatus(event.previous_status) ? APPLICATION_STATUSES[event.previous_status].label : event.previous_status || '—'} →{' '}
+                  {isApplicationStatus(event.new_status) ? APPLICATION_STATUSES[event.new_status].label : event.new_status}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">{event.changed_by_name || 'HR'} · {new Date(event.changed_at).toLocaleString('vi-VN')}</Typography>
+                {event.reason && <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>Lý do: {event.reason}</Typography>}
+                {event.note && <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>Ghi chú: {event.note}</Typography>}
+              </Box>
+            ))}
+          </AccordionDetails>
+        </Accordion>
+      )}
+
+      {assessment?.evidence_coverage != null && assessment.evidence_coverage < 0.7 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Chưa đủ dữ liệu để xếp hạng ổn định. Điểm chỉ mang tính tham khảo; HR cần kiểm tra bằng chứng trước khi quyết định.
+        </Alert>
+      )}
 
       {/* Score summary */}
       {assessment && (
@@ -254,8 +329,9 @@ export default function ApplicantDetailPage() {
                   sx={{
                     fontSize: 32,
                     fontWeight: 'bold',
-                    color: assessment.matching_score && assessment.matching_score >= 80 ? '#067647' :
-                            assessment.matching_score && assessment.matching_score >= 60 ? '#0A2B57' : '#B54708',
+                    color: assessment.evidence_coverage != null && assessment.evidence_coverage < 0.7 ? '#B54708' :
+                            assessment.matching_score != null && assessment.matching_score >= 80 ? '#067647' :
+                            assessment.matching_score != null && assessment.matching_score >= 60 ? '#0A2B57' : '#B54708',
                     mt: 1,
                   }}
                 >
@@ -279,9 +355,9 @@ export default function ApplicantDetailPage() {
                 >
                   {assessment.evidence_coverage !== null ? `${Math.round(assessment.evidence_coverage * 100)}%` : '-'}
                 </Typography>
-                {(assessment.evidence_coverage || 0) < 0.7 && (
+                {assessment.evidence_coverage !== null && assessment.evidence_coverage < 0.7 && (
                   <Typography variant="caption" color="#B54708">
-                    Cần xem xét kỹ
+                    Chưa đủ dữ liệu để xếp hạng ổn định
                   </Typography>
                 )}
               </CardContent>
@@ -292,11 +368,10 @@ export default function ApplicantDetailPage() {
               <CardContent sx={{ textAlign: 'center' }}>
                 <Typography variant="caption" color="text.secondary">Số tiêu chí đánh giá</Typography>
                 <Typography variant="h3" sx={{ fontSize: 32, fontWeight: 'bold', color: '#0A2B57', mt: 1 }}>
-                  {criteriaResults.length}
+                  {application.can_view_cv ? criteriaResults.length : '—'}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {criteriaResults.filter(r => r.outcome === 'MATCH' || r.outcome === 'STRONG_MATCH').length} đáp ứng,{' '}
-                  {criteriaResults.filter(r => r.outcome === 'UNCLEAR').length} chưa rõ
+                  {application.can_view_cv ? `${criteriaResults.filter(r => r.outcome === 'MATCH' || r.outcome === 'STRONG_MATCH').length} đáp ứng, ${criteriaResults.filter(r => r.outcome === 'UNCLEAR').length} chưa rõ` : 'Chỉ được phép xem tóm tắt'}
                 </Typography>
               </CardContent>
             </Card>
@@ -327,7 +402,11 @@ export default function ApplicantDetailPage() {
           ) : (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {criteriaResults.map((result) => {
-                const style = outcomeStyles[result.outcome];
+                const style = outcomeStyles[result.outcome] || outcomeStyles.UNCLEAR;
+                const citation = result.evidence?.[0];
+                const verified = citation?.verification_status === 'VERIFIED' || citation?.verification_status === 'MANUAL_FIX';
+                const page = citation?.page_number || result.page_number;
+                const canJump = !!(verified && page && isPdf && cvUrl);
                 return (
                   <Card
                     key={result.criterion_id}
@@ -393,10 +472,13 @@ export default function ApplicantDetailPage() {
                             p: 1.5,
                             borderRadius: 1,
                             mt: 1,
-                            cursor: 'pointer',
-                            '&:hover': { backgroundColor: '#F1F5F9' }
+                            cursor: canJump ? 'pointer' : 'default',
+                            '&:hover': canJump ? { backgroundColor: '#F1F5F9' } : undefined,
                           }}
-                          onClick={() => jumpToPage(result.page_number || 1)}
+                          role={canJump ? 'button' : undefined}
+                          tabIndex={canJump ? 0 : undefined}
+                          onClick={() => { if (canJump && page) jumpToPage(page); }}
+                          onKeyDown={event => { if (canJump && page && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); jumpToPage(page); } }}
                         >
                           <Typography
                             variant="body2"
@@ -407,14 +489,14 @@ export default function ApplicantDetailPage() {
                               lineHeight: 1.6,
                             }}
                           >
-                            "{result.verbatim_quote || result.evidence?.[0]?.verbatim_quote}"
+                            &ldquo;{result.verbatim_quote || result.evidence?.[0]?.verbatim_quote}&rdquo;
                           </Typography>
                           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
                             <Chip
-                              label={`Trang ${result.page_number || result.evidence?.[0]?.page_number || '?'}`}
+                              label={!verified ? 'Trích dẫn chưa xác minh' : (isPdf && page ? `Trang ${page} · Đã xác minh` : 'Đoạn trích đã xác minh')}
                               size="small"
                               sx={{
-                                backgroundColor: '#0A2B57',
+                                backgroundColor: verified ? '#0A2B57' : '#B54708',
                                 color: 'white',
                                 fontWeight: 700,
                                 fontSize: 10,
@@ -446,13 +528,13 @@ export default function ApplicantDetailPage() {
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Tooltip title="Trang trước">
-                <IconButton size="small" disabled={selectedPage <= 1}>
+                <IconButton aria-label="Trang trước" size="small" disabled={!cvUrl || !isPdf || selectedPage <= 1} onClick={() => jumpToPage(selectedPage - 1)}>
                   <NavigateBeforeIcon />
                 </IconButton>
               </Tooltip>
               <Typography variant="body2">Trang {selectedPage}</Typography>
               <Tooltip title="Trang sau">
-                <IconButton size="small">
+                <IconButton aria-label="Trang sau" size="small" disabled={!cvUrl || !isPdf} onClick={() => jumpToPage(selectedPage + 1)}>
                   <NavigateNextIcon />
                 </IconButton>
               </Tooltip>
@@ -461,7 +543,7 @@ export default function ApplicantDetailPage() {
 
           <Card sx={{ height: 'calc(100vh - 250px)', overflow: 'auto' }}>
             <CardContent sx={{ p: 0, height: '100%' }}>
-              {cvUrl ? (
+              {cvUrl && isPdf ? (
                 <Box sx={{ height: '100%', backgroundColor: '#525659', padding: 2 }}>
                   <iframe
                     id="cv-pdf-viewer"
@@ -474,7 +556,7 @@ export default function ApplicantDetailPage() {
                 </Box>
               ) : (
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'text.secondary' }}>
-                  <Typography variant="body2">Không thể tải CV. Vui lòng tải xuống để xem.</Typography>
+                  <Typography variant="body2">{!application.can_view_cv ? 'Shortlist này không cho phép xem CV gốc.' : cvError || (cvUrl && !isPdf ? 'Tệp DOCX cần được tải xuống để xem.' : 'Không thể tải CV. Vui lòng thử lại.')}</Typography>
                 </Box>
               )}
             </CardContent>
@@ -482,37 +564,31 @@ export default function ApplicantDetailPage() {
         </Grid>
       </Grid>
 
-      {/* Status Update Dialog */}
-      <Dialog open={statusDialogOpen} onClose={() => setStatusDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ color: newStatus === 'SHORTLIST' ? '#067647' : '#B42318' }}>
-          {newStatus === 'SHORTLIST' ? 'Xác nhận đưa vào Shortlist' : 'Xác nhận loại hồ sơ'}
-        </DialogTitle>
+      {/* Status changes follow the server transition matrix. */}
+      <Dialog open={statusDialogOpen} onClose={() => !statusSubmitting && setStatusDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Xác nhận chuyển sang: {selectedLabel}</DialogTitle>
         <DialogContent dividers>
           <Typography variant="body2" sx={{ mb: 2 }}>
-            {newStatus === 'SHORTLIST'
-              ? 'Hồ sơ sẽ được chuyển vào danh sách Shortlist để chia sẻ với Hiring Manager xem xét.'
-              : 'Hồ sơ sẽ được đánh dấu loại ở vòng sàng lọc. Lý do của bạn sẽ được lưu vào lịch sử trạng thái.'}
+            Trạng thái hiện tại: <strong>{statusLabel?.label}</strong>. Quyết định và lý do sẽ được lưu vào lịch sử hồ sơ.
           </Typography>
-          <TextField
-            label={newStatus === 'SHORTLIST' ? 'Ghi chú (tùy chọn)' : 'Lý do loại'}
-            fullWidth
-            multiline
-            rows={3}
-            value={statusNote}
-            onChange={(e) => setStatusNote(e.target.value)}
-          />
+          {statusError && <Alert severity="error" sx={{ mb: 2 }}>{statusError}</Alert>}
+          {newStatus.startsWith('REJECTED') && (
+            <TextField label="Lý do loại hồ sơ" required fullWidth multiline minRows={2} value={statusReason}
+              onChange={e => setStatusReason(e.target.value)} inputProps={{ maxLength: 1000 }} sx={{ mb: 2 }} />
+          )}
+          <TextField label="Ghi chú (tùy chọn)" fullWidth multiline minRows={2} value={statusNote}
+            onChange={e => setStatusNote(e.target.value)} inputProps={{ maxLength: 2000 }} />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setStatusDialogOpen(false)}>Hủy</Button>
-          <Button
-            variant="contained"
-            color={newStatus === 'SHORTLIST' ? 'success' : 'error'}
-            onClick={handleStatusUpdate}
-          >
-            Xác nhận
+          <Button onClick={() => setStatusDialogOpen(false)} disabled={statusSubmitting}>Hủy</Button>
+          <Button variant="contained" color={newStatus.startsWith('REJECTED') ? 'error' : 'secondary'}
+            disabled={statusSubmitting || (newStatus.startsWith('REJECTED') && !statusReason.trim())} onClick={handleStatusUpdate}>
+            {statusSubmitting ? 'Đang lưu…' : 'Xác nhận'}
           </Button>
         </DialogActions>
       </Dialog>
+      <Snackbar open={success} autoHideDuration={4000} onClose={() => setSuccess(false)}
+        message="Đã cập nhật trạng thái hồ sơ" />
     </Box>
   );
 }

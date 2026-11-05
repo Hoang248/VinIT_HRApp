@@ -8,7 +8,7 @@ import pytesseract
 from docx import Document
 from PIL import Image
 import io
-import magic
+import zipfile
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import FileValidationError
@@ -32,19 +32,28 @@ class DocumentProcessor:
     }
     MAX_FILE_SIZE = settings.MAX_FILE_SIZE_BYTES
 
-    async def validate_file(self, file_content: bytes, filename: str, content_type: str) -> None:
-        """Validate file size, type, and integrity"""
-        if len(file_content) > self.MAX_FILE_SIZE:
-            raise FileValidationError(
-                f"File {filename} exceeds maximum size of {self.MAX_FILE_SIZE // 1_000_000} MB"
-            )
+    async def validate_file(self, file_content: bytes, filename: str, content_type: str) -> str:
+        """Validate bytes rather than trusting a browser-supplied MIME type.
 
-        # Detect actual MIME type using python-magic
-        detected_mime = magic.from_buffer(file_content, mime=True)
-        if detected_mime not in self.SUPPORTED_MIME_TYPES:
-            raise FileValidationError(
-                f"File {filename} has unsupported type: {detected_mime}. Only PDF and DOCX are supported."
-            )
+        DOCX is a ZIP container; checking the required entries also rejects ordinary
+        ZIP files. Limit its expanded size before handing it to a document parser.
+        """
+        if not file_content or len(file_content) > self.MAX_FILE_SIZE:
+            raise FileValidationError(f"File {filename} is empty or exceeds the size limit")
+
+        extension = os.path.splitext(filename or "")[1].lower()
+        if extension == ".pdf" and file_content.lstrip().startswith(b"%PDF-"):
+            return "application/pdf"
+        if extension == ".docx" and zipfile.is_zipfile(io.BytesIO(file_content)):
+            try:
+                with zipfile.ZipFile(io.BytesIO(file_content)) as archive:
+                    names = set(archive.namelist())
+                    if {"[Content_Types].xml", "word/document.xml"}.issubset(names):
+                        if sum(item.file_size for item in archive.infolist()) <= 100_000_000:
+                            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            except (zipfile.BadZipFile, OSError):
+                pass
+        raise FileValidationError(f"File {filename} is not a valid PDF or DOCX")
 
     async def detect_document_type(self, file_content: bytes, content_type: str) -> DocumentType:
         """Detect if PDF is text-based or scanned, or DOCX"""
@@ -144,17 +153,18 @@ class DocumentProcessor:
         else:
             raise FileValidationError(f"Unsupported document type")
 
-        # Check if we got meaningful text
-        if len(full_text.strip()) < 50:
+        # Page markers are metadata, not CV content: a multi-page blank scan
+        # must never pass the extraction check merely because of its labels.
+        text_length = sum(len((page.get("content") or "").strip()) for page in pages)
+        if text_length < 50:
             raise FileValidationError(
                 f"Could not extract sufficient text from {filename}; document may be too low quality or image-only"
             )
 
         logger.info(
             "Document processed successfully",
-            filename=filename,
             doc_type=doc_type.value,
-            text_length=len(full_text),
+            text_length=text_length,
             pages=len(pages)
         )
 

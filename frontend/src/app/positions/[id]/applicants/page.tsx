@@ -29,12 +29,14 @@ import {
   Stack,
   Link as MuiLink,
   TextField,
+  Snackbar,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import SortIcon from '@mui/icons-material/Sort';
-import ContentCutIcon from '@mui/icons-material/ContentCut';
+import BookmarkAddOutlinedIcon from '@mui/icons-material/BookmarkAddOutlined';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import ShareIcon from '@mui/icons-material/Share';
@@ -48,15 +50,17 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import Autocomplete from '@mui/material/Autocomplete';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { assessmentsApi, operationsApi, applicationsApi, shortlistApi, usersApi } from '@/lib/api';
+import { assessmentsApi, operationsApi, applicationsApi, shortlistApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
 import type { RankingItem, UserSummary } from '@/types';
+import { APPLICATION_STATUSES, isApplicationStatus } from '@/lib/applicationStatus';
+
+const inScreening = (status?: string) => ['NEW', 'IN_REVIEW', 'SHORTLIST'].includes(status || '');
 
 export default function ApplicantsRankingPage() {
   const params = useParams();
-  const router = useRouter();
   const positionId = params.id as string;
 
   const [rankingItems, setRankingItems] = useState<RankingItem[]>([]);
@@ -70,6 +74,9 @@ export default function ApplicantsRankingPage() {
     progress?: { total: number; processed: number; failed: number; percent_complete: number };
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rankingError, setRankingError] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -86,16 +93,16 @@ export default function ApplicantsRankingPage() {
   const loadRanking = useCallback(async () => {
     try {
       const [rankRes, appsRes] = await Promise.all([
-        assessmentsApi.getLatestRanking(positionId).catch(() => ({ data: [] })),
-        applicationsApi.list(positionId).catch(() => ({ data: [] })),
+        assessmentsApi.getLatestRanking(positionId),
+        applicationsApi.listAll(positionId),
       ]);
       const ranks: RankingItem[] = rankRes.data || [];
-      const apps: any[] = appsRes.data || [];
+      const apps: any[] = appsRes;
 
       // Merge ranking with application flags
       const appMap = new Map<string, any>();
       apps.forEach((a: any) => appMap.set(a.application_id, a));
-      const merged = ranks.map((r: RankingItem) => {
+      const merged = ranks.filter((r: RankingItem) => inScreening(appMap.get(r.application_id)?.application_status)).map((r: RankingItem) => {
         const a = appMap.get(r.application_id) || {};
         return {
           ...r,
@@ -133,13 +140,14 @@ export default function ApplicantsRankingPage() {
         }
       });
 
+      setRankingError(null);
       setRankingItems(merged);
       setAppsNeedingReview(merged.filter((i) =>
-        (i.needs_verification && (i.evidence_coverage ?? 0) < 0.7) || i.file_processing_status === 'NEEDS_HR_REVIEW'
+        i.needs_verification || i.file_processing_status === 'NEEDS_HR_REVIEW'
       ).length);
-      setDuplicateCount(merged.filter((i) => i.has_mismatch || i.has_duplicate_warning).length);
+      setDuplicateCount(merged.filter((i) => i.has_duplicate_warning).length);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
+      setRankingError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
     } finally {
       setLoading(false);
     }
@@ -165,55 +173,52 @@ export default function ApplicantsRankingPage() {
           stopPolling();
           setAssessing(false);
           if (data.status === 'COMPLETED') {
-            // Small delay to ensure ranking is written
-            setTimeout(() => loadRanking(), 1500);
+            await loadRanking();
+            setNotice(data.progress?.failed ? `Hoàn tất với ${data.progress.failed} tệp cần kiểm tra.` : 'Đã cập nhật kết quả xếp hạng.');
           } else {
             setError(`Đánh giá thất bại: ${data.error_message || 'Lỗi không xác định'}`);
           }
         }
       } catch (e) {
-        stopPolling();
-        setAssessing(false);
+        setError('Không thể cập nhật tiến trình. Hệ thống sẽ thử lại.');
       }
     }, 2000);
   }, [loadRanking, stopPolling]);
 
   useEffect(() => {
+    let mounted = true;
     loadRanking();
-    return () => stopPolling();
-  }, [loadRanking, stopPolling]);
+    operationsApi.getActiveForPosition(positionId).then(res => {
+      if (mounted && res.data) { setAssessing(true); setOperationStatus(res.data); pollOperation(res.data.operation_id); }
+    }).catch(() => { if (mounted) setError('Không thể tải tiến trình đang xử lý.'); });
+    return () => { mounted = false; stopPolling(); };
+  }, [loadRanking, stopPolling, pollOperation, positionId]);
 
   const handleRunAssessment = async () => {
     try {
       setAssessing(true);
       setError(null);
       const res = await assessmentsApi.runForPosition(positionId);
-      const opId = res.data.operation_id;
-      setOperationStatus({ operation_id: opId, status: 'PENDING', progress: undefined });
-      pollOperation(opId);
+      if (String(res.data.status).toUpperCase() === 'COMPLETED') {
+        setAssessing(false); setNotice(res.data.message || 'Không có hồ sơ cần đánh giá.');
+        await loadRanking();
+      } else {
+        const opId = res.data.operation_id;
+        setOperationStatus({ operation_id: opId, status: 'PENDING', progress: undefined });
+        pollOperation(opId);
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Không thể chạy đánh giá');
       setAssessing(false);
     }
   };
 
-  // Recipient search for shortlist share dialog
+  // Only assigned, active Hiring Managers can be recipients.
   useEffect(() => {
     if (!shareDialogOpen) return;
-    if (shareRecipientQuery.length < 1) {
-      setShareRecipientOptions([]);
-      return;
-    }
-    const t = setTimeout(async () => {
-      try {
-        const res = await usersApi.list({ search: shareRecipientQuery, position_id: positionId });
-        setShareRecipientOptions(res.data || []);
-      } catch {
-        setShareRecipientOptions([]);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [shareRecipientQuery, shareDialogOpen, positionId]);
+    shortlistApi.getPotentialRecipients(positionId).then(res => setShareRecipientOptions(res.data || []))
+      .catch(() => setShareError('Không thể tải danh sách Hiring Manager.'));
+  }, [shareDialogOpen, positionId]);
 
   const handleToggleSelect = (appId: string) => {
     setSelectedIds(prev => {
@@ -238,14 +243,18 @@ export default function ApplicantsRankingPage() {
   const handleOpenShare = () => {
     // Pre-select shortlisted items
     const shortlisted = rankingItems.filter(i => i.is_shortlisted).map(i => i.application_id);
-    setSelectedIds(new Set(shortlisted));
+    setSelectedIds(previous => {
+      const selected = shortlisted.filter(id => previous.has(id));
+      return new Set(selected.length ? selected : shortlisted);
+    });
+    setShareError(null);
     setShareDialogOpen(true);
   };
 
   const handleShareSubmit = async () => {
     if (!shareRecipient || selectedIds.size === 0) return;
     try {
-      setShareSubmitting(true);
+      setShareSubmitting(true); setShareError(null);
       await shortlistApi.create({
         position_id: positionId,
         shared_with_user_id: shareRecipient.user_id,
@@ -258,8 +267,9 @@ export default function ApplicantsRankingPage() {
       setShareRecipientQuery('');
       setSelectedIds(new Set());
       setShareAllowCv(false);
+      setNotice('Đã chia sẻ shortlist. Hiring Manager có thể xem trong mục Shortlist.');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể chia sẻ shortlist');
+      setShareError(err.response?.data?.detail || 'Không thể chia sẻ shortlist');
     } finally {
       setShareSubmitting(false);
     }
@@ -275,13 +285,22 @@ export default function ApplicantsRankingPage() {
     }
   };
 
+  const displayCategory = (item: RankingItem) => {
+    if (!inScreening(item.application_status)) return 'OUT_OF_SCREENING';
+    if (!item.matching_status || item.matching_status === 'NOT_ASSESSED') return 'NOT_ASSESSED';
+    if (item.has_mismatch) return 'POSSIBLE_MISMATCH';
+    if (item.needs_verification) return 'NEEDS_HR_VERIFICATION';
+    return 'MEETS_MANDATORY';
+  };
   const filteredItems = rankingItems.filter(item => {
-    if (filterStatus !== 'ALL' && item.matching_status !== filterStatus) return false;
+    if (filterStatus !== 'ALL' && displayCategory(item) !== filterStatus) return false;
     if (searchQuery && !item.candidate_name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   });
 
   const getMatchingStatusBadge = (item: RankingItem) => {
+    if (!inScreening(item.application_status)) return <StatusBadge type="app-new" label="Ngoài sàng lọc" />;
+    if (item.matching_status === 'NOT_ASSESSED') return <StatusBadge type="app-new" label="Chưa có trong xếp hạng" />;
     if (item.has_mismatch) {
       return <StatusBadge type="match-mismatch" label="Có dấu hiệu miss-match" />;
     }
@@ -311,16 +330,17 @@ export default function ApplicantsRankingPage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+      <Button component={Link} href={`/positions/${positionId}`} startIcon={<ArrowBackIcon />} sx={{ mb: 1 }}>Quay lại vị trí</Button>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2, mb: 3 }}>
         <Box>
           <Typography variant="h2" sx={{ fontSize: 22, color: '#0A2B57', mb: 0.5 }}>
             Danh sách ưu tiên rà soát ứng viên
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Xếp hạng trong cùng vị trí theo tiêu chí đã duyệt: ưu tiên đáp ứng tiêu chí bắt buộc trước, sau đó đến điểm số
+            Xếp hạng sàng lọc theo phiên bản tiêu chí mới nhất đã duyệt; số thứ hạng là tại lần chạy gần nhất.
           </Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -384,21 +404,23 @@ export default function ApplicantsRankingPage() {
         </Card>
       )}
 
+      {rankingError && <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" onClick={loadRanking}>Thử lại</Button>}>{rankingError}</Alert>}
+      {!rankingError && <>
       {/* Summary cards */}
-      <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: 'wrap' }}>
-        <Card sx={{ minWidth: 180, flex: '1 1 180px' }}>
+      <Stack direction="row" spacing={2} useFlexGap sx={{ mb: 3, flexWrap: 'wrap' }}>
+        <Card sx={{ minWidth: 140, flex: '1 1 140px' }}>
           <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
             <Typography variant="caption" color="text.secondary">Tổng hồ sơ</Typography>
             <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#0A2B57' }}>{totalApplications}</Typography>
           </CardContent>
         </Card>
-        <Card sx={{ minWidth: 180, flex: '1 1 180px' }}>
+        <Card sx={{ minWidth: 140, flex: '1 1 140px' }}>
           <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
-            <Typography variant="caption" color="text.secondary">Đã đánh giá</Typography>
+            <Typography variant="caption" color="text.secondary">Có trong xếp hạng</Typography>
             <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#067647' }}>{assessedCount}</Typography>
           </CardContent>
         </Card>
-        <Card sx={{ minWidth: 180, flex: '1 1 180px', border: appsNeedingReview > 0 ? '1px solid #FEDF89' : undefined }}>
+        <Card sx={{ minWidth: 140, flex: '1 1 140px', border: appsNeedingReview > 0 ? '1px solid #FEDF89' : undefined }}>
           <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
             <Typography variant="caption" color="text.secondary">Cần HR xác minh</Typography>
             <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: appsNeedingReview > 0 ? '#B54708' : '#667085' }}>
@@ -407,7 +429,7 @@ export default function ApplicantsRankingPage() {
           </CardContent>
         </Card>
         {duplicateCount > 0 && (
-          <Card sx={{ minWidth: 180, flex: '1 1 180px', border: '1px solid #FECDCA' }}>
+          <Card sx={{ minWidth: 140, flex: '1 1 140px', border: '1px solid #FECDCA' }}>
             <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
               <Typography variant="caption" color="text.secondary">Cảnh báo trùng lặp</Typography>
               <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#C72127' }}>
@@ -419,7 +441,7 @@ export default function ApplicantsRankingPage() {
       </Stack>
 
       {/* Filters */}
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
         <OutlinedInput
           placeholder="Tìm kiếm theo tên ứng viên..."
           startAdornment={
@@ -447,26 +469,57 @@ export default function ApplicantsRankingPage() {
           >
             <MenuItem value="ALL">Tất cả ({totalApplications})</MenuItem>
             <MenuItem value="MEETS_MANDATORY">
-              Đáp ứng bắt buộc ({rankingItems.filter(i => !i.has_mismatch && !i.needs_verification).length})
+              Đáp ứng bắt buộc ({rankingItems.filter(i => displayCategory(i) === 'MEETS_MANDATORY').length})
             </MenuItem>
             <MenuItem value="NEEDS_HR_VERIFICATION">
-              Cần xác minh ({rankingItems.filter(i => i.needs_verification).length})
+              Cần xác minh ({rankingItems.filter(i => displayCategory(i) === 'NEEDS_HR_VERIFICATION').length})
             </MenuItem>
             <MenuItem value="POSSIBLE_MISMATCH">
-              Có dấu hiệu miss-match ({rankingItems.filter(i => i.has_mismatch).length})
+              Có dấu hiệu miss-match ({rankingItems.filter(i => displayCategory(i) === 'POSSIBLE_MISMATCH').length})
             </MenuItem>
-            <MenuItem value="NOT_ASSESSED">Chưa đánh giá ({rankingItems.filter(i => !i.matching_status || i.matching_status === 'NOT_ASSESSED').length})</MenuItem>
+            <MenuItem value="NOT_ASSESSED">Chưa có trong xếp hạng ({rankingItems.filter(i => displayCategory(i) === 'NOT_ASSESSED').length})</MenuItem>
+            <MenuItem value="OUT_OF_SCREENING">Ngoài sàng lọc ({rankingItems.filter(i => displayCategory(i) === 'OUT_OF_SCREENING').length})</MenuItem>
           </Select>
         </FormControl>
       </Box>
 
+      {/* Cards keep the primary actions visible on narrow screens. */}
+      <Box sx={{ display: { xs: 'grid', md: 'none' }, gap: 2 }}>
+        {filteredItems.length === 0 ? (
+          <Paper sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>
+            {rankingItems.length === 0 ? 'Chưa có hồ sơ nào. Tải CV lên để bắt đầu.' : 'Không có hồ sơ nào phù hợp bộ lọc.'}
+          </Paper>
+        ) : filteredItems.map(item => (
+          <Card key={item.application_id} sx={{ border: '1px solid #E9EEF4' }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
+                <Box><Typography variant="subtitle1" fontWeight={700} color="#0A2B57">{item.candidate_name || 'Chưa trích xuất tên'}</Typography>
+                  <Typography variant="caption" color="text.secondary">Thứ hạng: {item.rank_number ?? '—'} · {item.application_status && isApplicationStatus(item.application_status) ? APPLICATION_STATUSES[item.application_status].label : 'Chưa rõ trạng thái'}</Typography></Box>
+                {getMatchingStatusBadge(item)}
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5 }}>
+                {item.file_processing_status === 'NEEDS_HR_REVIEW' && <Chip size="small" color="error" variant="outlined" label="Cần HR xử lý CV" />}
+                {item.has_duplicate_warning && <Chip size="small" color="warning" variant="outlined" label="Hồ sơ trùng lặp" />}
+                {item.evidence_coverage != null && item.evidence_coverage < 0.7 && <Chip size="small" color="warning" variant="outlined" label="Độ phủ thấp — cần xác minh" />}
+              </Box>
+              <Typography variant="body2" sx={{ mt: 1.5 }}>Điểm: <strong>{item.matching_score == null ? '—' : `${item.matching_score}%`}</strong> · Độ phủ: <strong>{item.evidence_coverage == null ? '—' : `${Math.round(item.evidence_coverage * 100)}%`}</strong></Typography>
+              {item.is_shortlisted && <FormControlLabel sx={{ display: 'flex', mt: 0.5 }} control={<Checkbox checked={selectedIds.has(item.application_id)} onChange={() => handleToggleSelect(item.application_id)} />} label="Chọn để chia sẻ" />}
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5 }}>
+                <Button component={Link} href={`/positions/${positionId}/applicants/${item.application_id}`} variant="outlined" size="small">Xem chi tiết</Button>
+                {(item.is_shortlisted || item.application_status === 'IN_REVIEW') && <Button size="small" onClick={() => handleToggleShortlist(item.application_id, !!item.is_shortlisted)}>{item.is_shortlisted ? 'Bỏ shortlist' : 'Thêm vào shortlist'}</Button>}
+              </Box>
+            </CardContent>
+          </Card>
+        ))}
+      </Box>
       {/* Ranking Table */}
-      <TableContainer component={Paper} sx={{ borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-        <Table>
+      <TableContainer component={Paper} sx={{ display: { xs: 'none', md: 'block' }, borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+        <Table aria-label="Danh sách ưu tiên ứng viên">
           <TableHead>
             <TableRow>
               <TableCell padding="checkbox" width="40">
                 <Checkbox
+                  inputProps={{ 'aria-label': 'Chọn tất cả hồ sơ shortlist đang hiển thị' }}
                   checked={filteredItems.filter(i => i.is_shortlisted).length > 0 && filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
                   indeterminate={selectedIds.size > 0 && !filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
                   onChange={handleSelectAllVisible}
@@ -496,8 +549,9 @@ export default function ApplicantsRankingPage() {
                 <TableRow key={item.application_id} hover selected={selectedIds.has(item.application_id)}>
                   <TableCell padding="checkbox">
                     <Checkbox
+                      inputProps={{ 'aria-label': `Chọn hồ sơ ${item.candidate_name || 'ứng viên'} để chia sẻ` }}
                       checked={selectedIds.has(item.application_id)}
-                      disabled={!item.is_shortlisted && item.matching_status !== 'MEETS_MANDATORY'}
+                      disabled={!item.is_shortlisted}
                       onChange={() => handleToggleSelect(item.application_id)}
                     />
                   </TableCell>
@@ -518,6 +572,7 @@ export default function ApplicantsRankingPage() {
                       {item.candidate_name || 'Chưa trích xuất tên'}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
+                      {item.application_status && isApplicationStatus(item.application_status) && <Chip label={APPLICATION_STATUSES[item.application_status].label} size="small" sx={{ height: 20, fontSize: 10 }} />}
                       {item.file_processing_status === 'NEEDS_HR_REVIEW' && (
                         <Chip
                           label="Cần HR xử lý CV"
@@ -534,9 +589,9 @@ export default function ApplicantsRankingPage() {
                           sx={{ height: 20, fontSize: 10, backgroundColor: '#FEF0C7', color: '#B54708' }}
                         />
                       )}
-                      {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && !item.has_duplicate_warning && item.file_processing_status !== 'NEEDS_HR_REVIEW' && (
+                      {item.evidence_coverage != null && item.evidence_coverage < 0.7 && (
                         <Chip
-                          label="Độ phủ bằng chứng thấp"
+                          label="Chưa đủ dữ liệu để xếp hạng ổn định"
                           size="small"
                           icon={<ErrorOutlineIcon fontSize="small" />}
                           sx={{ height: 20, fontSize: 10, backgroundColor: '#FFFAEB', color: '#B54708' }}
@@ -554,7 +609,7 @@ export default function ApplicantsRankingPage() {
                       sx={{
                         fontSize: 20,
                         fontWeight: 'bold',
-                        color: getScoreColor(item.matching_score),
+                        color: item.evidence_coverage != null && item.evidence_coverage < 0.7 ? '#B54708' : getScoreColor(item.matching_score),
                       }}
                     >
                       {item.matching_score !== null && item.matching_score !== undefined
@@ -590,17 +645,19 @@ export default function ApplicantsRankingPage() {
                     </Box>
                   </TableCell>
                   <TableCell align="center">
-                    <Tooltip title={item.is_shortlisted ? "Bỏ shortlist" : "Thêm vào Shortlist"}>
-                      <IconButton
+                    <Tooltip title={item.is_shortlisted ? 'Bỏ shortlist' : item.application_status === 'IN_REVIEW' ? 'Thêm vào Shortlist' : 'Chuyển hồ sơ sang Đang xem trước khi shortlist'}>
+                      <span><IconButton
                         color={item.is_shortlisted ? "secondary" : "default"}
                         onClick={(e) => {
                           e.preventDefault();
                           handleToggleShortlist(item.application_id, !!item.is_shortlisted);
                         }}
                         size="small"
+                        aria-label={item.is_shortlisted ? 'Bỏ shortlist' : 'Thêm vào shortlist'}
+                        disabled={!item.is_shortlisted && item.application_status !== 'IN_REVIEW'}
                       >
-                        <ContentCutIcon fontSize="small" />
-                      </IconButton>
+                        <BookmarkAddOutlinedIcon fontSize="small" />
+                      </IconButton></span>
                     </Tooltip>
                   </TableCell>
                   <TableCell align="right">
@@ -608,6 +665,7 @@ export default function ApplicantsRankingPage() {
                       <IconButton
                         component={Link}
                         href={`/positions/${positionId}/applicants/${item.application_id}`}
+                        aria-label={`Xem chi tiết hồ sơ ${item.candidate_name || 'ứng viên'}`}
                         sx={{ color: '#0A2B57' }}
                       >
                         <VisibilityIcon />
@@ -620,15 +678,18 @@ export default function ApplicantsRankingPage() {
           </TableBody>
         </Table>
       </TableContainer>
+      </>}
 
       {/* Shortlist Share Dialog */}
       <Dialog open={shareDialogOpen} onClose={() => !shareSubmitting && setShareDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Chia sẻ Shortlist cho Hiring Manager</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            Chọn người nhận và danh sách ứng viên shortlist để chia sẻ. Người nhận sẽ nhận được thông báo trong hệ thống.
+            Chọn Hiring Manager phụ trách và hồ sơ đang ở trạng thái Shortlist. Người nhận có thể xem trong mục Shortlist.
           </DialogContentText>
+          {shareError && <Alert severity="error" sx={{ mb: 2 }}>{shareError}</Alert>}
           <Autocomplete
+            noOptionsText="Chưa có Hiring Manager được phân công"
             options={shareRecipientOptions}
             getOptionLabel={(opt: any) => opt.display_name || ''}
             isOptionEqualToValue={(opt: any, val: any) => opt.user_id === val?.user_id}
@@ -682,7 +743,7 @@ export default function ApplicantsRankingPage() {
                   onChange={(e) => setShareAllowCv(e.target.checked)}
                 />
               }
-              label="Cho phép người nhận xem/n tải file CV gốc"
+              label="Cho phép người nhận xem và tải CV gốc"
               sx={{ mt: 2 }}
             />
           </Box>
@@ -699,6 +760,7 @@ export default function ApplicantsRankingPage() {
           </Button>
         </DialogActions>
       </Dialog>
+      <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice(null)} message={notice} />
     </Box>
   );
 }

@@ -11,12 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install the application and its declared runtime dependencies.
 COPY pyproject.toml .
-RUN pip install --no-cache-dir poetry || pip install --no-cache-dir \
-    fastapi uvicorn pydantic pydantic-settings supabase python-multipart \
-    pypdf python-docx pytesseract pdf2image Pillow python-jose[cryptography] \
-    passlib[bcrypt] structlog python-dotenv httpx tenacity numpy celery redis
+COPY app ./app
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2" "setuptools>=84.1.0" \
+    && python -m pip install --no-cache-dir .
 
 COPY . .
 

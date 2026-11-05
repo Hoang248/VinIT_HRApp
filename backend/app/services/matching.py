@@ -1,8 +1,9 @@
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
+import re
+import math
 from app.core.config import settings
 from app.schemas.criteria import CriterionRating, CriteriaCategory
-import difflib
 
 
 class MatchingEngine:
@@ -20,25 +21,27 @@ class MatchingEngine:
     def calculate_criterion_weight(
         self,
         criterion: Dict[str, Any],
-        all_criteria: List[Dict[str, Any]]
+        all_criteria: List[Dict[str, Any]],
+        group_weights: Optional[Dict[str, float]] = None,
     ) -> float:
         """Calculate effective weight for a criterion: group_total_weight * relative_weight_in_group"""
-        group_weight = (
+        group_weight = (group_weights.get(criterion["category"], 0.0) if group_weights is not None else (
             settings.MANDATORY_CRITERIA_WEIGHT_DEFAULT
             if criterion["category"] == CriteriaCategory.MUST_HAVE.value
             else settings.NICE_TO_HAVE_WEIGHT_DEFAULT
-        )
+        ))
         # Sum of weight_in_group in this category
-        group_total = sum(c["weight_in_group"] for c in all_criteria if c["category"] == criterion["category"])
+        group_total = sum(float(c["weight_in_group"]) for c in all_criteria if c["category"] == criterion["category"])
         if group_total == 0:
             return 0
-        relative = criterion["weight_in_group"] / group_total
-        return group_weight * relative / 100
+        relative = float(criterion["weight_in_group"]) / group_total
+        return group_weight * relative
 
     def calculate_assessment_scores(
         self,
         criteria: List[Dict[str, Any]],
-        findings: List[Dict[str, Any]]
+        findings: List[Dict[str, Any]],
+        group_weights: Optional[Dict[str, float]] = None,
     ) -> Tuple[Optional[float], float, str, List[Dict[str, Any]], bool]:
         """
         Calculate matching score, evidence coverage, and matching status.
@@ -56,20 +59,32 @@ class MatchingEngine:
 
         for crit in criteria:
             crit_id = crit["criterion_id"]
-            effective_weight = self.calculate_criterion_weight(crit, criteria)
+            effective_weight = self.calculate_criterion_weight(crit, criteria, group_weights)
             total_applicable_weight += effective_weight
 
             finding = findings_map.get(crit_id, {})
             outcome = finding.get("outcome", CriterionRating.UNCLEAR.value)
-            confidence = finding.get("confidence", 0.5)
-            confidence_band = finding.get("confidence_band", "LOW")
+            if outcome not in {rating.value for rating in CriterionRating}:
+                outcome = CriterionRating.UNCLEAR.value
+            try:
+                confidence = float(finding.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = confidence if math.isfinite(confidence) and 0 <= confidence <= 1 else 0.0
+            confidence_band = str(finding.get("confidence_band") or "LOW").strip().upper()
+            if confidence_band not in {"HIGH", "MEDIUM", "LOW"}:
+                confidence_band = "LOW"
 
-            # Determine if finding is reliable enough
+            # A low/invalid confidence or explicit review flag is not a reliable
+            # finding, even when the model claimed MATCH or NO_MATCH.
             is_reliable = (
                 outcome != CriterionRating.UNCLEAR.value
                 and confidence >= 0.6
-                and confidence_band != "LOW"
+                and confidence_band in {"MEDIUM", "HIGH"}
+                and not finding.get("requires_verification")
             )
+            if not is_reliable:
+                outcome = CriterionRating.UNCLEAR.value
 
             if is_reliable:
                 point_value = self.SCORE_MAP.get(CriterionRating(outcome), None)
@@ -85,7 +100,10 @@ class MatchingEngine:
                     needs_verification = True
 
             # Augment finding with effective weight
-            aug_finding = {**finding, "effective_weight": effective_weight}
+            aug_finding = {**finding, "criterion_id": crit_id, "outcome": outcome,
+                           "confidence": confidence, "confidence_band": confidence_band,
+                           "requires_verification": bool(finding.get("requires_verification")) or not is_reliable,
+                           "effective_weight": effective_weight}
             augmented_findings.append(aug_finding)
 
         # Calculate final scores
@@ -94,7 +112,10 @@ class MatchingEngine:
         else:
             matching_score = round((weighted_score_sum / total_applicable_weight) * 100, 1) if total_applicable_weight > 0 else None
 
-        evidence_coverage = round(total_scored_weight / total_applicable_weight, 3) if total_applicable_weight > 0 else 0
+        # The DB stores two decimal places. Round down conservatively before
+        # applying the threshold so 69.9% cannot be stored as 70% and ranked.
+        evidence_coverage = (min(1.0, math.floor((total_scored_weight / total_applicable_weight + 1e-12) * 100) / 100)
+                             if total_applicable_weight > 0 else 0)
 
         # Check coverage threshold
         if evidence_coverage < settings.MIN_EVIDENCE_COVERAGE:
@@ -112,35 +133,18 @@ class MatchingEngine:
 
         return matching_score, evidence_coverage, matching_status, augmented_findings, needs_verification
 
-    def verify_verbatim_quote(self, quote: str, cv_full_text: str, threshold: float = 0.85) -> bool:
-        """Verify that verbatim quote actually exists in CV text (anti-hallucination guard)"""
+    def verify_verbatim_quote(self, quote: str, cv_full_text: str) -> bool:
+        """Verify an exact quote after whitespace/case normalization, not a fuzzy guess."""
         if not quote or len(quote) < 10:
             return False
+        normalize = lambda value: " ".join(value.lower().split())
+        return normalize(quote) in normalize(cv_full_text)
 
-        # Normalize whitespace for comparison
-        def normalize(s: str) -> str:
-            return " ".join(s.lower().split())
-
-        norm_quote = normalize(quote)
-        norm_cv = normalize(cv_full_text)
-
-        # Direct substring match
-        if norm_quote in norm_cv:
-            return True
-
-        # Fuzzy match for minor OCR differences
-        # Use sliding window matching
-        quote_len = len(norm_quote)
-        if quote_len > len(norm_cv):
-            return False
-
-        for i in range(0, len(norm_cv) - quote_len + 1, max(1, quote_len // 4)):
-            window = norm_cv[i:i + quote_len + 20]
-            similarity = difflib.SequenceMatcher(None, norm_quote, window[:quote_len]).ratio()
-            if similarity >= threshold:
-                return True
-
-        return False
+    def quote_pages(self, quote: str, cv_full_text: str) -> list[int]:
+        """Return actual PDF page markers containing the quote; DOCX has no page markers."""
+        parts = re.split(r"--- Page (\d+) ---", cv_full_text)
+        return [int(parts[index]) for index in range(1, len(parts) - 1, 2)
+                if self.verify_verbatim_quote(quote, parts[index + 1])]
 
     def rank_applications(
         self,
@@ -164,7 +168,8 @@ class MatchingEngine:
         def sort_key(item):
             assess = item.get("latest_assessment", {})
             status = assess.get("matching_status", "NOT_ASSESSED")
-            score = assess.get("matching_score") or -1
+            score = assess.get("matching_score")
+            score = score if score is not None else -1
             coverage = assess.get("evidence_coverage") or 0
             return (
                 status_order.get(status, 99),

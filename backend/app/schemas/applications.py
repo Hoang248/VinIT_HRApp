@@ -78,8 +78,16 @@ class ApplicationDocument(BaseSchema, TimestampMixin):
     mime_type: str
     size_bytes: int
     storage_path: str
-    file_status: FileProcessingStatus
+    document_type: str = "CV"
+    file_processing_status: FileProcessingStatus
     processing_error: Optional[str] = None
+
+
+class EvidenceItem(BaseSchema):
+    evidence_id: UUID
+    verbatim_quote: str
+    page_number: Optional[int] = None
+    verification_status: Optional[str] = None
 
 
 class CriterionResult(BaseSchema):
@@ -94,6 +102,7 @@ class CriterionResult(BaseSchema):
     requires_verification: bool = False
     verbatim_quote: Optional[str] = None
     page_number: Optional[int] = None
+    evidence: List[EvidenceItem] = Field(default_factory=list)
 
 
 class AssessmentRun(BaseSchema, TimestampMixin):
@@ -112,14 +121,19 @@ class AssessmentRun(BaseSchema, TimestampMixin):
 
 class ApplicationStatusUpdate(BaseSchema):
     new_status: ApplicationStatus
-    reason: Optional[str] = None
-    note: Optional[str] = None
+    reason: Optional[str] = Field(default=None, max_length=1000)
+    note: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ApplicationWithAssessment(Application):
     latest_assessment: Optional[AssessmentRun] = None
     documents: List[ApplicationDocument] = Field(default_factory=list)
     rank_number: Optional[int] = None
+    file_processing_status: str = "UNKNOWN"
+    file_error: Optional[str] = None
+    has_duplicate_warning: bool = False
+    can_view_cv: bool = False
+    can_update_status: bool = False
 
 
 class RankingItem(BaseSchema):

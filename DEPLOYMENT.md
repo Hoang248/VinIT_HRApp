@@ -1,137 +1,85 @@
-# VinUni HRApp — Triển khai lên Supabase
+# Triển khai VinUni HRApp với Supabase
 
-**Project Supabase:** `myrymlqdbyqmpynesiwk`
-**Region:** `ap-southeast-1` (Singapore)
-**Database:** PostgreSQL 17.11
-**Date:** 2026-11-05
+> Bản hiện tại cần kiểm thử và phê duyệt trước khi dùng với hồ sơ thật. Các kiểm thử tự động đã chạy trên PostgreSQL cục bộ với dữ liệu giả và LLM giả lập; chưa chứng minh được Supabase Storage/Auth, OCR scan, LLM thật hay Docker trong môi trường đích.
 
-## ✅ Đã hoàn thành trên Supabase
+## Tình trạng project đã kết nối
 
-### 1. Database Migrations (đã apply)
-| Migration | Version | Mô tả |
-|-----------|---------|-------|
-| `00001_initial_schema.sql` | `20261105081853` | Tạo schema `app_private`, 37 bảng (users, positions, JD, criteria, CV batches, applications, documents, profiles, assessments, ranking, shortlist, audit), RLS policies cơ bản, indexes, helper `has_position_access()`, auto-update trigger, storage buckets `cv-originals` + `cv-extracted-text`, public views cho supabase-js client. |
-| `00002_audit_fixes_indexes_rls.sql` | `20261105082127` | Bổ sung indexes cho polling operations/Ranking lookup; RLS policies cho 15 bảng còn thiếu (criterion_results, evidence, identities, status events, jd_versions, duplicate_signals, ai_config, …); phân quyền USAGE/SELECT cho role `authenticated`, full access cho `service_role`. |
+Đã áp dụng `00003_phase1_operation_scope.sql` cho project `myrymlqdbyqmpynesiwk` **ngày 05/11/2026 sau khi được người dùng xác nhận**. Trước khi áp dụng, project khỏe và không có vị trí, hồ sơ hoặc tác vụ; các view cũ tương thích. Supabase ghi lịch sử:
 
-**Tổng cộng:** 37 tables trong schema `app_private`, tất cả có RLS.
+- `20261105081853` — `initial_schema`
+- `20261105082127` — `audit_fixes_indexes_rls_grants`
+- `20261105131736` — `phase1_operation_scope`
 
-### 2. Storage Buckets (đã tạo)
-- `cv-originals` — lưu file CV PDF/DOCX gốc (private)
-- `cv-extracted-text` — lưu văn bản trích xuất (private)
+Kiểm tra chỉ đọc sau migration: cột `operations.position_id` có trong `app_private` và view `public`; `anon`/`authenticated` không có `USAGE` trên `app_private` và không có SELECT/INSERT/UPDATE/DELETE trên 37 view nghiệp vụ `public`; `service_role` vẫn có quyền SELECT cần thiết. Hai bucket `cv-originals` và `cv-extracted-text` private, không có policy trên `storage.objects`; DB/Auth/REST/Storage báo healthy. Chưa kiểm thử API/Storage/LLM thật với credential runtime. Trạng thái có thể thay đổi, hãy kiểm tra lại trước triển khai.
 
-### 3. Auth Configuration
-- ✅ **Tắt tự do đăng ký** (`disable_signup = true`) — tài khoản phải được Admin mời vào
-- ✅ **Site URL**: `http://localhost:3000` (cần cập nhật khi deploy production)
-- ✅ Refresh token rotation bật mặc định
-- ⚠️ **Lưu ý:** Storage bucket RLS policies phải được cấu hình qua Supabase Dashboard (Storage → Policies) vì tài khoản owner của `storage.objects` là `supabase_storage_admin`, không thể chỉnh từ SQL migration. Xem mục 6 bên dưới.
+## Trước khi triển khai
 
-### 4. Default Data (đã seed)
-| Bảng | Dữ liệu |
-|------|---------|
-| `assessment_policy_versions` | Policy chấm điểm v1.0 (STRONG_MATCH=100, MATCH=80, NO_MATCH=0, min_coverage=0.7) |
-| `retention_policy_versions` | Policy lưu trữ 12 tháng sau khi đóng vị trí |
-| `ai_policy_versions` | Policy mặc định `default-local-v1` — chỉ cho phép nhà cung cấp local, cấm external API |
-| `ai_configuration_versions` | Cấu hình AI hoạt động: **Ollama local `llama3.1:8b`** tại `http://localhost:11434/v1`, status ACTIVE |
+1. **Thu hồi/rotate service-role key đã từng xuất hiện trong lịch sử Git.** Thay giá trị mới trong secret manager và cấu hình backend; xóa khỏi file hiện tại không thu hồi được key cũ. Nếu đây là legacy service-role JWT, việc đổi JWT secret có thể ảnh hưởng anon key, phiên đăng nhập và các tích hợp; lập kế hoạch chuyển đổi/gián đoạn trước khi thực hiện. Xem xét phạm vi phơi lộ, logs và các client đang dùng key. Không đưa key hoặc JWT secret vào frontend hay Git.
+2. Với project khác hoặc môi trường đích mới, sao lưu database, rà soát client tích hợp và thử migration trên staging có schema giống môi trường đích. Migration 00003 thêm `operations.position_id`, backfill quan hệ, tạo/cập nhật public views, và **thu hồi quyền direct đối với `app_private` và các view khỏi `anon`/`authenticated`**. Các client/PostgREST gọi trực tiếp bảng/view cũ có thể ngừng hoạt động. Thống nhất phương án rollback và chỉ chạy migration bằng quy trình được phê duyệt.
+3. Đối chiếu lịch sử migration thực tế trước khi áp dụng; các version từ xa nêu trên khác tiền tố tên file local, vì vậy không chạy `supabase db push`/reset mù quáng trên project hiện hữu. **Không áp dụng lại 00003 cho project trên**; chỉ áp dụng cho môi trường khác sau phê duyệt và ghi lịch sử migration phù hợp.
+4. Trên từng môi trường đích, xác minh cùng lúc: `operations.position_id` tồn tại; `anon`/`authenticated` không có `USAGE` trên `app_private` và không có quyền đọc/ghi các view nghiệp vụ `public`; `service_role` vẫn có quyền cần thiết. Kiểm thử HR/HM, thu hồi phân công và thu hồi shortlist qua API với dữ liệu giả.
 
-## 🔧 Bước còn lại để chạy hệ thống
-
-### 5. Tạo tài khoản Admin đầu tiên (bắt buộc)
-Vì `disable_signup = true`, bạn phải tạo user đầu tiên qua Supabase Dashboard:
-
-1. Vào **Authentication → Users → Add user**
-2. Nhập email admin (ví dụ `admin@vinuni.edu.vn`) và mật khẩu
-3. Copy `user_id` (UUID) của user vừa tạo
-4. Chạy SQL sau trong **SQL Editor** để cấp quyền ADMIN:
+Ví dụ truy vấn kiểm tra quyền (chỉ đọc):
 
 ```sql
--- Thay <ADMIN_UUID> bằng user_id vừa tạo
-INSERT INTO app_private.user_profiles (user_id, display_name, preferred_locale)
-VALUES ('<ADMIN_UUID>', 'HR Admin', 'vi')
-ON CONFLICT (user_id) DO NOTHING;
-
-INSERT INTO app_private.user_role_assignments (user_id, role_code, granted_by)
-VALUES ('<ADMIN_UUID>', 'ADMIN', '<ADMIN_UUID>')
-ON CONFLICT (user_id, role_code) DO NOTHING;
+SELECT has_schema_privilege('authenticated', 'app_private', 'USAGE') AS authenticated_private_usage,
+       has_table_privilege('authenticated', 'public.applications', 'SELECT') AS authenticated_applications_select,
+       has_schema_privilege('service_role', 'app_private', 'USAGE') AS service_private_usage;
+-- Kỳ vọng sau 00003: false, false, true.
 ```
 
-### 6. Cấu hình Storage Policies (bắt buộc)
-Vào **Storage → Policies** trong Supabase Dashboard và tạo các policy sau:
+## Storage: chỉ backend truy cập trực tiếp
 
-**Cho bucket `cv-originals`:**
+Giữ **cả hai bucket ở chế độ private**. CV upload/download đi qua API đã kiểm tra quyền theo vị trí và shortlist; worker dùng service role cho cả CV gốc lẫn văn bản trích xuất. **Không tạo policy cho `anon` hoặc `authenticated` đọc/ghi trực tiếp hai bucket**: policy cho HM dựa riêng trên quyền vị trí có thể bỏ qua `allow_cv_view=false`.
 
-- **INSERT (authenticated HR can upload):**
-  ```sql
-  bucket_id = 'cv-originals'
-  AND split_part(name, '/', 1) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-  ```
-  Target roles: `authenticated`
+Kiểm tra các policy hiện có trong Dashboard → Storage → Policies hoặc `pg_policies`; nếu từng áp dụng hướng dẫn policy cũ, rà soát và loại bỏ/sửa policy cho hai bucket sau khi đánh giá tác động tới ứng dụng khác. Không xóa mù quáng policy của bucket khác. Đường link ký được backend cấp có hiệu lực tối đa 10 phút; link đã cấp có thể vẫn dùng được tới khi hết hạn sau khi quyền bị thu hồi.
 
-- **SELECT (HR/HM with position access can read):**
-  ```sql
-  bucket_id = 'cv-originals'
-  AND EXISTS (
-    SELECT 1 FROM app_private.application_documents d
-    JOIN app_private.applications a ON a.application_id = d.application_id
-    WHERE d.storage_path = name
-    AND (
-      app_private.has_position_access(a.position_id, ARRAY['HR_RECRUITER','HR_LEAD','HIRING_MANAGER'])
-      OR EXISTS (
-        SELECT 1 FROM app_private.shortlist_shares ss
-        JOIN app_private.shortlist_share_items si ON ss.share_id = si.share_id
-        WHERE ss.shared_with = auth.uid() AND ss.status='ACTIVE' AND ss.allow_cv_view=TRUE
-        AND si.application_id = d.application_id
-      )
-    )
-  )
-  ```
-  Target roles: `authenticated`
+## Cấu hình
 
-**Cho bucket `cv-extracted-text`:**
-- Không cho phép đọc/ghi từ phía client (service role dùng riêng cho worker). Để trống hoặc tạo policy luôn trả về `false`.
+- `DATABASE_URL`: kết nối PostgreSQL từ **backend**; dùng TLS cho cloud. Vai trò kết nối phải có các quyền SQL cần thiết để API/worker truy cập `app_private`; dữ liệu được phân quyền trong backend, nên không cấp credential này cho client. Hạn chế quyền và network theo nguyên tắc tối thiểu.
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`: dùng cho đăng nhập Supabase Auth ở backend. `SUPABASE_JWT_SECRET`: bí mật xác minh JWT, chỉ backend. Hiện API xác minh JWT **HS256**, audience `authenticated`, và yêu cầu `sub`/`aud`/`exp`; project dùng signing key bất đối xứng cần bổ sung JWKS/thuật toán tương ứng trước khi sử dụng.
+- `SUPABASE_SERVICE_ROLE_KEY`: chỉ backend/worker; bắt buộc khi `STORAGE_BACKEND=supabase`. `local` là tùy chọn thử nghiệm, Compose lưu trong volume `cv_storage` và cần bảo vệ dữ liệu/backup phù hợp.
+- `LLM_API_BASE`, `LLM_MODEL_NAME`, `LLM_API_KEY`, `ALLOW_EXTERNAL_API`: đọc từ **environment khi process khởi động**. Trang Admin chỉ đọc cấu hình của process API; bản ghi AI trong database không tự áp dụng, các endpoint đổi cấu hình trả 501. Khi đổi env phải khởi động lại API/worker và xác nhận cấu hình của mọi process.
+- `ALLOW_EXTERNAL_API=false` mặc định chặn endpoint không phân giải về địa chỉ private/loopback và client không dùng proxy từ biến môi trường. Đây **không phải** kiểm soát egress đầy đủ/DNS pinning: triển khai firewall/network allowlist, TLS, giám sát và quy trình phê duyệt riêng. CV text được gửi đến endpoint AI đã cấu hình; hiện chưa có bộ khử thông tin nhạy cảm/anti-bias đủ để cam kết loại bỏ hoàn toàn. Không gửi CV thật tới dịch vụ bên ngoài nếu chưa có phê duyệt và kiểm soát dữ liệu.
+- Frontend gọi `/v1` cùng origin; Next proxy tới `API_INTERNAL_URL` phía server. Không đặt URL backend localhost trong mã chạy ở trình duyệt. Trong Compose, giá trị là `http://backend:8000`; `localhost` bên trong một container không phải host máy.
 
-### 7. Lấy thông tin kết nối
-| Thông tin | Giá trị |
-|-----------|---------|
-| Host | `db.myrymlqdbyqmpynesiwk.supabase.co` |
-| Port | `5432` (direct) / `6543` (pooler) |
-| Database | `postgres` |
-| User | `postgres` |
-| Password | Xem tại **Project Settings → Database → Connection string → Reset database password** |
-| Supabase URL | `https://myrymlqdbyqmpynesiwk.supabase.co` |
-| Anon Key | (đã điền sẵn trong `.env.example`) |
-| Service Role Key | (đã điền sẵn trong `.env.example` — **không commit lên git**) |
-| JWT Secret | **Project Settings → API → JWT Settings → JWT Secret** (cần copy vào backend `.env`) |
+Mẫu cấu hình: `.env.example` cho Compose, `backend/.env.example` và `frontend/.env.local.example` khi chạy từng dịch vụ. Các giá trị mẫu là placeholder, không phải credential.
 
-### 8. Khởi chạy backend
+## Khởi chạy
+
+### Từng dịch vụ
+
 ```bash
 cd backend
-cp .env.example .env
-# Edit .env và điền DATABASE_URL password + SUPABASE_JWT_SECRET
-pip install -e .
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cp .env.example .env             # điền cấu hình an toàn, không commit
+python -m venv .venv
+.venv/bin/python -m pip install --upgrade "pip>=26.2" "setuptools>=84.1.0"
+.venv/bin/pip install -e .
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### 9. Khởi chạy frontend
 ```bash
 cd frontend
-cp .env.local.example .env.local
-npm install
+cp .env.local.example .env.local # API_INTERNAL_URL trỏ tới backend
+npm ci
 npm run dev
 ```
 
-Truy cập `http://localhost:3000`, đăng nhập bằng tài khoản admin vừa tạo.
+Đăng nhập cần user Supabase Auth có `app_private.user_profiles.account_status='ACTIVE'` và role/position assignment tương ứng. Provision user/role phải do quản trị viên thực hiện theo quy trình nội bộ. `/health` chỉ kiểm tra liveness; `/health/ready` kiểm tra kết nối database, không chứng minh Storage hoặc LLM hoạt động.
 
-### 10. Xác nhận hệ thống hoạt động
-- API health: `GET http://localhost:8000/health` → `{"status":"healthy",...}`
-- DB readiness: `GET http://localhost:8000/health/ready` → `{"status":"ready","database":"connected",...}`
-- Swagger docs: `http://localhost:8000/docs`
-- Admin AI config: đăng nhập → vào `/admin` → phải thấy cấu hình local Ollama đang ACTIVE
-- Tạo position test → upload CV PDF → chờ worker xử lý → xem xếp hạng.
+### Docker Compose
 
-## ⚠️ Lưu ý bảo mật trước production
-1. **Thay đổi mật khẩu DB** lần đầu sau khi nhận project
-2. **Xoá service_role key** khỏi file `.env.example` sau khi bạn copy sang `.env`; trong file ví dụ chỉ nên để placeholder
-3. **Không dùng service_role key trên frontend** — chỉ dùng ở backend
-4. **Thêm CORS origins** cho domain production ở `app/core/config.py` + Supabase Auth URL config
-5. **Bật email verification** và SMTP trước khi mời người dùng thật
-6. **Rotate JWT secret** sau khi pilot ổn định
+```bash
+cp .env.example .env  # điền URL/secret cho backend, APP_ENV=production và DEBUG=false khi cần
+# Đảm bảo Supabase/PostgreSQL và LLM riêng đã chạy, có thể truy cập từ container
+docker compose up --build
+```
+
+Compose chỉ tạo frontend và backend; worker chạy trong process backend, không có Celery/Redis/PostgreSQL/LLM tích hợp. Cần quản lý network, TLS, backup volume, bí mật, giám sát và số worker/process. Docker build/runtime chưa được kiểm chứng trong phiên này.
+
+## Giới hạn vận hành cần xử lý trước production
+
+- Queue poll PostgreSQL chưa có lease/heartbeat hoặc phục hồi an toàn tác vụ `PROCESSING` sau crash. Không tự đặt lại task đang chạy khi chưa xác minh worker đã dừng và tác động tới dữ liệu; cần runbook/khôi phục được thiết kế và kiểm thử trước vận hành.
+- Chưa có luồng quản lý retention/xác nhận xóa và chỉnh sửa hồ sơ ứng viên hoàn chỉnh; log audit chưa được bảo đảm bất biến. Giao diện hiện lưu access token ở `localStorage`; cần đánh giá XSS, chính sách session, log, quyền và an toàn dữ liệu trước pilot. SQLAlchemy không echo và ẩn bound parameters, nhưng vẫn cần rà soát log của toàn bộ hệ thống.
+- Python dependencies hiện khai báo theo khoảng phiên bản, chưa có lockfile; kiểm soát chuỗi cung ứng và chạy quét lỗ hổng định kỳ cho image/dependencies. Ngày 05/11/2026, `npm audit --omit=dev` báo 0, nhưng full audit còn 6 cảnh báo moderate trong chuỗi công cụ lint. `pip-audit` trên môi trường backend cục bộ không báo lỗ hổng đã biết ở các dependencies được quét (bỏ qua package nội bộ editable). Các kết quả tại một thời điểm không chứng minh image triển khai an toàn.
+- Thực hiện kiểm thử OCR scan (Tesseract tiếng Anh + Poppler), model thật, đánh giá chất lượng/bias và kiểm thử end-to-end Supabase với dữ liệu được phép. Kết quả AI chỉ là tham khảo; chỉ HR chuyển trạng thái tuyển dụng.

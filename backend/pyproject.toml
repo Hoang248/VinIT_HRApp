@@ -15,7 +15,7 @@ dependencies = [
     "pytesseract>=0.3.10",
     "pdf2image>=1.17.0",
     "Pillow>=10.0.0",
-    "python-jose[cryptography]>=3.3.0",
+    "PyJWT>=2.10.1",
     "passlib[bcrypt]>=1.7.4",
     "structlog>=23.2.0",
     "python-dotenv>=1.0.0",
@@ -30,7 +30,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-cov>=4.1.0",
     "black>=23.12.0",
     "ruff>=0.1.0",
@@ -40,3 +40,13 @@ worker = [
     "celery>=5.3.0",
     "redis>=5.0.0",
 ]
+
+[build-system]
+requires = ["setuptools>=84.1.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

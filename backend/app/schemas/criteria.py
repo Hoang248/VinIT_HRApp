@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from decimal import Decimal
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
@@ -44,7 +45,7 @@ class CriterionUpdate(BaseSchema):
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[CriteriaCategory] = None
-    weight_in_group: Optional[float] = None
+    weight_in_group: Optional[float] = Field(default=None, ge=0, le=100)
     expected_evidence_keywords: Optional[List[str]] = None
 
 
@@ -64,6 +65,19 @@ class CriteriaVersionBase(BaseSchema):
 
 class CriteriaVersionCreate(CriteriaVersionBase):
     criteria: List[CriterionCreate]
+
+
+class CriteriaWeightsUpdate(BaseSchema):
+    # The groups are percentages stored in NUMERIC(5,2); keeping the sum in
+    # Decimal prevents rounding a malformed rubric into an approved one.
+    mandatory_weight_total: Decimal = Field(gt=0, le=100, max_digits=5, decimal_places=2)
+    nice_to_have_weight_total: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+    @model_validator(mode="after")
+    def weights_total_100(self):
+        if self.mandatory_weight_total + self.nice_to_have_weight_total != Decimal("100"):
+            raise ValueError("Tổng trọng số hai nhóm phải bằng 100%")
+        return self
 
 
 class CriteriaVersion(CriteriaVersionBase, TimestampMixin):

@@ -1,67 +1,34 @@
-# Phase 1 GAP Analysis — Rà soát toàn bộ yêu cầu Phase 1 so với implementation hiện tại
+# Phase 1 — trạng thái triển khai và khoảng trống
 
-**Date:** 2026-11-05
-**Source of truth:** `doc/HRA_PRD.md`, `doc/HRA_Phase1_Architecture.md` (Ma trận F1.01–F1.13)
+**Cập nhật:** 05/11/2026. Đối chiếu `doc/HRA_PRD.md` và `doc/HRA_Phase1_Architecture.md`. “Có trong mã” không đồng nghĩa đã triển khai hoặc nghiệm thu trên Supabase thật.
 
-## Bảng ánh xạ tính năng
+| ID | Yêu cầu | Trạng thái hiện tại |
+|---|---|---|
+| F1.01 | Vị trí, JD, Hiring Manager | Có tạo vị trí/JD, gán HM, chỉnh tên và mở/tạm dừng/đóng. Chưa có UI chỉnh sửa/lưu phiên bản JD sau khi tạo. |
+| F1.02 | Đề xuất, duyệt HR + HM, trọng số | Có nháp, sửa nội dung/trọng số từng tiêu chí và hai nhóm (tổng 100%), HR duyệt trước, HM được gán duyệt/yêu cầu sửa, lịch sử và khóa bản đã duyệt. Hai bước kiểm tra **vai trò**, chưa bắt buộc hai tài khoản khác nhau. Chưa kiểm thử LLM thật. |
+| F1.03 | Upload batch | Có giới hạn 50 file, 10 MB/file, 250 MB/lô, kiểm tra chữ ký PDF/DOCX, báo tệp không hợp lệ và tiến trình. |
+| F1.04 | Trích xuất, OCR, sửa profile | Có code PDF text/DOCX và OCR PDF scan qua Tesseract tiếng Anh + Poppler; đã kiểm thử pipeline DOCX giả lập, **chưa kiểm thử OCR scan thật**. Lỗi xử lý được đánh dấu cần HR xem; chưa có UI sửa profile trích xuất. |
+| F1.05 | Đánh giá và dẫn chứng | Có bốn mức; trích dẫn phải khớp văn bản sau chuẩn hóa khoảng trắng/chữ hoa-thường, số trang PDF được kiểm tra. DOCX không có số trang đáng tin cậy. Thiếu bằng chứng/độ tin cậy thấp đưa về `UNCLEAR`. |
+| F1.06 | Điểm và ranking trong vị trí | Có tính điểm tất định theo trọng số của phiên bản đã duyệt, cảnh báo độ phủ thấp, ranking theo nhóm bắt buộc rồi điểm. Độ phủ hiện dựa trên trọng số có bằng chứng đáng tin cậy; quy đổi điểm và policy runtime cần HR/HM xác nhận trước pilot. |
+| F1.07 | Cảnh báo trùng | Có cảnh báo trong cùng vị trí dựa trên email/số điện thoại trích xuất bằng regex; không tự gộp/xóa. Cần kiểm thử độ chính xác trên tập dữ liệu được phép. |
+| F1.08 | Tám trạng thái và lịch sử | HR cập nhật theo luồng hợp lệ, lý do bắt buộc khi loại, có lịch sử/reason/note. AI không tự đổi trạng thái tuyển dụng. |
+| F1.09 | Chia sẻ/feedback shortlist | Có chia sẻ cho HM được gán, tùy chọn xem CV, feedback và thu hồi; HM không được xem CV/evidence khi chỉ nhận tóm tắt. Chưa có ghi chú nội bộ HR riêng. |
+| F1.10 | RBAC, audit, retention | RBAC backend và các thao tác audit chính đã được kiểm thử cục bộ, gồm thu hồi assignment/share. Migration 00003 đã áp dụng vào project được kết nối; các quyền direct đã được xác minh, chưa kiểm thử toàn bộ Supabase E2E. Audit chưa bất biến; chưa có UI/workflow xác nhận xóa/retention 12 tháng. |
+| F1.11 | Cấu hình AI và bảo vệ dữ liệu | Mặc định giới hạn endpoint private; Admin UI chỉ đọc, thay cấu hình bằng env/restart. Chưa có quản lý cấu hình runtime qua UI, egress enforcement, hoặc bộ lọc nhạy cảm/anti-bias hoàn chỉnh. CV text vẫn được gửi tới model đã cấu hình. |
+| F1.12 | Việt–Anh | UI hiện chủ yếu tiếng Việt, chưa có chuyển ngôn ngữ/i18n đầy đủ. |
+| F1.13 | Dashboard | Số liệu lấy từ PostgreSQL theo quyền, đếm hồ sơ một lần và dùng assessment hoàn tất mới nhất. Tỷ lệ override/thời gian xử lý chưa đủ dữ liệu đáng tin cậy nên trả `null`, không tạo số giả. |
 
-| ID | Yêu cầu Phase 1 (PRD/Architecture) | Trạng thái | Ưu tiên fix |
-|----|------------------------------------|------------|-------------|
-| **F1.01** | Quản lý Vị trí & JD (tạo/mở/tạm dừng/đóng) | ✅ Có (API + UI tạo/chỉnh sửa) | — |
-| | Khai báo Hiring Manager khi tạo vị trí | ✅ Có — form tạo vị trí có autocomplete HM; backend tự gán HIRING_MANAGER position_assignment + system role | — |
-| **F1.02** | AI đề xuất tiêu chí từ JD | ✅ Có (nút tạo nháp + polling) | — |
-| | Dual Approval: HR duyệt quy trình, HM duyệt chuyên môn (ghi rõ role người duyệt) | ⚠️ API có approve nhưng chưa enforce PENDING_HM_APPROVAL workflow; UI chưa phân tách nút theo role | 🔴 Cao |
-| | Trọng số Bắt buộc 70% / Ưu tiên 30%, điều chỉnh được | ⚠️ Hiển thị trọng số nhưng UI không cho chỉnh sửa | 🟡 Trung bình (chấp nhận 70/30 fixed cho MVP) |
-| | Lưu phiên bản rubric | ✅ Có (version_number) | — |
-| **F1.03** | Upload CV theo batch (≤50 file, ≤10MB/file, ≤250MB) | ✅ Có (API + upload dialog) | — |
-| **F1.04** | Bóc tách văn bản PDF/DOCX | ✅ Có (worker thực hiện) | — |
-| | OCR PDF scan | ❌ Chưa tích hợp Tesseract/OCR | 🟢 Low (ghi chú giới hạn MVP, chờ bổ sung) |
-| | File lỗi/không đọc được → "Cần HR kiểm tra" (không tự động loại) | ✅ Có — chip + banner đỏ "Cần HR xử lý CV" trên ranking và trang chi tiết; card summary riêng | — |
-| | Cho phép HR chỉnh sửa thông tin trích xuất sai (tên/email/số ĐT) | ❌ Chưa có UI chỉnh sửa profile | 🟡 Trung bình (defer sang Phase 2) |
-| **F1.05** | Matching có bằng chứng (4 mức + trích dẫn + số trang) | ✅ Có (side-by-side page) | — |
-| | Click trích dẫn → nhảy đến trang tương ứng trong PDF | ✅ Có — click chip "Trang X" sẽ điều hướng PDF iframe đến `#page=N` | — |
-| | "Chưa rõ" ≠ "Chưa đáp ứng" (phân biệt thiếu thông tin) | ✅ Logic worker đúng; UI hiển thị màu UNCLEAR | — |
-| **F1.06** | Ranking theo tiêu chí bắt buộc trước điểm | ✅ Có (matching_engine.rank_applications) | — |
-| | Cảnh báo độ phủ < 70% | ✅ Có (chip "Độ phủ bằng chứng thấp" + progress bar màu) | — |
-| | Nút "Chạy đánh giá / Tạo xếp hạng" trên UI | ✅ Có (commit 2b48f28) — polling operation 2s, progress bar, tự làm mới khi xong | — |
-| **F1.07** | Cảnh báo hồ sơ trùng lặp trong cùng vị trí | ✅ Có — backend flag `has_duplicate_warning`; UI hiển thị chip vàng + banner chi tiết; card summary "Cảnh báo trùng lặp" | — |
-| **F1.08** | HR cập nhật trạng thái hồ sơ (tất cả các trạng thái NEW→INTERVIEW→ACCEPTED) | ⚠️ API hỗ trợ đủ 8 trạng thái; dialog cập nhật chỉ có vài lựa chọn đơn giản | 🟡 Trung bình |
-| | AI không bao giờ tự động đổi trạng thái | ✅ Đúng thiết kế | — |
-| **F1.09** | Chia sẻ Shortlist cho Hiring Manager (có phân quyền xem CV) | ✅ Có — nút "Chia sẻ Shortlist" mở dialog chọn người nhận + danh sách ứng viên + toggle cho phép xem CV; toggle shortlist từng dòng trong bảng | — |
-| | Nhận xét/phản hồi của HM trên shortlist | ⚠️ API có feedback endpoint; trang `/shortlist` chưa có form nhập phản hồi | 🟡 Trung bình |
-| | Ghi chú nội bộ HR (bảo mật, không chia sẻ với HM) | ❌ Chưa có bảng/UI cho ghi chú nội bộ | 🟡 Trung bình (Phase 2) |
-| **F1.10** | RBAC theo vị trí | ✅ Đã implement trong audit round 2 | — |
-| | Audit log cho thao tác quan trọng | ✅ Ghi audit_events từ API (xem được DB-level; UI đọc audit chưa làm) | 🟢 Low |
-| | Retention 12 tháng + chờ HR xác nhận xóa | ✅ Có bảng retention schema; UI quản lý retention là Phase 2 | 🟢 Low |
-| **F1.11** | Ưu tiên local model, Admin có thể cấu hình model | ✅ Có trang Admin với policy guard external_api | — |
-| **F1.12** | Giao diện song ngữ Việt-Anh, mặc định tiếng Việt | ✅ Toàn bộ UI tiếng Việt; không có nút chuyển ngôn ngữ (chưa có locale en-US) → phù hợp MVP | — |
-| **F1.13** | Dashboard & Báo cáo theo vai trò | ✅ Có trang Dashboard với card thống kê (một số chỉ số placeholder) | 🟡 Trung bình (số liệu thật sẽ có sau khi dữ liệu vận hành) |
-| **Tín hiệu polling tiến trình** | Upload CV xong phải báo tiến trình xử lý hoàn tất | ⚠️ Có polling cho assessment; polling sau upload CV làm mới tự động chưa triển khai | 🟡 Trung bình |
+## Các mục ưu tiên trong đợt này
 
-## Tổng hợp công việc cần triển khai (sắp xếp theo ưu tiên)
+- **#5:** Dual approval có phân vai, khóa phiên bản và ghi lịch sử; trọng số nhóm có thể điều chỉnh trong bản nháp.
+- **#7:** Polling upload, tự chạy đánh giá/ranking sau khi xử lý thành công và khôi phục theo dõi khi quay lại trang. Queue chưa khôi phục an toàn sau crash.
+- **#9:** Form HM phản hồi shortlist và HR thu hồi chia sẻ.
+- **#10:** Chuyển trạng thái hợp lệ trong 8 trạng thái, ghi lý do/lịch sử.
+- **#11:** Dashboard, tổng số theo vị trí và nhãn tiêu chí đọc dữ liệu thật; không hiển thị số cố định.
+- UI mobile có điều hướng và các danh sách vị trí, ranking, shortlist dạng thẻ; trạng thái loading/lỗi/cảnh báo rõ hơn.
 
-### 🔴 Critical — Phải có để luồng chính hoạt động
-1. ✅ **Nút "Chạy đánh giá & Xếp hạng"** trên trang applicants + polling tiến trình operation (commit `2b48f28`)
-2. ✅ **Nút "Thêm vào Shortlist"** + luồng chia sẻ shortlist cho Hiring Manager từ UI (commit `8c2fea3`)
-3. ✅ **Hiển thị cảnh báo hồ sơ trùng lặp** trên trang chi tiết ứng viên và trên danh sách xếp hạng (commit `8c2fea3`)
-4. ✅ **Badge "Cần HR kiểm tra"** cho các CV lỗi không đọc được / xử lý thất bại (commit `8c2fea3`)
-5. **Ghi nhận vai trò khi duyệt tiêu chí** (HR review → PENDING_HM_APPROVAL → HM duyệt) với nút hành động rõ ràng theo vai trò — còn lại
-6. ✅ **Trường gán Hiring Manager** khi tạo vị trí (tự gán position_assignment + HIRING_MANAGER system role) (commit `8c2fea3`)
-7. **Polling tự động** sau khi upload CV để cập nhật tiến trình xử lý và tự chuyển sang đánh giá khi hoàn tất — còn lại (hiện tại user có thể bấm Refresh hoặc "Chạy đánh giá" sau khi upload xong)
+## Kiểm thử và công việc còn lại
 
-### 🟡 Trung bình — Nên có cho MVP hoàn chỉnh
-8. ✅ Click trích dẫn → scroll PDF viewer đến trang tương ứng (commit `8c2fea3`)
-9. Form phản hồi Hiring Manager trên trang shortlist — còn lại
-10. Dialog cập nhật trạng thái hồ sơ đầy đủ 8 mức (với lý do) — còn lại
-11. Cập nhật dashboard số liệu từ dữ liệu thật (số hồ sơ cần kiểm tra, coverage TB, cảnh báo trùng) — còn lại
-12. ✅ Loại bỏ/ẩn nút chuyển ngôn ngữ — không có trong build hiện tại (toàn bộ mặc định tiếng Việt)
+Kiểm thử hiện tại dùng database PostgreSQL cục bộ dùng một lần và LLM giả lập; có integration cho upload DOCX → đánh giá → ranking, phân quyền HR/HM/HR Lead, trọng số, trạng thái, shortlist, thu hồi và grant sau migration. Build/lint/typecheck frontend và smoke trình duyệt desktop/mobile đã chạy với dữ liệu giả. Đã áp dụng và kiểm tra quyền migration 00003 trên project được kết nối; chưa kiểm thử Supabase/LLM/OCR thật đầu-cuối hoặc Docker.
 
-### 🟢 Low / Out of Scope cho Phase 1 (chuyển sang Phase 2)
-- OCR PDF scan (Tesseract) — cần cài system dependency
-- Chỉnh sửa thông tin profile ứng viên
-- Ghi chú nội bộ HR
-- UI quản lý retention/deletion
-- i18n song ngữ đầy đủ (hiện tại hardcode tiếng Việt đã đáp ứng "mặc định tiếng Việt")
-
-Sau khi fix các mục 🔴 Critical, luồng end-to-end sẽ là:
-  Tạo vị trí (kèm HM) → AI tạo tiêu chí nháp → HR duyệt → HM duyệt → Upload CV → (polling xử lý) → Chạy đánh giá → Xem xếp hạng + cảnh báo trùng/lỗi → Đối chiếu bằng chứng → Cập nhật trạng thái → Thêm vào shortlist → Chia sẻ cho HM → HM xem & phản hồi
+Trước khi coi Phase 1 hoàn tất theo PRD cần xử lý/ra quyết định cho các khoảng trống trong bảng, triển khai và kiểm tra bảo mật trên staging, đánh giá chất lượng AI và nhận phê duyệt nghiệp vụ. Không sử dụng dữ liệu ứng viên thật trong bản preview/thử nghiệm. Chi tiết vận hành và migration: [DEPLOYMENT.md](DEPLOYMENT.md).

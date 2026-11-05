@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from typing import List, Optional
 from uuid import UUID, uuid4
 from app.core.security import get_current_user
-from app.core.permissions import check_position_access, can_update_application_status
+from app.core.permissions import check_position_access, can_update_application_status, application_access
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import (
@@ -22,8 +22,11 @@ from app.schemas.applications import (
 )
 from app.schemas.common import OperationResponse
 from app.db.supabase import get_supabase_client
+from app.db.database import SessionLocal
+from sqlalchemy import text
 from app.services.document_processor import document_processor
 import os
+import json
 import aiofiles
 
 router = APIRouter()
@@ -43,216 +46,150 @@ VALID_TRANSITIONS = {
 
 
 @router.post("/upload-batch/{position_id}", response_model=OperationResponse, status_code=status.HTTP_202_ACCEPTED)
-async def create_cv_batch(
-    position_id: UUID,
-    request: Request,
-    files: List[UploadFile] = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Upload a batch of CV files for a position. Returns operation ID for async processing."""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    position_id_str = str(position_id)
-
-    # RBAC: only HR_RECRUITER on this position (or Admin/HR Lead) can upload CVs
-    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER", "HIRING_MANAGER"])
-
-    # Verify position exists and is open
-    pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
-    if not pos_result.data:
-        raise NotFoundError("Position")
-    if pos_result.data["status"] != "OPEN":
-        raise HTTPException(status_code=400, detail="Cannot upload CVs to a closed/paused position")
-
-    # Validate batch size
-    if len(files) > settings.MAX_FILES_PER_BATCH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Maximum {settings.MAX_FILES_PER_BATCH} files per batch allowed"
-        )
-
-    total_size = 0
-    valid_files = []
-    invalid_files = []
-
-    # Create operation record
-    op_result = supabase.table("operations").insert({
-        "capability": "CV_PROCESSING",
-        "status": "PENDING",
-        "requested_by": user_id,
-    }).execute()
-    operation_id = op_result.data[0]["operation_id"]
-
-    # Create batch record
-    batch_result = supabase.table("cv_batches").insert({
-        "position_id": position_id_str,
-        "uploaded_by": user_id,
-        "operation_id": operation_id,
-        "status": "PROCESSING",
-        "total_files": len(files),
-        "total_size_bytes": 0,  # Will update after validation
-    }).execute()
-    batch_id = batch_result.data[0]["batch_id"]
-
-    # Validate and upload each file
+async def create_cv_batch(position_id: UUID, files: List[UploadFile] = File(...),
+                          current_user: dict = Depends(get_current_user)):
+    """Save the batch transactionally; the worker cannot see it until commit."""
+    user_id, position_id_str = current_user["user_id"], str(position_id)
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
+    if not files or len(files) > settings.MAX_FILES_PER_BATCH:
+        raise HTTPException(status_code=400, detail=f"Vui lòng chọn từ 1 đến {settings.MAX_FILES_PER_BATCH} tệp")
+    sizes = []
     for file in files:
-        content = await file.read()
-        file_size = len(content)
-        total_size += file_size
-
-        if file_size > settings.MAX_FILE_SIZE_BYTES:
-            invalid_files.append({
-                "original_filename": file.filename,
-                "declared_mime_type": file.content_type,
-                "size_bytes": file_size,
-                "validation_result": "ERROR",
-                "error_code": "FILE_TOO_LARGE"
-            })
-            continue
-
-        try:
-            # Validate file type
-            await document_processor.validate_file(content, file.filename, file.content_type)
-
-            # Create application record
-            app_result = supabase.table("applications").insert({
-                "position_id": position_id_str,
-                "source_code": "DIRECT_UPLOAD",
-                "application_status": ApplicationStatus.NEW.value,
-                "created_by": user_id
-            }).execute()
-            application_id = app_result.data[0]["application_id"]
-
-            # Generate storage path (internal UUID path, not using candidate name)
-            file_ext = file.filename.split(".")[-1] if "." in file.filename else "pdf"
-            storage_path = f"{position_id_str}/{application_id}/{uuid4()}.{file_ext}"
-
-            # Upload file to configured storage backend
-            if settings.STORAGE_BACKEND == "local":
-                # Local filesystem storage
-                full_dir = os.path.join(
-                    settings.LOCAL_STORAGE_PATH,
-                    settings.SUPABASE_STORAGE_BUCKET_CV,
-                    str(position_id),
-                    application_id
-                )
-                os.makedirs(full_dir, exist_ok=True)
-                full_file_path = os.path.join(settings.LOCAL_STORAGE_PATH, settings.SUPABASE_STORAGE_BUCKET_CV, storage_path)
-                async with aiofiles.open(full_file_path, "wb") as f:
-                    await f.write(content)
-            elif settings.STORAGE_BACKEND == "supabase":
-                # Upload to Supabase Storage
-                supabase.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).upload(
-                    path=storage_path,
-                    file=content,
-                    file_options={"content-type": file.content_type or "application/octet-stream"}
-                )
-            else:
-                raise HTTPException(status_code=500, detail=f"Unknown storage backend: {settings.STORAGE_BACKEND}")
-
-            # Create document record
-            doc_result = supabase.table("application_documents").insert({
-                "application_id": application_id,
-                "document_type": "CV",
-                "bucket": settings.SUPABASE_STORAGE_BUCKET_CV,
-                "storage_path": storage_path,
-                "original_filename": file.filename,
-                "mime_type": file.content_type or "application/pdf",
-                "size_bytes": file_size,
-                "file_processing_status": FileProcessingStatus.RECEIVED.value
-            }).execute()
-            document_id = doc_result.data[0]["document_id"]
-
-            valid_files.append({
-                "batch_id": batch_id,
-                "original_filename": file.filename,
-                "declared_mime_type": file.content_type,
-                "size_bytes": file_size,
-                "validation_result": "ACCEPTED",
-                "application_id": application_id
-            })
-
-            # Create empty identity record
-            supabase.table("application_identities").insert({
-                "application_id": application_id
-            }).execute()
-
-            # Create processing run record
-            supabase.table("document_processing_runs").insert({
-                "document_id": document_id,
-                "operation_id": operation_id,
-                "extraction_type": "INITIAL_EXTRACTION",
-                "status": "PENDING"
-            }).execute()
-
-            logger.info("File accepted for processing",
-                       filename=file.filename,
-                       application_id=application_id,
-                       batch_id=batch_id)
-
-        except FileValidationError as e:
-            invalid_files.append({
-                "original_filename": file.filename,
-                "declared_mime_type": file.content_type,
-                "size_bytes": file_size,
-                "validation_result": "ERROR",
-                "error_code": str(e)
-            })
-            logger.warning("File validation failed", filename=file.filename, error=str(e))
-
-    # Check total batch size
+        file.file.seek(0, os.SEEK_END); sizes.append(file.file.tell()); file.file.seek(0)
+    total_size = sum(sizes)
     if total_size > settings.MAX_BATCH_SIZE_BYTES:
-        # Rollback? For MVP, accept but record error
-        logger.warning("Batch exceeds total size limit", total_size=total_size)
+        raise HTTPException(status_code=400, detail="Tổng dung lượng lô CV vượt giới hạn 250 MB")
+    if settings.STORAGE_BACKEND not in ("local", "supabase"):
+        raise HTTPException(status_code=500, detail="Storage backend is not configured")
+    storage = get_supabase_client() if settings.STORAGE_BACKEND == "supabase" else None
+    if settings.STORAGE_BACKEND == "supabase" and not storage:
+        raise HTTPException(status_code=503, detail="Supabase storage is not configured")
 
-    # Update batch totals
-    supabase.table("cv_batches").update({
-        "total_size_bytes": total_size,
-        "processed_files": len(valid_files),
-        "failed_files": len(invalid_files),
-        "status": "COMPLETED" if len(invalid_files) == 0 else "PARTIALLY_COMPLETED"
-    }).eq("batch_id", batch_id).execute()
+    db = SessionLocal()
+    saved_paths = []
+    accepted = failed = 0
+    try:
+        pos = db.execute(text("SELECT status FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": position_id_str}).scalar_one_or_none()
+        if pos is None:
+            raise NotFoundError("Position")
+        if pos != "OPEN":
+            raise HTTPException(status_code=400, detail="Không thể tải CV cho vị trí đã đóng hoặc tạm dừng")
+        approved = db.execute(text("SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED' LIMIT 1"), {"id": position_id_str}).first()
+        if not approved:
+            raise HTTPException(status_code=400, detail="Tiêu chí cần được HR và Hiring Manager duyệt trước khi tải CV")
+        active = db.execute(text("""
+            SELECT 1 FROM app_private.operations WHERE position_id = :id
+              AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING') AND status IN ('PENDING', 'PROCESSING') LIMIT 1
+        """), {"id": position_id_str}).first()
+        if active:
+            raise HTTPException(status_code=409, detail="Vị trí đang có tác vụ xử lý. Vui lòng đợi tác vụ hoàn tất trước khi tải thêm CV.")
+        operation_id = db.execute(text("""
+            INSERT INTO app_private.operations (position_id, capability, status, requested_by)
+            VALUES (:position_id, 'CV_PROCESSING', 'PENDING', :user_id) RETURNING operation_id
+        """), {"position_id": position_id_str, "user_id": user_id}).scalar_one()
+        batch_id = db.execute(text("""
+            INSERT INTO app_private.cv_batches (position_id, uploaded_by, operation_id, status, total_files, total_size_bytes)
+            VALUES (:position_id, :user_id, :operation_id, 'PROCESSING', :total, :size) RETURNING batch_id
+        """), {"position_id": position_id_str, "user_id": user_id, "operation_id": operation_id,
+                "total": len(files), "size": total_size}).scalar_one()
+        for file, size in zip(files, sizes):
+            filename = os.path.basename(file.filename or 'unnamed')
+            error = None
+            detected_mime = None
+            if size > settings.MAX_FILE_SIZE_BYTES:
+                error = "FILE_TOO_LARGE"
+            else:
+                content = await file.read()
+                try:
+                    detected_mime = await document_processor.validate_file(content, filename, file.content_type)
+                except FileValidationError as exc:
+                    error = str(exc)
+            app_id = None
+            if error:
+                failed += 1
+            else:
+                app_id = db.execute(text("""
+                    INSERT INTO app_private.applications (position_id, created_by)
+                    VALUES (:position_id, :user_id) RETURNING application_id
+                """), {"position_id": position_id_str, "user_id": user_id}).scalar_one()
+                extension = '.pdf' if detected_mime == 'application/pdf' else '.docx'
+                storage_path = f"{position_id_str}/{app_id}/{uuid4()}{extension}"
+                # Track before I/O so even a partially written file or an
+                # upload that errors after writing is eligible for cleanup.
+                saved_paths.append(storage_path)
+                if settings.STORAGE_BACKEND == "local":
+                    full_path = os.path.join(settings.LOCAL_STORAGE_PATH, settings.SUPABASE_STORAGE_BUCKET_CV, storage_path)
+                    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                    async with aiofiles.open(full_path, "wb") as out:
+                        await out.write(content)
+                else:
+                    storage.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).upload(
+                        path=storage_path, file=content, file_options={"content-type": detected_mime})
+                document_id = db.execute(text("""
+                    INSERT INTO app_private.application_documents (application_id, document_type, bucket, storage_path,
+                        original_filename, mime_type, size_bytes, file_processing_status)
+                    VALUES (:app_id, 'CV', :bucket, :storage_path, :filename, :mime, :size, 'RECEIVED') RETURNING document_id
+                """), {"app_id": app_id, "bucket": settings.SUPABASE_STORAGE_BUCKET_CV, "storage_path": storage_path,
+                        "filename": filename, "mime": detected_mime, "size": size}).scalar_one()
+                db.execute(text("INSERT INTO app_private.application_identities (application_id) VALUES (:id)"), {"id": app_id})
+                db.execute(text("""
+                    INSERT INTO app_private.document_processing_runs (document_id, operation_id, extraction_type, status)
+                    VALUES (:document_id, :operation_id, 'INITIAL_EXTRACTION', 'PENDING')
+                """), {"document_id": document_id, "operation_id": operation_id})
+                accepted += 1
+            db.execute(text("""
+                INSERT INTO app_private.cv_batch_items (batch_id, original_filename, declared_mime_type, detected_mime_type,
+                    size_bytes, validation_result, error_code, application_id)
+                VALUES (:batch_id, :filename, :declared, :detected, :size, :result, :error, :app_id)
+            """), {"batch_id": batch_id, "filename": filename, "declared": file.content_type, "detected": detected_mime,
+                    "size": size, "result": 'ERROR' if error else 'ACCEPTED', "error": error, "app_id": app_id})
+        db.execute(text("UPDATE app_private.cv_batches SET failed_files = :failed WHERE batch_id = :id"), {"failed": failed, "id": batch_id})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
+            VALUES (:user_id, 'UPLOAD_CV_BATCH', 'CV_BATCH', :batch_id, :position_id, 'SUCCESS', CAST(:metadata AS jsonb))
+        """), {"user_id": user_id, "batch_id": batch_id, "position_id": position_id_str,
+                "metadata": json.dumps({"total_files": len(files), "accepted": accepted, "failed": failed})})
+        db.commit()
+        return OperationResponse(operation_id=operation_id, status="pending",
+                                 message=f"Đã nhận {accepted} tệp hợp lệ, {failed} tệp lỗi.")
+    except Exception:
+        db.rollback()
+        # Database rollback must not leave candidate documents in storage.
+        for path in saved_paths:
+            try:
+                if settings.STORAGE_BACKEND == "local":
+                    full_path = os.path.join(settings.LOCAL_STORAGE_PATH, settings.SUPABASE_STORAGE_BUCKET_CV, path)
+                    if os.path.exists(full_path):
+                        os.remove(full_path)
+                else:
+                    storage.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).remove([path])
+            except Exception:
+                logger.exception("Could not remove orphaned upload")
+        raise
+    finally:
+        db.close()
 
-    # Insert batch items
-    all_batch_items = valid_files + invalid_files
-    if all_batch_items:
-        # Set batch_id on all items
-        for item in all_batch_items:
-            item["batch_id"] = batch_id
-        supabase.table("cv_batch_items").insert(all_batch_items).execute()
 
-    # Mark operation as processing and trigger async processing
-    supabase.table("operations").update({
-        "status": "PROCESSING",
-        "started_at": "now()"
-    }).eq("operation_id", operation_id).execute()
+def _enrich_file_status(app: dict) -> None:
+    docs = app.get("documents") or []
+    if not docs:
+        app["file_processing_status"] = "UNKNOWN"
+        return
+    errors = [d for d in docs if d.get("file_processing_status") in ("ERROR_UNSUPPORTED", "NEEDS_HR_REVIEW") or d.get("processing_error")]
+    if errors:
+        app["file_processing_status"] = "NEEDS_HR_REVIEW"
+        app["file_error"] = errors[0].get("processing_error")
+    elif any(d.get("file_processing_status") in ("RECEIVED", "PROCESSING") for d in docs):
+        app["file_processing_status"] = "PROCESSING"
+    else:
+        app["file_processing_status"] = "COMPLETED"
 
-    # Mark operation as PENDING for worker pickup
-    supabase.table("operations").update({
-        "status": "PENDING"
-    }).eq("operation_id", operation_id).execute()
 
-    # Worker will automatically pick up this operation and start processing
-    # No need to trigger manually; it polls every POLL_INTERVAL_SECONDS seconds
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "UPLOAD_CV_BATCH",
-        "object_type": "CV_BATCH",
-        "object_id": batch_id,
-        "position_id": position_id_str,
-        "outcome": "SUCCESS",
-        "metadata": {"total_files": len(files), "accepted": len(valid_files), "failed": len(invalid_files)}
-    }).execute()
-
-    logger.info("CV batch created", batch_id=batch_id, total=len(files), accepted=len(valid_files), failed=len(invalid_files))
-
-    return OperationResponse(
-        operation_id=UUID(operation_id),
-        status="processing",
-        message=f"Đã nhận {len(valid_files)} file hợp lệ, {len(invalid_files)} file lỗi. Đang xử lý..."
-    )
+def _normalize_application(app: dict) -> None:
+    identity = app.get("identity")
+    if isinstance(identity, list):
+        app["identity"] = identity[0] if identity else None
+    _enrich_file_status(app)
 
 
 @router.get("", response_model=List[ApplicationWithAssessment])
@@ -264,149 +201,117 @@ async def list_applications(
     page_size: int = Query(50, ge=1, le=100),
     current_user: dict = Depends(get_current_user)
 ):
-    """List applications for a position with their latest assessment"""
-    # RBAC: user must have access to this position
-    await check_position_access(position_id, current_user)
-
-    supabase = get_supabase_client()
-
-    query = supabase.table("applications")\
-        .select(
-            "*, "
-            "identity: application_identities(*), "
-            "documents: application_documents(*), "
-            "latest_assessment: assessment_runs(*)"
-        )\
-        .eq("position_id", str(position_id))
-
-    if status_filter:
-        query = query.eq("application_status", status_filter.value)
-
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).order("created_at", desc=True).execute()
-
-    applications = result.data or []
-
-    # Enrich with latest assessment for each application, plus duplicate/error flags
-    for app in applications:
-        assessments = app.get("latest_assessment", [])
-        if isinstance(assessments, list) and assessments:
-            completed = [a for a in assessments if a.get("status") == "COMPLETED"]
-            if completed:
-                app["latest_assessment"] = sorted(completed, key=lambda x: x.get("created_at", ""))[-1]
-            else:
-                app["latest_assessment"] = None
-        elif not isinstance(assessments, list):
-            pass
-        else:
-            app["latest_assessment"] = None
-
-        # Flag for files needing HR review (PROCESSING_ERROR or NEEDS_REVIEW)
-        docs = app.get("documents", [])
-        if isinstance(docs, list):
-            app["file_processing_status"] = "COMPLETED"
-            for d in docs:
-                status_d = d.get("file_processing_status", "")
-                if status_d in ("ERROR_UNSUPPORTED", "NEEDS_HR_REVIEW") or d.get("processing_error"):
-                    app["file_processing_status"] = "NEEDS_HR_REVIEW"
-                    app["file_error"] = d.get("processing_error") or f"File {status_d}"
-                    break
-                if status_d in ("RECEIVED", "PROCESSING"):
-                    app["file_processing_status"] = "PROCESSING"
-        else:
-            app["file_processing_status"] = "UNKNOWN"
-
-    # Enrich with duplicate signals (at least one PENDING duplicate for any of these apps)
-    if applications:
-        app_ids = [a["application_id"] for a in applications]
-        try:
-            dup_result = supabase.table("duplicate_signals")\
-                .select("application_id_1, application_id_2")\
-                .eq("position_id", str(position_id))\
-                .in_("application_id_1", app_ids)\
-                .eq("review_status", "PENDING")\
-                .execute()
-            dup_ids = set()
-            for d in (dup_result.data or []):
-                dup_ids.add(d["application_id_1"])
-                dup_ids.add(d["application_id_2"])
-            for app in applications:
-                app["has_duplicate_warning"] = app["application_id"] in dup_ids
-        except Exception:
-            for app in applications:
-                app["has_duplicate_warning"] = False
-
-    return applications
+    """List applications only for HR assigned to the position."""
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT a.*, row_to_json(i) AS identity, COALESCE(d.documents, '[]'::jsonb) AS documents,
+                   row_to_json(latest) AS latest_assessment,
+                   EXISTS (SELECT 1 FROM app_private.duplicate_signals ds
+                           WHERE ds.position_id = a.position_id AND ds.review_status = 'PENDING'
+                             AND (ds.application_id_1 = a.application_id OR ds.application_id_2 = a.application_id)) AS has_duplicate_warning
+            FROM app_private.applications a
+            LEFT JOIN app_private.application_identities i ON i.application_id = a.application_id
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(to_jsonb(ad) ORDER BY ad.created_at DESC) AS documents
+                FROM app_private.application_documents ad WHERE ad.application_id = a.application_id
+            ) d ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT ar.* FROM app_private.assessment_runs ar
+                WHERE ar.application_id = a.application_id AND ar.status = 'COMPLETED'
+                ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
+            ) latest ON TRUE
+            WHERE a.position_id = :position_id
+              AND (CAST(:status_filter AS text) IS NULL OR a.application_status = :status_filter)
+              AND (CAST(:matching_status AS text) IS NULL OR COALESCE(latest.matching_status, 'NOT_ASSESSED') = :matching_status)
+            ORDER BY a.created_at DESC, a.application_id DESC LIMIT :page_size OFFSET :offset
+        """), {"position_id": str(position_id), "status_filter": status_filter.value if status_filter else None,
+                "matching_status": matching_status, "page_size": page_size, "offset": (page - 1) * page_size}).mappings().all()
+        applications = [dict(row) for row in rows]
+        for item in applications:
+            _normalize_application(item)
+            item.update({"can_view_cv": True, "can_update_status": True})
+        return applications
+    finally:
+        db.close()
 
 
 @router.get("/{application_id}", response_model=ApplicationWithAssessment)
-async def get_application(
-    application_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get application details with documents, profile, and assessment results"""
-    supabase = get_supabase_client()
-    app_id_str = str(application_id)
+async def get_application(application_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Get a visible application's latest completed assessment and authorized evidence."""
+    app_id = str(application_id)
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT a.*, row_to_json(i) AS identity FROM app_private.applications a
+            LEFT JOIN app_private.application_identities i ON i.application_id = a.application_id
+            WHERE a.application_id = :id
+        """), {"id": app_id}).mappings().first()
+        if not row:
+            raise NotFoundError("Application")
+        access = application_access(current_user["user_id"], str(row["position_id"]), app_id)
+        app = dict(row)
+        app.update(access)
+        documents = db.execute(text("SELECT * FROM app_private.application_documents WHERE application_id = :id ORDER BY created_at DESC"), {"id": app_id}).mappings().all()
+        app["documents"] = [dict(d) for d in documents]
+        _normalize_application(app)
+        app["has_duplicate_warning"] = bool(access["can_update_status"] and db.execute(text("""
+            SELECT EXISTS(SELECT 1 FROM app_private.duplicate_signals WHERE position_id = :position_id
+                AND review_status = 'PENDING' AND (application_id_1 = :id OR application_id_2 = :id))
+        """), {"id": app_id, "position_id": str(row["position_id"])}).scalar_one())
+        assessment = db.execute(text("""
+            SELECT * FROM app_private.assessment_runs WHERE application_id = :id AND status = 'COMPLETED'
+            ORDER BY created_at DESC, assessment_id DESC LIMIT 1
+        """), {"id": app_id}).mappings().first()
+        latest = dict(assessment) if assessment else None
+        if latest:
+            latest["criterion_results"] = []
+            if access["can_view_cv"]:
+                results = db.execute(text("""
+                    SELECT car.*, ci.name AS criterion_name, ci.category,
+                           car.requires_hr_verification AS requires_verification
+                    FROM app_private.criterion_assessment_results car
+                    JOIN app_private.criteria_items ci ON ci.criterion_id = car.criterion_id
+                    WHERE car.assessment_id = :assessment_id ORDER BY ci.display_order, ci.criterion_id
+                """), {"assessment_id": str(latest["assessment_id"])}).mappings().all()
+                for item in results:
+                    criterion_result = dict(item)
+                    evidence = db.execute(text("""
+                        SELECT evidence_id, verbatim_quote, page_number, verification_status
+                        FROM app_private.evidence_items WHERE criterion_result_id = :result_id ORDER BY created_at
+                    """), {"result_id": str(item["result_id"])}).mappings().all()
+                    criterion_result["evidence"] = [dict(e) for e in evidence]
+                    latest["criterion_results"].append(criterion_result)
+        app["latest_assessment"] = latest
+        if not access["can_view_cv"]:
+            app["documents"] = []
+        return app
+    finally:
+        db.close()
 
-    # Fetch application first to derive position_id for RBAC check
-    app_check = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
-    if not app_check.data:
-        raise NotFoundError("Application")
-    await check_position_access(
-        UUID(app_check.data["position_id"]), current_user, application_id=application_id
-    )
 
-    result = supabase.table("applications")\
-        .select(
-            "*, "
-            "identity: application_identities(*), "
-            "documents: application_documents(*), "
-            "profile_versions(*, profile_facts(*)), "
-            "assessments: assessment_runs(*, criterion_results: criterion_assessment_results(*, evidence: evidence_items(*)))"
-        )\
-        .eq("application_id", app_id_str)\
-        .single()\
-        .execute()
-
-    if not result.data:
-        raise NotFoundError("Application")
-
-    app_data = result.data
-
-    # Enrich file_processing_status
-    docs = app_data.get("documents", []) or []
-    fps = "UNKNOWN"
-    file_error = None
-    if docs:
-        if any(d.get("file_processing_status") == "PROCESSING" for d in docs):
-            fps = "PROCESSING"
-        elif any(d.get("file_processing_status") == "NEEDS_HR_REVIEW" for d in docs):
-            fps = "NEEDS_HR_REVIEW"
-            for d in docs:
-                if d.get("file_processing_status") == "NEEDS_HR_REVIEW":
-                    file_error = d.get("metadata", {}).get("error") or d.get("file_error")
-                    break
-        elif any(d.get("file_processing_status") == "COMPLETED" for d in docs):
-            fps = "COMPLETED"
-    app_data["file_processing_status"] = fps
-    app_data["file_error"] = file_error
-
-    # Duplicate warning
-    identity = app_data.get("identity") or []
-    app_data["has_duplicate_warning"] = bool(identity and (identity[0].get("identity_match_confidence") or 0) > 0) if isinstance(identity, list) else False
-
-    # Sort assessments by date, get latest completed
-    assessments = app_data.get("assessments", [])
-    completed_assessments = [a for a in assessments if a.get("status") == "COMPLETED"]
-    if completed_assessments:
-        app_data["latest_assessment"] = sorted(
-            completed_assessments,
-            key=lambda x: x.get("created_at", "")
-        )[-1]
-    else:
-        app_data["latest_assessment"] = None
-
-    return app_data
+@router.get("/{application_id}/status-events")
+async def list_application_status_events(application_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Recruiter-only decision history, including reasons and notes."""
+    db = SessionLocal()
+    try:
+        position_id = db.execute(text("SELECT position_id FROM app_private.applications WHERE application_id = :id"),
+                                 {"id": str(application_id)}).scalar_one_or_none()
+        if not position_id:
+            raise NotFoundError("Application")
+        if not can_update_application_status(current_user["user_id"], str(position_id)):
+            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách được xem lịch sử quyết định")
+        rows = db.execute(text("""
+            SELECT e.event_id, e.previous_status, e.new_status, e.reason_code AS reason, e.note,
+                   e.changed_at, p.display_name AS changed_by_name
+            FROM app_private.application_status_events e
+            LEFT JOIN app_private.user_profiles p ON p.user_id = e.changed_by
+            WHERE e.application_id = :id ORDER BY e.changed_at DESC, e.event_id DESC
+        """), {"id": str(application_id)}).mappings().all()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 @router.patch("/{application_id}/status", response_model=Application)
@@ -415,173 +320,105 @@ async def update_application_status(
     update: ApplicationStatusUpdate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Update application recruitment status (HR only, validates transition matrix)"""
-    supabase = get_supabase_client()
+    """Record an HR decision and its reason together with the audit event."""
     user_id = current_user["user_id"]
-    app_id_str = str(application_id)
+    app_id = str(application_id)
+    db = SessionLocal()
+    try:
+        app = db.execute(text("SELECT * FROM app_private.applications WHERE application_id = :app_id FOR UPDATE"),
+                         {"app_id": app_id}).mappings().first()
+        if not app:
+            raise NotFoundError("Application")
+        if not can_update_application_status(user_id, str(app["position_id"])):
+            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới được cập nhật trạng thái hồ sơ")
+        current_status = ApplicationStatus(app["application_status"])
+        new_status = update.new_status
+        if new_status not in VALID_TRANSITIONS.get(current_status, []):
+            raise InvalidStatusTransitionError(current_status.value, new_status.value)
+        reason = (update.reason or "").strip() or None
+        note = (update.note or "").strip() or None
+        if new_status in (ApplicationStatus.REJECTED_SCREENING, ApplicationStatus.REJECTED_INTERVIEW) and not reason:
+            raise HTTPException(status_code=400, detail="Vui lòng nhập lý do loại hồ sơ")
+        changed = db.execute(text("""
+            UPDATE app_private.applications SET application_status = :new_status, updated_at = NOW()
+            WHERE application_id = :app_id RETURNING *
+        """), {"new_status": new_status.value, "app_id": app_id}).mappings().one()
+        db.execute(text("""
+            INSERT INTO app_private.application_status_events
+                (application_id, previous_status, new_status, changed_by, reason_code, note)
+            VALUES (:app_id, :previous, :new_status, :user_id, :reason, :note)
+        """), {"app_id": app_id, "previous": current_status.value, "new_status": new_status.value,
+                "user_id": user_id, "reason": reason, "note": note})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'UPDATE_APPLICATION_STATUS', 'APPLICATION', :app_id, :position_id, :outcome)
+        """), {"user_id": user_id, "app_id": app_id, "position_id": str(app["position_id"]), "outcome": new_status.value})
+        db.commit()
+        return dict(changed)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
-    # Get current application
-    app_result = supabase.table("applications").select("*").eq("application_id", app_id_str).single().execute()
-    if not app_result.data:
-        raise NotFoundError("Application")
 
-    app = app_result.data
-
-    # RBAC: only HR_RECRUITER assigned to this position (or Admin/HR Lead) can change status
-    if not can_update_application_status(user_id, app["position_id"]):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You must be the assigned HR Recruiter to update application status"
-        )
-    current_status = ApplicationStatus(app["application_status"])
-    new_status = update.new_status
-
-    # Validate transition
-    allowed_next = VALID_TRANSITIONS.get(current_status, [])
-    if new_status not in allowed_next:
-        # Allow reopen with special permission? For MVP, just reject
-        raise InvalidStatusTransitionError(current_status.value, new_status.value)
-
-    # Update status
-    update_result = supabase.table("applications").update({
-        "application_status": new_status.value,
-        "updated_at": "now()"
-    }).eq("application_id", app_id_str).execute()
-
-    # Record status event
-    supabase.table("application_status_events").insert({
-        "application_id": app_id_str,
-        "previous_status": current_status.value,
-        "new_status": new_status.value,
-        "changed_by": user_id,
-        "reason_code": update.reason,
-        "note": update.note
-    }).execute()
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "UPDATE_APPLICATION_STATUS",
-        "object_type": "APPLICATION",
-        "object_id": app_id_str,
-        "position_id": app["position_id"],
-        "outcome": new_status.value,
-        "metadata": {"from": current_status.value, "to": new_status.value}
-    }).execute()
-
-    logger.info(
-        "Application status updated",
-        application_id=app_id_str,
-        from_status=current_status.value,
-        to_status=new_status.value,
-        by=user_id
-    )
-
-    return update_result.data[0]
+def _authorized_cv_document(application_id: UUID, user_id: str) -> dict:
+    app_id = str(application_id)
+    db = SessionLocal()
+    try:
+        app = db.execute(text("SELECT position_id FROM app_private.applications WHERE application_id = :id"), {"id": app_id}).mappings().first()
+        if not app:
+            raise NotFoundError("Application")
+        if not application_access(user_id, str(app["position_id"]), app_id)["can_view_cv"]:
+            raise HTTPException(status_code=403, detail="Shortlist này không cho phép xem CV gốc")
+        doc = db.execute(text("""
+            SELECT * FROM app_private.application_documents WHERE application_id = :id AND document_type = 'CV'
+            ORDER BY created_at DESC, document_id DESC LIMIT 1
+        """), {"id": app_id}).mappings().first()
+        if not doc:
+            raise NotFoundError("CV document")
+        return dict(doc)
+    finally:
+        db.close()
 
 
 @router.get("/{application_id}/cv-download-url")
-async def get_cv_download_url(
-    application_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get signed time-limited URL to download original CV file (after permission check)"""
-    supabase = get_supabase_client()
-    app_id_str = str(application_id)
-
-    # Get application for position_id RBAC check
-    app_result = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
-    if not app_result.data:
-        raise NotFoundError("Application")
-    # RBAC: user must have access to the position this CV belongs to
-    await check_position_access(UUID(app_result.data["position_id"]), current_user)
-
-    # Get application and its documents
-    doc_result = supabase.table("application_documents")\
-        .select("*")\
-        .eq("application_id", app_id_str)\
-        .eq("document_type", "CV")\
-        .limit(1)\
-        .execute()
-
-    if not doc_result.data:
-        raise NotFoundError("CV Document")
-
-    doc = doc_result.data[0]
-
-    # Generate access information
+async def get_cv_signed_url(application_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Give authorized users a short-lived URL or a local authenticated file path."""
+    doc = _authorized_cv_document(application_id, current_user["user_id"])
+    if settings.STORAGE_BACKEND == "local":
+        return {"file_url": f"{settings.API_V1_PREFIX}/applications/{application_id}/cv-file",
+                "filename": doc["original_filename"], "source": "local"}
+    if settings.STORAGE_BACKEND != "supabase":
+        raise HTTPException(status_code=500, detail="Storage backend is not configured")
     try:
-        if settings.STORAGE_BACKEND == "local":
-            # For local development, return API URL to serve file (with auth check)
-            file_url = f"{settings.API_V1_PREFIX}/applications/{application_id}/cv-file"
-            return {"file_url": file_url, "filename": doc["original_filename"], "source": "local"}
-        elif settings.STORAGE_BACKEND == "supabase":
-            if not supabase:
-                raise HTTPException(status_code=500, detail="Supabase storage is not configured")
-            signed_url = supabase.storage.from_(doc["bucket"]).create_signed_url(
-                path=doc["storage_path"],
-                expires_in=600  # 10 minutes
-            )
-            return {"signed_url": signed_url, "filename": doc["original_filename"], "source": "supabase"}
-        else:
-            raise HTTPException(status_code=500, detail=f"Unknown storage backend: {settings.STORAGE_BACKEND}")
-    except NotFoundError:
+        supabase = get_supabase_client()
+        if not supabase:
+            raise HTTPException(status_code=503, detail="Supabase storage is not configured")
+        signed = supabase.storage.from_(doc["bucket"]).create_signed_url(path=doc["storage_path"], expires_in=600)
+        url = (signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")) if isinstance(signed, dict) else signed
+        if not isinstance(url, str) or not url:
+            raise HTTPException(status_code=502, detail="Could not generate file access URL")
+        return {"signed_url": url, "filename": doc["original_filename"], "source": "supabase"}
+    except HTTPException:
         raise
-    except Exception as e:
-        logger.error("Failed to generate file access URL", error=str(e))
-        raise HTTPException(status_code=500, detail="Could not generate file access URL")
+    except Exception as exc:
+        logger.error("Failed to generate file access URL", error=str(exc))
+        raise HTTPException(status_code=502, detail="Could not generate file access URL")
 
 
 @router.get("/{application_id}/cv-file")
-async def serve_cv_file(
-    application_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Serve CV file directly from local storage with permission check (development only)"""
+async def serve_cv_file(application_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Serve an authorized local CV without exposing its filesystem path."""
     if settings.STORAGE_BACKEND != "local":
         raise HTTPException(status_code=400, detail="Local file serving is only available with local storage backend")
-
-    supabase = get_supabase_client()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection not available")
-
-    app_id_str = str(application_id)
-
-    # Get application for RBAC check
-    app_result = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
-    if not app_result.data:
-        raise NotFoundError("Application")
-    await check_position_access(UUID(app_result.data["position_id"]), current_user)
-
-    doc_result = supabase.table("application_documents")\
-        .select("*")\
-        .eq("application_id", app_id_str)\
-        .eq("document_type", "CV")\
-        .limit(1)\
-        .execute()
-
-    if not doc_result.data:
-        raise NotFoundError("CV Document")
-
-    doc = doc_result.data[0]
-
-    # Build and validate path - prevent path traversal attacks
-    base_storage_dir = os.path.realpath(os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"]))
+    doc = _authorized_cv_document(application_id, current_user["user_id"])
+    if doc["bucket"] != settings.SUPABASE_STORAGE_BUCKET_CV:
+        raise HTTPException(status_code=400, detail="Invalid file location")
+    base_storage_dir = os.path.realpath(os.path.join(settings.LOCAL_STORAGE_PATH, settings.SUPABASE_STORAGE_BUCKET_CV))
     file_path = os.path.realpath(os.path.join(base_storage_dir, doc["storage_path"]))
-
-    # Ensure the resolved file is still within the allowed base directory
-    if not file_path.startswith(base_storage_dir + os.sep) and file_path != base_storage_dir:
-        logger.warning("Path traversal attempt detected", application_id=app_id_str, requested_path=doc["storage_path"])
+    if not file_path.startswith(base_storage_dir + os.sep):
         raise HTTPException(status_code=400, detail="Invalid file path")
-
     if not os.path.isfile(file_path):
-        raise NotFoundError("CV file not found on disk")
-
-    # Sanitize filename for Content-Disposition header
-    safe_filename = os.path.basename(doc["original_filename"])
-
-    return FileResponse(
-        path=file_path,
-        filename=safe_filename,
-        media_type=doc["mime_type"]
-    )
+        raise NotFoundError("CV file")
+    return FileResponse(path=file_path, filename=os.path.basename(doc["original_filename"]), media_type=doc["mime_type"])

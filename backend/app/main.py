@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.exceptions import HRAException
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 from app.api import api_router
@@ -28,6 +30,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.exception_handler(HRAException)
+    async def handle_hra_error(request: Request, exc: HRAException):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message, "code": exc.code})
+
     # Include API routers
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
@@ -49,12 +55,9 @@ def create_app() -> FastAPI:
         try:
             db.execute(text("SELECT 1"))
             db_status = "connected"
-        except Exception as e:
-            db_status = f"error: {str(e)[:200]}"
-            return {
-                "status": "unhealthy",
-                "database": db_status,
-            }, 503
+        except Exception:
+            logger.exception("Database readiness check failed")
+            return JSONResponse(status_code=503, content={"status": "unhealthy", "database": "unavailable"})
         finally:
             db.close()
         return {

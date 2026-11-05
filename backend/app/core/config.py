@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_NAME: str = "VinUni HRA API"
     API_V1_PREFIX: str = "/v1"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database - direct PostgreSQL connection string
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/hra"

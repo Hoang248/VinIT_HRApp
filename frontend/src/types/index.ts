@@ -15,6 +15,8 @@ export interface Position {
   closed_at?: string;
   created_at: string;
   updated_at?: string;
+  criteria_status?: 'DRAFT' | 'PENDING_HR_REVIEW' | 'PENDING_HM_APPROVAL' | 'APPROVED' | 'REJECTED' | null;
+  criteria_approved?: boolean;
 }
 
 export interface Criterion {
@@ -82,8 +84,8 @@ export interface UserSummary {
 export interface EvidenceItem {
   evidence_id: string;
   verbatim_quote: string;
-  page_number: number;
-  verification_status: string;
+  page_number: number | null;
+  verification_status: string | null;
 }
 
 export interface CriterionResult {
@@ -120,10 +122,13 @@ export interface ApplicationWithAssessment {
   file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';
   file_error?: string | null;
   has_duplicate_warning?: boolean;
+  can_view_cv?: boolean;
+  can_update_status?: boolean;
   documents?: Array<{
     document_id: string;
     document_type: string;
     original_filename: string;
+    mime_type?: string;
     page_count?: number;
   }>;
 }

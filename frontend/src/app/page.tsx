@@ -12,7 +12,6 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-import Image from 'next/image';
 import axios from 'axios';
 
 export default function LoginPage() {

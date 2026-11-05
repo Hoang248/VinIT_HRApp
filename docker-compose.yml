@@ -1,103 +1,27 @@
-version: '3.8'
-
 services:
-  # Supabase services are not defined here for simplicity
-  # For local development, use Supabase CLI to start Supabase locally:
-  # npx supabase start
-  # This docker-compose provides the HRA application stack
-
-  # Backend FastAPI
+  # Supabase Auth and PostgreSQL must already be running (locally or remotely).
+  # The API starts its own PostgreSQL-polling worker; no Celery/Redis is needed.
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
+    env_file: .env
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-    env_file:
-      - .env
-    depends_on:
-      - postgres
-      - redis
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    networks:
-      - hra-network
+      - cv_storage:/app/storage
+    environment:
+      LOCAL_STORAGE_PATH: /app/storage
+    restart: unless-stopped
 
-  # Python Worker for async CV/AI processing
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    volumes:
-      - ./backend:/app
-    env_file:
-      - .env
-    depends_on:
-      - backend
-      - redis
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
-    networks:
-      - hra-network
-
-  # Frontend Next.js
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    env_file:
-      - .env
-    command: npm run dev
-    networks:
-      - hra-network
-
-  # PostgreSQL (if not using Supabase local; use only for pure local dev without Supabase)
-  postgres:
-    image: pgvector/pgvector:16-pg16
-    ports:
-      - "5432:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: hra
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - hra-network
-    profiles:
-      - pure-local
-
-  # Redis for Celery task queue
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - hra-network
-
-  # Local LLM Server (for development, use vLLM or Ollama; this is a placeholder)
-  # llm-server:
-  #   image: vllm/vllm-openai:latest
-  #   runtime: nvidia
-  #   command: --model vinuni/hra-llm-7b --host 0.0.0.0 --port 8001
-  #   ports:
-  #     - "8001:8001"
-  #   volumes:
-  #     - ./models:/models
-  #   networks:
-  #     - hra-network
+      API_INTERNAL_URL: http://backend:8000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  hra-network:
-    driver: bridge
+  cv_storage:

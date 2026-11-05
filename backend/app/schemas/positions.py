@@ -60,3 +60,4 @@ class PositionWithStats(Position):
     in_review: int = 0
     shortlisted: int = 0
     criteria_approved: bool = False
+    criteria_status: Optional[str] = None  # Latest version, which can be newer than the approved version.

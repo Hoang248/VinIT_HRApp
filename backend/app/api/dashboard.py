@@ -1,139 +1,144 @@
-from fastapi import APIRouter, Depends, Query
-from typing import Optional, List, Dict, Any
+from typing import Any, Mapping
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
+
 from app.core.security import get_current_user
-from app.db.supabase import get_supabase_client
-from app.core.logging import get_logger
+from app.db.database import SessionLocal
 
 router = APIRouter()
-logger = get_logger(__name__)
+
+APPLICATION_STATUSES = (
+    "NEW", "IN_REVIEW", "SHORTLIST", "REJECTED_SCREENING",
+    "INTERVIEW", "REJECTED_INTERVIEW", "OFFERED", "ACCEPTED",
+)
+MATCHING_STATUSES = ("NOT_ASSESSED", "NEEDS_HR_VERIFICATION", "POSSIBLE_MISMATCH", "MEETS_MANDATORY")
+
+# Service-role/PostgREST requests bypass RLS. Explicitly scope both position and
+# application aggregates here: HR sees assigned positions, while an HM only
+# sees applications actually shared with them. Revoked roles/shares never count.
+_SCOPE_CTE = """
+    WITH privileges AS (
+        SELECT EXISTS (
+            SELECT 1 FROM app_private.user_role_assignments
+            WHERE user_id = :user_id AND revoked_at IS NULL
+              AND role_code IN ('ADMIN', 'HR_LEAD')
+        ) AS global_access
+    ), visible_positions AS (
+        SELECT p.position_id, p.status
+        FROM app_private.positions p, privileges priv
+        WHERE (CAST(:position_id AS uuid) IS NULL OR p.position_id = CAST(:position_id AS uuid))
+          AND (priv.global_access OR EXISTS (
+              SELECT 1 FROM app_private.position_assignments pa
+              WHERE pa.position_id = p.position_id AND pa.user_id = :user_id AND pa.revoked_at IS NULL
+          ))
+    )
+"""
+
+_APPLICATIONS_QUERY = _SCOPE_CTE + """
+    SELECT a.application_id, a.application_status,
+        EXISTS (SELECT 1 FROM app_private.application_documents d
+                WHERE d.application_id = a.application_id
+                  AND d.file_processing_status IN ('RECEIVED', 'PROCESSING')) AS processing,
+        EXISTS (SELECT 1 FROM app_private.application_documents d
+                WHERE d.application_id = a.application_id
+                  AND (d.file_processing_status IN ('NEEDS_HR_REVIEW', 'ERROR_UNSUPPORTED')
+                       OR d.processing_error IS NOT NULL)) AS needs_review,
+        EXISTS (SELECT 1 FROM app_private.duplicate_signals ds
+                WHERE ds.position_id = a.position_id AND ds.review_status = 'PENDING'
+                  AND (ds.application_id_1 = a.application_id OR ds.application_id_2 = a.application_id)) AS duplicate,
+        latest.matching_status, latest.evidence_coverage
+    FROM app_private.applications a
+    JOIN visible_positions p ON p.position_id = a.position_id
+    CROSS JOIN privileges priv
+    LEFT JOIN LATERAL (
+        SELECT ar.matching_status, ar.evidence_coverage
+        FROM app_private.assessment_runs ar
+        WHERE ar.application_id = a.application_id AND ar.status = 'COMPLETED'
+        ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
+    ) latest ON TRUE
+    WHERE priv.global_access OR EXISTS (
+        SELECT 1 FROM app_private.position_assignments pa
+        WHERE pa.position_id = a.position_id AND pa.user_id = :user_id
+          AND pa.position_role IN ('HR_RECRUITER', 'HR_LEAD') AND pa.revoked_at IS NULL
+    ) OR EXISTS (
+        SELECT 1 FROM app_private.shortlist_shares s
+        JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
+        WHERE s.position_id = a.position_id AND s.shared_with = :user_id
+          AND s.status = 'ACTIVE' AND si.application_id = a.application_id
+          AND EXISTS (SELECT 1 FROM app_private.position_assignments hm
+                      WHERE hm.position_id = s.position_id AND hm.user_id = :user_id
+                        AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL)
+    )
+"""
+
+
+def build_dashboard(positions: list[Mapping[str, Any]], applications: list[Mapping[str, Any]]) -> dict:
+    """Aggregate one row per visible application, with its latest completed assessment."""
+    statuses = {key: 0 for key in APPLICATION_STATUSES}
+    matching = {key: 0 for key in MATCHING_STATUSES}
+    coverages: list[float] = []
+    assessed = processing = needs_review = duplicates = 0
+
+    for app in applications:
+        status = app.get("application_status")
+        if status in statuses:
+            statuses[status] += 1
+        processing += bool(app.get("processing"))
+        needs_review += bool(app.get("needs_review"))
+        duplicates += bool(app.get("duplicate"))
+        match = app.get("matching_status")
+        if match:
+            assessed += 1
+        matching[match if match in matching else "NOT_ASSESSED"] += 1
+        if app.get("evidence_coverage") is not None:
+            coverages.append(float(app["evidence_coverage"]))
+
+    total = len(applications)
+    return {
+        "open_positions": sum(p.get("status") == "OPEN" for p in positions),
+        "total_applications": total,
+        "applications_by_status": statuses,
+        "applications_processing": processing,
+        "files_needing_hr_review": needs_review,
+        "files_needing_review": needs_review,  # backward-compatible position endpoint
+        "files_needing_review_rate": needs_review / total if total else None,
+        "duplicate_alerts": duplicates,  # applications with at least one pending signal
+        "assessments_completed": assessed,
+        "matching_status_counts": matching,
+        "average_coverage": sum(coverages) / len(coverages) if coverages else None,
+        "coverage_sample_size": len(coverages),
+        "coverage_under_threshold": sum(value < 0.7 for value in coverages),
+        # No reliable baseline/override events are stored yet. Do not invent a zero.
+        "hr_override_rate": None,
+        "average_processing_time_seconds": None,
+    }
+
+
+def _load_dashboard(user_id: str, position_id: UUID | None = None) -> dict:
+    params = {"user_id": user_id, "position_id": str(position_id) if position_id else None}
+    db = SessionLocal()
+    try:
+        positions = db.execute(text(_SCOPE_CTE + " SELECT * FROM visible_positions"), params).mappings().all()
+        if position_id and not positions:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xem thống kê vị trí này")
+        applications = db.execute(text(_APPLICATIONS_QUERY), params).mappings().all()
+        result = build_dashboard(positions, applications)
+        if position_id:
+            result["position_id"] = str(position_id)
+        return result
+    finally:
+        db.close()
 
 
 @router.get("/summary")
-async def get_dashboard_summary(
-    current_user: dict = Depends(get_current_user)
-):
-    """Get aggregated dashboard summary for HR Lead/Admin (across all visible positions)"""
-    supabase = get_supabase_client()
-
-    # Total open positions
-    pos_result = supabase.table("positions").select("position_id", count="exact").eq("status", "OPEN").execute()
-    open_positions = pos_result.count if hasattr(pos_result, 'count') else len(pos_result.data or [])
-
-    # Applications by status
-    all_apps = supabase.table("applications").select("application_status").execute()
-    apps_data = all_apps.data or []
-
-    status_counts = {
-        "NEW": 0,
-        "IN_REVIEW": 0,
-        "SHORTLIST": 0,
-        "REJECTED_SCREENING": 0,
-        "INTERVIEW": 0,
-        "REJECTED_INTERVIEW": 0,
-        "OFFERED": 0,
-        "ACCEPTED": 0
-    }
-
-    for app in apps_data:
-        status = app.get("application_status", "NEW")
-        if status in status_counts:
-            status_counts[status] += 1
-
-    total_applications = len(apps_data)
-
-    # Files needing review
-    review_docs = supabase.table("application_documents")\
-        .select("document_id", count="exact")\
-        .eq("file_processing_status", "NEEDS_HR_REVIEW")\
-        .execute()
-    needs_review_count = review_docs.count if hasattr(review_docs, 'count') else len(review_docs.data or [])
-
-    # Assessments with HR override (placeholder for future - compare HR status vs AI recommendation)
-    # For MVP return 0, will be populated when override tracking is implemented
-    override_rate = 0.0
-
-    return {
-        "open_positions": open_positions,
-        "total_applications": total_applications,
-        "applications_by_status": status_counts,
-        "files_needing_hr_review": needs_review_count,
-        "hr_override_rate": override_rate,
-        "average_processing_time_seconds": None  # Will calculate from operation timing in future
-    }
+async def get_dashboard_summary(current_user: dict = Depends(get_current_user)):
+    """Dashboard for the current user's active position assignments and shares."""
+    return _load_dashboard(current_user["user_id"])
 
 
 @router.get("/position/{position_id}")
-async def get_position_dashboard(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get dashboard statistics for a specific position"""
-    supabase = get_supabase_client()
-    position_id_str = str(position_id)
-
-    # Application status breakdown for this position
-    apps_result = supabase.table("applications").select("application_status").eq("position_id", position_id_str).execute()
-    apps_data = apps_result.data or []
-
-    status_counts = {
-        "NEW": 0,
-        "IN_REVIEW": 0,
-        "SHORTLIST": 0,
-        "REJECTED_SCREENING": 0,
-        "INTERVIEW": 0,
-        "REJECTED_INTERVIEW": 0,
-        "OFFERED": 0,
-        "ACCEPTED": 0
-    }
-
-    for app in apps_data:
-        status = app.get("application_status", "NEW")
-        if status in status_counts:
-            status_counts[status] += 1
-
-    # Document processing status
-    docs_result = supabase.table("application_documents")\
-        .select("file_processing_status")\
-        .eq("application_id", f"in.({','.join([repr(a) for a in [a['application_id'] for a in apps_data]])})")\
-        .execute()
-    # This is simplified; actual implementation needs join or proper filtering.
-    # For Phase 1 MVP we'll return document stats from applications directly
-
-    # Matching status breakdown from latest assessments
-    assess_result = supabase.table("assessment_runs")\
-        .select("matching_status")\
-        .eq("position_id", position_id_str)\
-        .eq("status", "COMPLETED")\
-        .execute()
-
-    matching_counts = {
-        "NOT_ASSESSED": 0,
-        "NEEDS_HR_VERIFICATION": 0,
-        "POSSIBLE_MISMATCH": 0,
-        "MEETS_MANDATORY": 0
-    }
-
-    seen_apps = set()
-    for assess in assess_result.data or []:
-        app_id = assess.get("application_id")
-        if app_id in seen_apps:
-            continue
-        seen_apps.add(app_id)
-        status = assess.get("matching_status", "NOT_ASSESSED")
-        if status in matching_counts:
-            matching_counts[status] += 1
-
-    total_assessed = len(seen_apps)
-    coverage_under_threshold = matching_counts["NEEDS_HR_VERIFICATION"]
-
-    return {
-        "position_id": position_id_str,
-        "total_applications": len(apps_data),
-        "applications_by_status": status_counts,
-        "assessments_completed": total_assessed,
-        "matching_status_counts": matching_counts,
-        "files_needing_review": 0,  # TODO: Calculate from joined documents
-        "average_coverage": None,  # TODO: Calculate average evidence coverage
-        "duplicate_alerts": 0  # TODO: Count duplicate signals
-    }
+async def get_position_dashboard(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Statistics for one visible position, using the same application-level scope."""
+    return _load_dashboard(current_user["user_id"], position_id)

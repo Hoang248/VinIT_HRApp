@@ -1,357 +1,134 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import List, Optional
-from uuid import UUID, uuid4
-from app.core.security import get_current_user
-from app.core.permissions import check_position_access
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
+
 from app.core.config import settings
-from app.core.logging import get_logger
-from app.core.exceptions import NotFoundError, CriteriaNotApprovedError
-from app.schemas.applications import (
-    AssessmentRun,
-    CriterionResult,
-    RankingItem,
-    MatchingStatus
-)
+from app.core.exceptions import CriteriaNotApprovedError, NotFoundError
+from app.core.permissions import application_access, check_position_access
+from app.core.security import get_current_user
+from app.db.database import SessionLocal
+from app.schemas.applications import AssessmentRun, RankingItem
 from app.schemas.common import OperationResponse
-from app.db.supabase import get_supabase_client
-from app.services.matching import matching_engine
 
 router = APIRouter()
-logger = get_logger(__name__)
+
+
+async def _queue_position_operation(position_id: UUID, user: dict, capability: str) -> OperationResponse:
+    await check_position_access(position_id, user, required_roles=["HR_RECRUITER"])
+    db = SessionLocal()
+    try:
+        position = str(position_id)
+        # Serialize check-and-queue across API requests for the same position.
+        if not db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": position}).first():
+            raise NotFoundError("Position")
+        if not db.execute(text("SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED' LIMIT 1"), {"id": position}).first():
+            raise CriteriaNotApprovedError()
+        active = db.execute(text("""
+            SELECT operation_id FROM app_private.operations WHERE position_id = :id
+              AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING') AND status IN ('PENDING', 'PROCESSING')
+            ORDER BY created_at LIMIT 1
+        """), {"id": position}).scalar_one_or_none()
+        if active:
+            return OperationResponse(operation_id=active, status="processing", message="Vị trí đang được xử lý; hệ thống sẽ tiếp tục cập nhật tiến trình.")
+        if capability == "ASSESSMENT" and not db.execute(text("SELECT 1 FROM app_private.applications WHERE position_id = :id LIMIT 1"), {"id": position}).first():
+            # Even a no-op gets a real completed operation so polling clients do
+            # not receive a made-up ID that immediately returns 404.
+            operation_id = db.execute(text("""
+                INSERT INTO app_private.operations
+                    (position_id, capability, status, requested_by, started_at, completed_at)
+                VALUES (:position, 'ASSESSMENT', 'COMPLETED', :user_id, NOW(), NOW()) RETURNING operation_id
+            """), {"position": position, "user_id": user["user_id"]}).scalar_one()
+            db.commit()
+            return OperationResponse(operation_id=operation_id, status="completed", message="Không có hồ sơ nào cần đánh giá")
+        operation_id = db.execute(text("""
+            INSERT INTO app_private.operations (position_id, capability, status, requested_by)
+            VALUES (:position, :capability, 'PENDING', :user_id) RETURNING operation_id
+        """), {"position": position, "capability": capability, "user_id": user["user_id"]}).scalar_one()
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, :action, 'POSITION', :position, :position, 'QUEUED')
+        """), {"user_id": user["user_id"], "action": "RUN_" + capability, "position": position})
+        db.commit()
+        return OperationResponse(operation_id=operation_id, status="pending", message="Đã đưa yêu cầu vào hàng đợi xử lý.")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @router.post("/run/{position_id}", response_model=OperationResponse, status_code=status.HTTP_202_ACCEPTED)
-async def run_assessment_for_position(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Trigger AI assessment for all unassessed applications in a position (requires approved criteria)"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    position_id_str = str(position_id)
-
-    # Verify position exists
-    pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
-    if not pos_result.data:
-        raise NotFoundError("Position")
-
-    # RBAC: only HR_RECRUITER on this position can trigger assessment
-    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
-
-    # Get latest approved criteria
-    criteria_result = supabase.table("criteria_versions")\
-        .select("*, criteria: criteria_items(*)")\
-        .eq("position_id", position_id_str)\
-        .eq("status", "APPROVED")\
-        .order("version_number", desc=True)\
-        .limit(1)\
-        .execute()
-
-    if not criteria_result.data:
-        raise CriteriaNotApprovedError()
-
-    approved_cv = criteria_result.data[0]
-    criteria_version_id = approved_cv["criteria_version_id"]
-    criteria_items = approved_cv.get("criteria", [])
-
-    # Get applications in this position that have completed document processing
-    # and either not assessed or assessed on older criteria version
-    apps_result = supabase.table("applications")\
-        .select("*, documents: application_documents(*)")\
-        .eq("position_id", position_id_str)\
-        .in_("application_status", ["NEW", "IN_REVIEW", "SHORTLIST"])\
-        .execute()
-
-    applications = apps_result.data or []
-
-    if not applications:
-        return OperationResponse(
-            operation_id=uuid4(),
-            status="completed",
-            message="Không có hồ sơ nào cần đánh giá"
-        )
-
-    # Create PENDING operation so worker picks it up and runs assessments
-    op_result = supabase.table("operations").insert({
-        "capability": "ASSESSMENT",
-        "status": "PENDING",
-        "requested_by": user_id,
-    }).execute()
-    operation_id = op_result.data[0]["operation_id"]
-
-    # Worker will automatically:
-    #   1. Pick up the ASSESSMENT operation
-    #   2. Run LLM matching for each unassessed application
-    #   3. Verify verbatim quotes against extracted CV text
-    #   4. Compute deterministic scores via matching_engine
-    #   5. After all assessments complete, auto-queue RANKING operation
-    # (see worker._run_assessments)
-
-    logger.info(
-        "Assessment queued for worker processing",
-        operation_id=operation_id,
-        position_id=position_id_str,
-        applications_to_assess=len(applications),
-        criteria_version_id=criteria_version_id
-    )
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "RUN_ASSESSMENT",
-        "object_type": "POSITION",
-        "object_id": position_id_str,
-        "outcome": "QUEUED",
-        "metadata": {"applications_count": len(applications), "criteria_version": criteria_version_id}
-    }).execute()
-
-    return OperationResponse(
-        operation_id=UUID(operation_id),
-        status="processing",
-        message=f"Đã đưa {len(applications)} hồ sơ vào hàng đợi đánh giá. Quá trình sẽ bắt đầu trong vài giây..."
-    )
+async def run_assessment_for_position(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Assess eligible applications and then refresh ranking for this position."""
+    return await _queue_position_operation(position_id, current_user, "ASSESSMENT")
 
 
 @router.get("/{assessment_id}", response_model=AssessmentRun)
-async def get_assessment(
-    assessment_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get a specific assessment run with all criterion results and evidence"""
-    supabase = get_supabase_client()
-    assess_id_str = str(assessment_id)
-
-    # Look up position_id for RBAC check
-    assess_meta = supabase.table("assessment_runs").select("position_id").eq("assessment_id", assess_id_str).single().execute()
-    if not assess_meta.data:
-        raise NotFoundError("Assessment run")
-    await check_position_access(UUID(assess_meta.data["position_id"]), current_user)
-
-    result = supabase.table("assessment_runs")\
-        .select("*, criterion_results: criterion_assessment_results(*, evidence: evidence_items(*))")\
-        .eq("assessment_id", assess_id_str)\
-        .single()\
-        .execute()
-
-    if not result.data:
-        raise NotFoundError("Assessment run")
-
-    return result.data
+async def get_assessment(assessment_id: UUID, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        row = db.execute(text("SELECT * FROM app_private.assessment_runs WHERE assessment_id = :id"), {"id": str(assessment_id)}).mappings().first()
+        if not row:
+            raise NotFoundError("Assessment run")
+        access = application_access(current_user["user_id"], str(row["position_id"]), str(row["application_id"]))
+        if not access["can_view_cv"]:
+            raise HTTPException(status_code=403, detail="Shortlist này chỉ cho phép xem tóm tắt")
+        assessment = dict(row)
+        results = db.execute(text("""
+            SELECT r.*, c.name AS criterion_name, c.category, r.requires_hr_verification AS requires_verification
+            FROM app_private.criterion_assessment_results r JOIN app_private.criteria_items c USING (criterion_id)
+            WHERE r.assessment_id = :id ORDER BY c.display_order, c.criterion_id
+        """), {"id": str(assessment_id)}).mappings().all()
+        assessment["criterion_results"] = []
+        for result in results:
+            item = dict(result)
+            item["evidence"] = [dict(e) for e in db.execute(text("""
+                SELECT evidence_id, verbatim_quote, page_number, verification_status FROM app_private.evidence_items
+                WHERE criterion_result_id = :id ORDER BY created_at
+            """), {"id": str(item["result_id"])}).mappings().all()]
+            assessment["criterion_results"].append(item)
+        return assessment
+    finally:
+        db.close()
 
 
 @router.post("/ranking/generate/{position_id}", response_model=OperationResponse, status_code=status.HTTP_202_ACCEPTED)
-async def generate_ranking(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Generate new ranking snapshot for a position based on latest completed assessments"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    position_id_str = str(position_id)
+async def generate_ranking(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    return await _queue_position_operation(position_id, current_user, "RANKING")
 
-    # Get position and approved criteria
-    pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
-    if not pos_result.data:
-        raise NotFoundError("Position")
 
-    # RBAC: only HR_RECRUITER on this position can generate ranking
+@router.get("/ranking/latest/{position_id}", response_model=list[RankingItem])
+async def get_latest_ranking(position_id: UUID, current_user: dict = Depends(get_current_user)):
     await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
-
-    criteria_result = supabase.table("criteria_versions")\
-        .select("*, criteria: criteria_items(*)")\
-        .eq("position_id", position_id_str)\
-        .eq("status", "APPROVED")\
-        .order("version_number", desc=True)\
-        .limit(1)\
-        .execute()
-
-    if not criteria_result.data:
-        raise CriteriaNotApprovedError()
-
-    approved_cv = criteria_result.data[0]
-    criteria_items = approved_cv.get("criteria", [])
-    criteria_version_id = approved_cv["criteria_version_id"]
-
-    # Get applications with latest completed assessment
-    apps_result = supabase.table("applications")\
-        .select(
-            "application_id, "
-            "identity: application_identities(display_name), "
-            "latest_assessment: assessment_runs(*)"
-        )\
-        .eq("position_id", position_id_str)\
-        .in_("application_status", ["NEW", "IN_REVIEW", "SHORTLIST"])\
-        .execute()
-
-    applications = apps_result.data or []
-
-    # Build list with latest assessment
-    apps_with_assessments = []
-    for app in applications:
-        assessments = app.get("latest_assessment", [])
-        if isinstance(assessments, list):
-            completed = [a for a in assessments if a.get("status") == "COMPLETED" and a.get("criteria_version_id") == criteria_version_id]
-            if completed:
-                latest = sorted(completed, key=lambda x: x.get("created_at", ""))[-1]
-                app["latest_assessment"] = latest
-                display_name = None
-                identity = app.get("identity")
-                if isinstance(identity, list) and identity:
-                    display_name = identity[0].get("display_name")
-                elif isinstance(identity, dict):
-                    display_name = identity.get("display_name")
-                app["display_name"] = display_name
-                apps_with_assessments.append(app)
-
-    if not apps_with_assessments:
-        return OperationResponse(
-            operation_id=uuid4(),
-            status="completed",
-            message="Không có hồ sơ đã đánh giá để xếp hạng"
-        )
-
-    # Run deterministic ranking
-    ranked = matching_engine.rank_applications(apps_with_assessments, criteria_items)
-
-    # Create ranking run
-    rank_op_result = supabase.table("operations").insert({
-        "capability": "RANKING",
-        "status": "COMPLETED",
-        "requested_by": user_id,
-    }).execute()
-
-    rank_run_result = supabase.table("ranking_runs").insert({
-        "position_id": position_id_str,
-        "criteria_version_id": criteria_version_id,
-        "policy_version": "v1.0",
-        "operation_id": rank_op_result.data[0]["operation_id"],
-        "status": "COMPLETED"
-    }).execute()
-
-    ranking_run_id = rank_run_result.data[0]["ranking_run_id"]
-
-    # Insert ranking items
-    ranking_items = []
-    for item in ranked:
-        assess = item.get("latest_assessment", {})
-        ranking_items.append({
-            "ranking_run_id": ranking_run_id,
-            "position_id": position_id_str,
-            "application_id": item["application_id"],
-            "assessment_id": assess.get("assessment_id"),
-            "rank_number": item["rank_number"],
-            "ranking_status": assess.get("matching_status"),
-            "matching_score": assess.get("matching_score"),
-            "evidence_coverage": assess.get("evidence_coverage"),
-            "confidence": assess.get("confidence")
-        })
-
-    if ranking_items:
-        supabase.table("ranking_items").insert(ranking_items).execute()
-
-    # Detect duplicates
-    duplicates = matching_engine.detect_duplicates(applications)
-    if duplicates:
-        dup_records = []
-        for app1_id, app2_id, confidence, signal_type in duplicates:
-            dup_records.append({
-                "position_id": position_id_str,
-                "application_id_1": app1_id,
-                "application_id_2": app2_id,
-                "signal_type": signal_type,
-                "confidence": confidence,
-                "detector_version": "v1.0"
-            })
-        if dup_records:
-            supabase.table("duplicate_signals").insert(dup_records).execute()
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "GENERATE_RANKING",
-        "object_type": "RANKING_RUN",
-        "object_id": ranking_run_id,
-        "position_id": position_id_str,
-        "outcome": "SUCCESS",
-        "metadata": {"ranked_applications": len(ranked), "duplicates_found": len(duplicates)}
-    }).execute()
-
-    # Mark operation completed
-    supabase.table("operations").update({
-        "status": "COMPLETED",
-        "completed_at": "now()"
-    }).eq("operation_id", rank_op_result.data[0]["operation_id"]).execute()
-
-    logger.info(
-        "Ranking generated",
-        ranking_run_id=ranking_run_id,
-        position_id=position_id_str,
-        ranked_count=len(ranked)
-    )
-
-    return OperationResponse(
-        operation_id=UUID(ranking_run_id),
-        status="completed",
-        message=f"Đã xếp hạng xong {len(ranked)} hồ sơ"
-    )
-
-
-@router.get("/ranking/latest/{position_id}", response_model=List[RankingItem])
-async def get_latest_ranking(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get latest ranking for a position, sorted by rank order"""
-    # RBAC: user must have access to this position
-    await check_position_access(position_id, current_user)
-    supabase = get_supabase_client()
-    position_id_str = str(position_id)
-
-    # Get latest completed ranking run
-    run_result = supabase.table("ranking_runs")\
-        .select("*")\
-        .eq("position_id", position_id_str)\
-        .eq("status", "COMPLETED")\
-        .order("created_at", desc=True)\
-        .limit(1)\
-        .execute()
-
-    if not run_result.data:
-        return []
-
-    latest_run = run_result.data[0]
-
-    # Get ranking items with application identity
-    items_result = supabase.table("ranking_items")\
-        .select(
-            "*, "
-            "application: applications(*, identity: application_identities(*))"
-        )\
-        .eq("ranking_run_id", latest_run["ranking_run_id"])\
-        .order("rank_number", desc=False, nullsfirst=False)\
-        .execute()
-
-    items = items_result.data or []
-    result_items = []
-
-    for item in items:
-        app = item.get("application", {})
-        identity = app.get("identity", [])
-        candidate_name = None
-        if isinstance(identity, list) and identity:
-            candidate_name = identity[0].get("display_name")
-        elif isinstance(identity, dict):
-            candidate_name = identity.get("display_name")
-
-        result_items.append(RankingItem(
-            rank_number=item.get("rank_number"),
-            application_id=UUID(item["application_id"]),
-            candidate_name=candidate_name or "Không có tên",
-            matching_status=MatchingStatus(item["ranking_status"]) if item.get("ranking_status") else MatchingStatus.NOT_ASSESSED,
-            matching_score=item.get("matching_score"),
-            evidence_coverage=item.get("evidence_coverage"),
-            needs_verification=item.get("ranking_status") == "NEEDS_HR_VERIFICATION" or (item.get("evidence_coverage") or 0) < settings.MIN_EVIDENCE_COVERAGE,
-            has_mismatch=item.get("ranking_status") == "POSSIBLE_MISMATCH"
-        ))
-
-    return result_items
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT ri.application_id, ri.rank_number, ri.ranking_status AS matching_status,
+                   ri.matching_score, ri.evidence_coverage, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
+            FROM app_private.ranking_items ri
+            JOIN app_private.applications a ON a.application_id = ri.application_id
+            LEFT JOIN app_private.application_identities i ON i.application_id = ri.application_id
+            WHERE a.application_status IN ('NEW', 'IN_REVIEW', 'SHORTLIST')
+              AND ri.ranking_run_id = (
+                SELECT ranking_run_id FROM app_private.ranking_runs
+                WHERE position_id = :position AND status = 'COMPLETED'
+                  AND criteria_version_id = (
+                      SELECT criteria_version_id FROM app_private.criteria_versions
+                      WHERE position_id = :position AND status = 'APPROVED'
+                      ORDER BY version_number DESC LIMIT 1
+                  )
+                ORDER BY created_at DESC, ranking_run_id DESC LIMIT 1
+            )
+            ORDER BY ri.rank_number ASC NULLS LAST, ri.application_id
+        """), {"position": str(position_id)}).mappings().all()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["matching_status"] = item["matching_status"] or "NOT_ASSESSED"
+            item["has_mismatch"] = item["matching_status"] == "POSSIBLE_MISMATCH"
+            item["needs_verification"] = item["matching_status"] == "NEEDS_HR_VERIFICATION" or (item["evidence_coverage"] or 0) < settings.MIN_EVIDENCE_COVERAGE
+            items.append(item)
+        return items
+    finally:
+        db.close()

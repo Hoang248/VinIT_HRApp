@@ -1,384 +1,279 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
-from uuid import UUID, uuid4
-from pydantic import BaseModel
-from app.core.security import get_current_user
-from app.core.logging import get_logger
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+
 from app.core.exceptions import NotFoundError
-from app.core.permissions import check_position_access
-from app.db.supabase import get_supabase_client
+from app.core.permissions import can_update_application_status
+from app.core.security import get_current_user
+from app.db.database import SessionLocal
 
 router = APIRouter()
-logger = get_logger(__name__)
 
 
 class CreateShortlistShareRequest(BaseModel):
     position_id: UUID
     shared_with_user_id: UUID
-    application_ids: List[UUID]
-    note: Optional[str] = None
+    application_ids: List[UUID] = Field(min_length=1, max_length=500)
+    note: Optional[str] = Field(default=None, max_length=2000)
     allow_cv_view: bool = False
 
 
 class ShortlistFeedbackRequest(BaseModel):
     application_id: Optional[UUID] = None
-    content: str
+    content: str = Field(min_length=1, max_length=3000)
+
+
+def _require_hr(user_id: str, position_id: UUID):
+    if not can_update_application_status(user_id, str(position_id)):
+        raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới được chia sẻ shortlist")
 
 
 @router.get("/potential-recipients/{position_id}")
-async def get_potential_recipients(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """List users who can receive shortlist shares for a position (HIRING_MANAGER assigned)."""
-    await check_position_access(position_id, current_user)
-    supabase = get_supabase_client()
-    position_id_str = str(position_id)
-
-    # Get HIRING_MANAGER assignments for this position, plus their profiles
-    result = supabase.table("position_assignments")\
-        .select("user_id, position_role, profile: user_profiles(display_name, preferred_locale)")\
-        .eq("position_id", position_id_str)\
-        .eq("position_role", "HIRING_MANAGER")\
-        .is_("revoked_at", "null")\
-        .execute()
-
-    recipients = []
-    for row in (result.data or []):
-        profile = row.get("profile") or {}
-        recipients.append({
-            "user_id": row["user_id"],
-            "display_name": profile.get("display_name") or "Hiring Manager",
-            "role": row["position_role"],
-        })
-
-    # Also allow sharing back to HR_RECRUITERS on the position
-    hr_result = supabase.table("position_assignments")\
-        .select("user_id, position_role, profile: user_profiles(display_name)")\
-        .eq("position_id", position_id_str)\
-        .eq("position_role", "HR_RECRUITER")\
-        .is_("revoked_at", "null")\
-        .neq("user_id", current_user["user_id"])\
-        .execute()
-
-    for row in (hr_result.data or []):
-        profile = row.get("profile") or {}
-        recipients.append({
-            "user_id": row["user_id"],
-            "display_name": profile.get("display_name") or "HR Recruiter",
-            "role": row["position_role"],
-        })
-
-    return recipients
+async def get_potential_recipients(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Only active Hiring Managers assigned to this position can receive a share."""
+    _require_hr(current_user["user_id"], position_id)
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT pa.user_id, COALESCE(up.display_name, 'Hiring Manager') AS display_name,
+                   pa.position_role AS role
+            FROM app_private.position_assignments pa
+            JOIN app_private.user_profiles up ON up.user_id = pa.user_id
+            WHERE pa.position_id = :position_id AND pa.position_role = 'HIRING_MANAGER'
+              AND pa.revoked_at IS NULL AND up.account_status = 'ACTIVE'
+            ORDER BY display_name
+        """), {"position_id": str(position_id)}).mappings().all()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 @router.get("/shortlisted-applications/{position_id}")
-async def list_shortlisted_applications(
-    position_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """List applications currently in SHORTLIST status for a position (to share with HM)."""
-    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
-    supabase = get_supabase_client()
-    position_id_str = str(position_id)
-
-    result = supabase.table("applications")\
-        .select(
-            "application_id, application_status, created_at, "
-            "identity: application_identities(display_name), "
-            "latest_assessment: assessment_runs(matching_status, matching_score, evidence_coverage)"
-        )\
-        .eq("position_id", position_id_str)\
-        .eq("application_status", "SHORTLIST")\
-        .order("created_at", desc=True)\
-        .execute()
-
-    apps = []
-    for a in (result.data or []):
-        assessments = a.get("latest_assessment", [])
-        latest = None
-        if isinstance(assessments, list) and assessments:
-            completed = [x for x in assessments if x.get("status") == "COMPLETED"]
-            if completed:
-                latest = sorted(completed, key=lambda x: x.get("created_at", ""))[-1]
-        identity = a.get("identity")
-        display_name = None
-        if isinstance(identity, list) and identity:
-            display_name = identity[0].get("display_name")
-        elif isinstance(identity, dict):
-            display_name = identity.get("display_name")
-        apps.append({
-            "application_id": a["application_id"],
-            "candidate_name": display_name or "Chưa có tên",
-            "application_status": a["application_status"],
-            "matching_status": latest.get("matching_status") if latest else None,
-            "matching_score": latest.get("matching_score") if latest else None,
-            "evidence_coverage": latest.get("evidence_coverage") if latest else None,
-        })
-
-    return apps
+async def list_shortlisted_applications(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    _require_hr(current_user["user_id"], position_id)
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT a.application_id, a.application_status, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name,
+                   ar.matching_status, ar.matching_score, ar.evidence_coverage
+            FROM app_private.applications a
+            LEFT JOIN app_private.application_identities i ON i.application_id = a.application_id
+            LEFT JOIN LATERAL (
+                SELECT matching_status, matching_score, evidence_coverage FROM app_private.assessment_runs
+                WHERE application_id = a.application_id AND status = 'COMPLETED'
+                ORDER BY created_at DESC LIMIT 1
+            ) ar ON TRUE
+            WHERE a.position_id = :position_id AND a.application_status = 'SHORTLIST'
+            ORDER BY a.created_at DESC
+        """), {"position_id": str(position_id)}).mappings().all()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 @router.post("/share", status_code=status.HTTP_201_CREATED)
-async def create_shortlist_share(
-    request: CreateShortlistShareRequest,
-    current_user: dict = Depends(get_current_user)
-):
-    """Share selected applications as shortlist with a Hiring Manager"""
-    supabase = get_supabase_client()
+async def create_shortlist_share(request: CreateShortlistShareRequest, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
-    position_id_str = str(request.position_id)
+    _require_hr(user_id, request.position_id)
+    position_id, recipient = str(request.position_id), str(request.shared_with_user_id)
+    ids = [str(app_id) for app_id in request.application_ids]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=400, detail="Danh sách ứng viên có hồ sơ trùng")
 
-    # Verify position exists
-    pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
-    if not pos_result.data:
-        raise NotFoundError("Position")
-
-    # Create share record
-    share_result = supabase.table("shortlist_shares").insert({
-        "position_id": position_id_str,
-        "created_by": user_id,
-        "shared_with": str(request.shared_with_user_id),
-        "note": request.note,
-        "status": "ACTIVE",
-        "allow_cv_view": request.allow_cv_view
-    }).execute()
-
-    if not share_result.data:
-        raise HTTPException(status_code=500, detail="Failed to create shortlist share")
-
-    share_id = share_result.data[0]["share_id"]
-
-    # Get latest ranking run for reference
-    rank_result = supabase.table("ranking_runs")\
-        .select("ranking_run_id")\
-        .eq("position_id", position_id_str)\
-        .eq("status", "COMPLETED")\
-        .order("created_at", desc=True)\
-        .limit(1)\
-        .execute()
-    latest_ranking_id = rank_result.data[0]["ranking_run_id"] if rank_result.data else None
-
-    # Create share items
-    share_items = []
-    for app_id in request.application_ids:
-        app_id_str = str(app_id)
-        # Get latest assessment for this app
-        assess_result = supabase.table("assessment_runs")\
-            .select("assessment_id")\
-            .eq("application_id", app_id_str)\
-            .eq("status", "COMPLETED")\
-            .order("created_at", desc=True)\
-            .limit(1)\
-            .execute()
-        assess_id = assess_result.data[0]["assessment_id"] if assess_result.data else None
-
-        # Get ranking item if exists
-        rank_item_id = None
-        if latest_ranking_id:
-            ri_result = supabase.table("ranking_items")\
-                .select("ranking_item_id")\
-                .eq("ranking_run_id", latest_ranking_id)\
-                .eq("application_id", app_id_str)\
-                .limit(1)\
-                .execute()
-            if ri_result.data:
-                rank_item_id = ri_result.data[0]["ranking_item_id"]
-
-        share_items.append({
-            "share_id": share_id,
-            "position_id": position_id_str,
-            "application_id": app_id_str,
-            "assessment_id": assess_id,
-            "ranking_item_id": rank_item_id
-        })
-
-    if share_items:
-        supabase.table("shortlist_share_items").insert(share_items).execute()
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "SHARE_SHORTLIST",
-        "object_type": "SHORTLIST_SHARE",
-        "object_id": share_id,
-        "position_id": position_id_str,
-        "outcome": "SUCCESS",
-        "metadata": {
-            "shared_with": str(request.shared_with_user_id),
-            "applications_count": len(request.application_ids),
-            "allow_cv_view": request.allow_cv_view
-        }
-    }).execute()
-
-    logger.info("Shortlist shared", share_id=share_id, to=request.shared_with_user_id, count=len(request.application_ids))
-
-    return {
-        "share_id": share_id,
-        "status": "ACTIVE",
-        "position_id": position_id_str,
-        "shared_with": str(request.shared_with_user_id),
-        "applications_count": len(share_items)
-    }
+    db = SessionLocal()
+    try:
+        recipient_ok = db.execute(text("""
+            SELECT 1 FROM app_private.position_assignments pa
+            JOIN app_private.user_profiles up ON up.user_id = pa.user_id
+            WHERE pa.position_id = :position_id AND pa.user_id = :recipient
+              AND pa.position_role = 'HIRING_MANAGER' AND pa.revoked_at IS NULL
+              AND up.account_status = 'ACTIVE'
+        """), {"position_id": position_id, "recipient": recipient}).first()
+        if not recipient_ok:
+            raise HTTPException(status_code=400, detail="Người nhận phải là Hiring Manager đang phụ trách vị trí")
+        apps = db.execute(text("""
+            SELECT application_id FROM app_private.applications
+            WHERE position_id = :position_id AND application_status = 'SHORTLIST'
+              AND CAST(application_id AS text) = ANY(:ids)
+            FOR UPDATE
+        """), {"position_id": position_id, "ids": ids}).scalars().all()
+        if len(apps) != len(ids):
+            raise HTTPException(status_code=400, detail="Chỉ có thể chia sẻ hồ sơ đang ở Shortlist của vị trí này")
+        share_id = db.execute(text("""
+            INSERT INTO app_private.shortlist_shares (position_id, created_by, shared_with, note, allow_cv_view)
+            VALUES (:position_id, :user_id, :recipient, :note, :allow_cv_view) RETURNING share_id
+        """), {"position_id": position_id, "user_id": user_id, "recipient": recipient,
+                "note": request.note, "allow_cv_view": request.allow_cv_view}).scalar_one()
+        for app_id in ids:
+            db.execute(text("""
+                INSERT INTO app_private.shortlist_share_items
+                    (share_id, position_id, application_id, assessment_id, ranking_item_id)
+                VALUES (:share_id, :position_id, :application_id,
+                    (SELECT assessment_id FROM app_private.assessment_runs
+                     WHERE application_id = :application_id AND status = 'COMPLETED'
+                     ORDER BY created_at DESC LIMIT 1),
+                    (SELECT ri.ranking_item_id FROM app_private.ranking_items ri
+                     JOIN app_private.ranking_runs rr ON rr.ranking_run_id = ri.ranking_run_id
+                     WHERE ri.application_id = :application_id AND rr.status = 'COMPLETED'
+                     ORDER BY rr.created_at DESC LIMIT 1))
+            """), {"share_id": share_id, "position_id": position_id, "application_id": app_id})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'SHARE_SHORTLIST', 'SHORTLIST_SHARE', :share_id, :position_id, 'SUCCESS')
+        """), {"user_id": user_id, "share_id": share_id, "position_id": position_id})
+        db.commit()
+        return {"share_id": share_id, "status": "ACTIVE", "position_id": position_id,
+                "shared_with": recipient, "applications_count": len(ids)}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @router.get("/shared-with-me")
-async def get_shortlists_shared_with_me(
-    current_user: dict = Depends(get_current_user)
-):
-    """Get list of shortlists shared with current user (Hiring Manager view)"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
+async def get_shortlists_shared_with_me(current_user: dict = Depends(get_current_user)):
+    """Inbox for recipients and shares managed by HR responsible for the position."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT s.*, p.title, p.position_code, creator.display_name AS creator_name,
+                   recipient.display_name AS recipient_name,
+                   (SELECT COUNT(*) FROM app_private.shortlist_share_items si WHERE si.share_id = s.share_id) AS application_count,
+                   (SELECT COUNT(*) FROM app_private.shortlist_feedback f WHERE f.share_id = s.share_id) AS feedback_count
+            FROM app_private.shortlist_shares s
+            JOIN app_private.positions p ON p.position_id = s.position_id
+            LEFT JOIN app_private.user_profiles creator ON creator.user_id = s.created_by
+            LEFT JOIN app_private.user_profiles recipient ON recipient.user_id = s.shared_with
+            WHERE s.status = 'ACTIVE' AND (
+                (s.shared_with = :user_id AND EXISTS (
+                    SELECT 1 FROM app_private.position_assignments hm WHERE hm.position_id = s.position_id
+                      AND hm.user_id = :user_id AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL))
+                OR EXISTS (SELECT 1 FROM app_private.position_assignments hr WHERE hr.position_id = s.position_id
+                           AND hr.user_id = :user_id AND hr.position_role IN ('HR_RECRUITER', 'HR_LEAD') AND hr.revoked_at IS NULL)
+                OR EXISTS (SELECT 1 FROM app_private.user_role_assignments ur WHERE ur.user_id = :user_id
+                           AND ur.role_code IN ('ADMIN', 'HR_LEAD') AND ur.revoked_at IS NULL)
+            )
+            ORDER BY s.created_at DESC
+        """), {"user_id": current_user["user_id"]}).mappings().all()
+        return [_share_response(row, current_user["user_id"]) for row in rows]
+    finally:
+        db.close()
 
-    result = supabase.table("shortlist_shares")\
-        .select(
-            "*, "
-            "position: positions(title, position_code), "
-            "created_by_profile: user_profiles!shortlist_shares_created_by_fkey(display_name)"
-        )\
-        .eq("shared_with", user_id)\
-        .eq("status", "ACTIVE")\
-        .order("created_at", desc=True)\
-        .execute()
 
-    shares = result.data or []
+def _share_response(row, user_id: str) -> dict:
+    result = dict(row)
+    result["position"] = {"title": result.pop("title"), "position_code": result.pop("position_code")}
+    result["created_by_profile"] = {"display_name": result.pop("creator_name")}
+    result["recipient_profile"] = {"display_name": result.pop("recipient_name")}
+    result["direction"] = "received" if str(result["shared_with"]) == user_id and str(result["created_by"]) != user_id else "sent"
+    return result
 
-    # Enrich with application count
-    for share in shares:
-        items_result = supabase.table("shortlist_share_items")\
-            .select("share_item_id", count="exact")\
-            .eq("share_id", share["share_id"])\
-            .execute()
-        share["application_count"] = items_result.count if hasattr(items_result, 'count') else len(items_result.data or [])
 
-    return shares
+def _get_share(db, share_id: str, user_id: str, lock: bool = False):
+    row = db.execute(text("""
+        SELECT s.*, p.title, p.position_code, creator.display_name AS creator_name,
+               recipient.display_name AS recipient_name
+        FROM app_private.shortlist_shares s
+        JOIN app_private.positions p ON p.position_id = s.position_id
+        LEFT JOIN app_private.user_profiles creator ON creator.user_id = s.created_by
+        LEFT JOIN app_private.user_profiles recipient ON recipient.user_id = s.shared_with
+        WHERE s.share_id = :share_id
+    """ + (" FOR UPDATE OF s" if lock else "")), {"share_id": share_id}).mappings().first()
+    if not row:
+        raise NotFoundError("Shortlist share")
+    hr_access = can_update_application_status(user_id, str(row["position_id"]))
+    hm_access = str(row["shared_with"]) == user_id and bool(db.execute(text("""
+        SELECT 1 FROM app_private.position_assignments WHERE position_id = :position AND user_id = :user_id
+          AND position_role = 'HIRING_MANAGER' AND revoked_at IS NULL
+    """), {"position": str(row["position_id"]), "user_id": user_id}).first())
+    if not hr_access and not hm_access:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem shortlist này")
+    if row["status"] != "ACTIVE" and not hr_access:
+        raise HTTPException(status_code=403, detail="Shortlist đã bị thu hồi")
+    return row
 
 
 @router.get("/{share_id}")
-async def get_shortlist_detail(
-    share_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get shortlist share details with items (for HR owner or shared Hiring Manager)"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    share_id_str = str(share_id)
-
-    # Get share record
-    share_result = supabase.table("shortlist_shares")\
-        .select("*")\
-        .eq("share_id", share_id_str)\
-        .single()\
-        .execute()
-
-    if not share_result.data:
-        raise NotFoundError("Shortlist share")
-
-    share = share_result.data
-
-    # Permission check: must be creator or recipient
-    if share["created_by"] != user_id and share["shared_with"] != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to view this shortlist"
-        )
-
-    # Get share items with application details and assessments
-    items_result = supabase.table("shortlist_share_items")\
-        .select(
-            "*, "
-            "application: applications(*, identity: application_identities(*)), "
-            "assessment: assessment_runs(*, criterion_results: criterion_assessment_results(*))"
-        )\
-        .eq("share_id", share_id_str)\
-        .execute()
-
-    items = items_result.data or []
-
-    # Get existing feedback
-    feedback_result = supabase.table("shortlist_feedback")\
-        .select("*")\
-        .eq("share_id", share_id_str)\
-        .order("created_at", desc=True)\
-        .execute()
-
-    feedback = feedback_result.data or []
-
-    return {
-        **share,
-        "items": items,
-        "feedback": feedback
-    }
+async def get_shortlist_detail(share_id: UUID, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        result = _share_response(_get_share(db, str(share_id), current_user["user_id"]), current_user["user_id"])
+        items = db.execute(text("""
+            SELECT si.application_id, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name,
+                   a.application_status, ar.matching_status, ar.matching_score, ar.evidence_coverage
+            FROM app_private.shortlist_share_items si
+            JOIN app_private.applications a ON a.application_id = si.application_id
+            LEFT JOIN app_private.application_identities i ON i.application_id = si.application_id
+            LEFT JOIN app_private.assessment_runs ar ON ar.assessment_id = si.assessment_id
+            WHERE si.share_id = :share_id ORDER BY si.created_at, si.share_item_id
+        """), {"share_id": str(share_id)}).mappings().all()
+        feedback = db.execute(text("""
+            SELECT f.feedback_id, f.feedback_from, f.application_id, f.content, f.created_at,
+                   up.display_name AS author_name
+            FROM app_private.shortlist_feedback f
+            LEFT JOIN app_private.user_profiles up ON up.user_id = f.feedback_from
+            WHERE f.share_id = :share_id ORDER BY f.created_at, f.feedback_id
+        """), {"share_id": str(share_id)}).mappings().all()
+        result["applications"] = [dict(row) for row in items]
+        result["feedback"] = [dict(row) for row in feedback]
+        return result
+    finally:
+        db.close()
 
 
 @router.post("/{share_id}/feedback", status_code=status.HTTP_201_CREATED)
-async def add_shortlist_feedback(
-    share_id: UUID,
-    request: ShortlistFeedbackRequest,
-    current_user: dict = Depends(get_current_user)
-):
-    """Add feedback to a shortlist (by Hiring Manager or HR)"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    share_id_str = str(share_id)
-
-    # Verify share exists and user has access
-    share_result = supabase.table("shortlist_shares").select("*").eq("share_id", share_id_str).single().execute()
-    if not share_result.data:
-        raise NotFoundError("Shortlist share")
-
-    share = share_result.data
-    if share["created_by"] != user_id and share["shared_with"] != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to give feedback on this shortlist"
-        )
-
-    # Insert feedback
-    fb_result = supabase.table("shortlist_feedback").insert({
-        "share_id": share_id_str,
-        "application_id": str(request.application_id) if request.application_id else None,
-        "feedback_from": user_id,
-        "content": request.content
-    }).execute()
-
-    logger.info("Shortlist feedback added", share_id=share_id_str, from_user=user_id)
-
-    return fb_result.data[0]
+async def add_shortlist_feedback(share_id: UUID, request: ShortlistFeedbackRequest,
+                                 current_user: dict = Depends(get_current_user)):
+    content = request.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập phản hồi")
+    db = SessionLocal()
+    try:
+        share = _get_share(db, str(share_id), current_user["user_id"], lock=True)
+        if share["status"] != "ACTIVE":
+            raise HTTPException(status_code=400, detail="Shortlist đã bị thu hồi")
+        if request.application_id and not db.execute(text("""
+            SELECT 1 FROM app_private.shortlist_share_items
+            WHERE share_id = :share_id AND application_id = :application_id
+        """), {"share_id": str(share_id), "application_id": str(request.application_id)}).first():
+            raise HTTPException(status_code=400, detail="Hồ sơ không thuộc shortlist này")
+        row = db.execute(text("""
+            INSERT INTO app_private.shortlist_feedback (share_id, application_id, feedback_from, content)
+            VALUES (:share_id, :application_id, :user_id, :content) RETURNING *
+        """), {"share_id": str(share_id), "application_id": str(request.application_id) if request.application_id else None,
+                "user_id": current_user["user_id"], "content": content}).mappings().one()
+        db.commit()
+        return dict(row)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
-@router.post("/{share_id}/revoke", status_code=status.HTTP_200_OK)
-async def revoke_shortlist(
-    share_id: UUID,
-    current_user: dict = Depends(get_current_user)
-):
-    """Revoke an active shortlist share (by creator only)"""
-    supabase = get_supabase_client()
-    user_id = current_user["user_id"]
-    share_id_str = str(share_id)
-
-    share_result = supabase.table("shortlist_shares").select("*").eq("share_id", share_id_str).single().execute()
-    if not share_result.data:
-        raise NotFoundError("Shortlist share")
-
-    if share_result.data["created_by"] != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the creator can revoke a shortlist share"
-        )
-
-    supabase.table("shortlist_shares").update({
-        "status": "REVOKED",
-        "revoked_at": "now()"
-    }).eq("share_id", share_id_str).execute()
-
-    # Log audit
-    supabase.table("audit_events").insert({
-        "actor_user_id": user_id,
-        "action_type": "REVOKE_SHORTLIST",
-        "object_type": "SHORTLIST_SHARE",
-        "object_id": share_id_str,
-        "outcome": "SUCCESS"
-    }).execute()
-
-    return {"status": "REVOKED", "share_id": share_id_str}
+@router.post("/{share_id}/revoke")
+async def revoke_shortlist(share_id: UUID, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        share = _get_share(db, str(share_id), current_user["user_id"], lock=True)
+        if not can_update_application_status(current_user["user_id"], str(share["position_id"])):
+            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể thu hồi shortlist")
+        db.execute(text("""
+            UPDATE app_private.shortlist_shares SET status = 'REVOKED', revoked_at = NOW()
+            WHERE share_id = :share_id
+        """), {"share_id": str(share_id)})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'REVOKE_SHORTLIST', 'SHORTLIST_SHARE', :share_id, :position_id, 'SUCCESS')
+        """), {"user_id": current_user["user_id"], "share_id": str(share_id), "position_id": str(share["position_id"])})
+        db.commit()
+        return {"status": "REVOKED", "share_id": share_id}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

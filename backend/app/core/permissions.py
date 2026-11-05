@@ -1,6 +1,6 @@
 from typing import List, Optional
 from uuid import UUID
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from app.core.security import get_current_user
 from app.db.database import SessionLocal
 from sqlalchemy import text
@@ -22,9 +22,13 @@ class PositionAccessChecker:
         self.required_roles = required_roles
         self.param_name = param_name
 
-    async def __call__(self, **kwargs) -> bool:
-        # FastAPI resolves path params from kwargs when we specify them explicitly.
-        # But simpler: make the dependency accept request and inspect path.
+    async def __call__(self, request: Request, current_user: dict = Depends(get_current_user)) -> bool:
+        value = request.path_params.get(self.param_name)
+        try:
+            position_id = UUID(str(value))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid position id")
+        await check_position_access(position_id, current_user, required_roles=self.required_roles)
         return True
 
 
@@ -54,15 +58,6 @@ def require_admin_role(current_user: dict = Depends(get_current_user)) -> dict:
         """), {"user_id": user_id})
 
         if not result.fetchone():
-            # In development mode, allow all authenticated users through but log warning
-            import logging
-            logger = logging.getLogger(__name__)
-            if True:  # settings.APP_ENV == "development":
-                logger.warning(
-                    "Admin endpoint accessed by non-admin user (dev mode fallback)",
-                    user_id=user_id
-                )
-                return current_user
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Admin role required for this endpoint",
@@ -125,22 +120,23 @@ async def check_position_access(
         params = {"position_id": lookup_position_id, "user_id": user_id}
         if required_roles:
             query += " AND position_role = ANY(:required_roles)"
-            params["required_roles"] = required_roles
+            params["required_roles"] = list(set(required_roles) | ({"HR_LEAD"} if "HR_RECRUITER" in required_roles else set()))
 
         assignment_check = db.execute(text(query), params)
         if assignment_check.fetchone():
             return lookup_position_id
 
-        # Check explicit access grant (e.g. shared shortlist view)
-        grant_check = db.execute(text("""
-            SELECT 1 FROM app_private.position_access_grants
-            WHERE position_id = :position_id
-              AND user_id = :user_id
-              AND revoked_at IS NULL
-            LIMIT 1
-        """), {"position_id": lookup_position_id, "user_id": user_id})
-        if grant_check.fetchone():
-            return lookup_position_id
+        # A generic grant must not bypass a role requirement on a write action.
+        if not required_roles:
+            grant_check = db.execute(text("""
+                SELECT 1 FROM app_private.position_access_grants
+                WHERE position_id = :position_id
+                  AND user_id = :user_id
+                  AND revoked_at IS NULL
+                LIMIT 1
+            """), {"position_id": lookup_position_id, "user_id": user_id})
+            if grant_check.fetchone():
+                return lookup_position_id
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -166,10 +162,51 @@ def can_update_application_status(user_id: str, position_id: str) -> bool:
             SELECT 1 FROM app_private.position_assignments
             WHERE position_id = :position_id
               AND user_id = :user_id
-              AND position_role = 'HR_RECRUITER'
+              AND position_role IN ('HR_RECRUITER', 'HR_LEAD')
               AND revoked_at IS NULL
             LIMIT 1
         """), {"position_id": position_id, "user_id": user_id})
         return hr_check.fetchone() is not None
+    finally:
+        db.close()
+
+
+def application_access(user_id: str, position_id: str, application_id: str) -> dict:
+    """Resolve access to a single candidate without granting all CVs to an HM.
+
+    Recruiters on the position and global HR leads/admins have full access;
+    everyone else needs an active share containing this application. CV access
+    additionally requires the share's allow_cv_view flag.
+    """
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT
+                EXISTS (SELECT 1 FROM app_private.user_role_assignments ur
+                        WHERE ur.user_id = :user_id AND ur.revoked_at IS NULL
+                          AND ur.role_code IN ('ADMIN', 'HR_LEAD'))
+                OR EXISTS (SELECT 1 FROM app_private.position_assignments pa
+                           WHERE pa.user_id = :user_id AND pa.position_id = :position_id
+                             AND pa.revoked_at IS NULL AND pa.position_role IN ('HR_RECRUITER', 'HR_LEAD')) AS hr_access,
+                EXISTS (SELECT 1 FROM app_private.shortlist_shares s
+                        JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
+                        WHERE s.shared_with = :user_id AND s.position_id = :position_id
+                          AND s.status = 'ACTIVE' AND si.application_id = :application_id
+                          AND EXISTS (SELECT 1 FROM app_private.position_assignments hm
+                                      WHERE hm.position_id = s.position_id AND hm.user_id = :user_id
+                                        AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL)) AS shared,
+                EXISTS (SELECT 1 FROM app_private.shortlist_shares s
+                        JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
+                        WHERE s.shared_with = :user_id AND s.position_id = :position_id
+                          AND s.status = 'ACTIVE' AND s.allow_cv_view = TRUE
+                          AND si.application_id = :application_id
+                          AND EXISTS (SELECT 1 FROM app_private.position_assignments hm
+                                      WHERE hm.position_id = s.position_id AND hm.user_id = :user_id
+                                        AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL)) AS shared_cv
+        """), {"user_id": user_id, "position_id": position_id, "application_id": application_id}).mappings().one()
+        if not row["hr_access"] and not row["shared"]:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xem hồ sơ này")
+        return {"can_update_status": bool(row["hr_access"]),
+                "can_view_cv": bool(row["hr_access"] or row["shared_cv"])}
     finally:
         db.close()
