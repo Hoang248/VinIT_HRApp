@@ -24,7 +24,30 @@ $RECYCLE.BIN/
 # Python / Node files (if any)
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 node_modules/
 .env
 .env.local
+*.env
+
+# Next.js build output
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Local storage for documents
+backend/data/
+backend/storage/
+
+# Coverage & testing
+.pytest_cache/
+.coverage
+htmlcov/
 
