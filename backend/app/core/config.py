@@ -1,0 +1,55 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+
+    # Application
+    APP_ENV: str = "development"
+    APP_NAME: str = "VinUni HRA API"
+    API_V1_PREFIX: str = "/v1"
+    DEBUG: bool = True
+
+    # Supabase
+    SUPABASE_URL: str
+    SUPABASE_ANON_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_JWT_SECRET: str
+
+    # Storage
+    SUPABASE_STORAGE_BUCKET_CV: str = "cv-originals"
+    SUPABASE_STORAGE_BUCKET_EXTRACTED: str = "cv-extracted-text"
+
+    # File upload limits
+    MAX_FILE_SIZE_BYTES: int = 10_000_000  # 10 MB
+    MAX_FILES_PER_BATCH: int = 50
+    MAX_BATCH_SIZE_BYTES: int = 250_000_000  # 250 MB
+
+    # AI/LLM
+    LLM_PROVIDER: str = "local"  # local, openai, azure
+    LLM_MODEL_NAME: str = "vinuni/hra-llm-7b"
+    LLM_API_BASE: Optional[str] = None
+    LLM_API_KEY: Optional[str] = None
+    LLM_TEMPERATURE_DEFAULT: float = 0.1
+    ALLOW_EXTERNAL_API: bool = False
+
+    # Matching/Scoring
+    MANDATORY_CRITERIA_WEIGHT_DEFAULT: float = 0.7
+    NICE_TO_HAVE_WEIGHT_DEFAULT: float = 0.3
+    MIN_EVIDENCE_COVERAGE: float = 0.7
+    STRONG_MATCH_SCORE: int = 100
+    MATCH_SCORE: int = 80
+    NO_MATCH_SCORE: int = 0
+
+    # Retention
+    RETENTION_MONTHS: int = 12
+
+    # CORS
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    # Security
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # 8 hours
+
+
+settings = Settings()

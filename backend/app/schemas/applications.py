@@ -1,0 +1,133 @@
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Optional, List
+from uuid import UUID
+from enum import Enum
+from .common import BaseSchema, TimestampMixin
+
+
+class ApplicationStatus(str, Enum):
+    NEW = "NEW"
+    IN_REVIEW = "IN_REVIEW"
+    SHORTLIST = "SHORTLIST"
+    REJECTED_SCREENING = "REJECTED_SCREENING"
+    INTERVIEW = "INTERVIEW"
+    REJECTED_INTERVIEW = "REJECTED_INTERVIEW"
+    OFFERED = "OFFERED"
+    ACCEPTED = "ACCEPTED"
+
+
+class FileProcessingStatus(str, Enum):
+    RECEIVED = "RECEIVED"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    NEEDS_HR_REVIEW = "NEEDS_HR_REVIEW"
+    ERROR_UNSUPPORTED = "ERROR_UNSUPPORTED"
+
+
+class MatchingStatus(str, Enum):
+    NOT_ASSESSED = "NOT_ASSESSED"
+    NEEDS_HR_VERIFICATION = "NEEDS_HR_VERIFICATION"
+    POSSIBLE_MISMATCH = "POSSIBLE_MISMATCH"
+    MEETS_MANDATORY = "MEETS_MANDATORY"
+
+
+class CVUploadItem(BaseSchema):
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
+class CVBatchCreate(BaseSchema):
+    position_id: UUID
+    files: List[CVUploadItem]
+
+
+class CVBatch(BaseSchema, TimestampMixin):
+    batch_id: UUID
+    position_id: UUID
+    uploaded_by: UUID
+    status: str  # pending, processing, completed, partially_completed, failed
+    total_files: int
+    total_size_bytes: int
+    processed_files: int = 0
+    failed_files: int = 0
+
+
+class ApplicationIdentity(BaseSchema):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class ApplicationBase(BaseSchema):
+    position_id: UUID
+
+
+class Application(ApplicationBase, TimestampMixin):
+    application_id: UUID
+    source_code: str = "DIRECT_UPLOAD"
+    application_status: ApplicationStatus
+    identity: Optional[ApplicationIdentity] = None
+
+
+class ApplicationDocument(BaseSchema, TimestampMixin):
+    document_id: UUID
+    application_id: UUID
+    original_filename: str
+    mime_type: str
+    size_bytes: int
+    storage_path: str
+    file_status: FileProcessingStatus
+    processing_error: Optional[str] = None
+
+
+class CriterionResult(BaseSchema):
+    criterion_id: UUID
+    criterion_name: str
+    category: str
+    outcome: str
+    score: Optional[float] = None
+    confidence: Optional[float] = None
+    confidence_band: Optional[str] = None
+    reasoning: Optional[str] = None
+    requires_verification: bool = False
+    verbatim_quote: Optional[str] = None
+    page_number: Optional[int] = None
+
+
+class AssessmentRun(BaseSchema, TimestampMixin):
+    assessment_id: UUID
+    position_id: UUID
+    application_id: UUID
+    criteria_version_id: UUID
+    status: str
+    matching_status: MatchingStatus
+    matching_score: Optional[float] = None
+    evidence_coverage: Optional[float] = None
+    confidence: Optional[float] = None
+    summary: Optional[str] = None
+    criterion_results: List[CriterionResult] = Field(default_factory=list)
+
+
+class ApplicationStatusUpdate(BaseSchema):
+    new_status: ApplicationStatus
+    reason: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ApplicationWithAssessment(Application):
+    latest_assessment: Optional[AssessmentRun] = None
+    documents: List[ApplicationDocument] = Field(default_factory=list)
+    rank_number: Optional[int] = None
+
+
+class RankingItem(BaseSchema):
+    rank_number: Optional[int]
+    application_id: UUID
+    candidate_name: Optional[str]
+    matching_status: MatchingStatus
+    matching_score: Optional[float]
+    evidence_coverage: Optional[float]
+    needs_verification: bool
+    has_mismatch: bool

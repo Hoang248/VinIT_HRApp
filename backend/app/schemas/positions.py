@@ -1,0 +1,58 @@
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Optional, List
+from uuid import UUID
+from enum import Enum
+from .common import BaseSchema, TimestampMixin
+
+
+class PositionStatus(str, Enum):
+    OPEN = "OPEN"
+    PAUSED = "PAUSED"
+    CLOSED = "CLOSED"
+
+
+class PositionRole(str, Enum):
+    HR_RECRUITER = "HR_RECRUITER"
+    HIRING_MANAGER = "HIRING_MANAGER"
+    HR_LEAD = "HR_LEAD"
+    VIEWER = "VIEWER"
+
+
+class PositionBase(BaseSchema):
+    position_code: str = Field(..., description="Unique position code, e.g. REQ-IT-001")
+    title: str
+    job_family: Optional[str] = None  # e.g. Software Engineering, QA
+    org_unit: Optional[str] = None
+    level: Optional[str] = None  # e.g. Junior, Mid, Senior
+    work_location: Optional[str] = None
+    work_mode: Optional[str] = None  # Remote, Hybrid, On-site
+    employment_type: Optional[str] = None  # Full-time, Contract, etc.
+    headcount: Optional[int] = Field(default=1, ge=1)
+
+
+class PositionCreate(PositionBase):
+    jd_content: str = Field(..., description="Job Description text content in English")
+
+
+class PositionUpdate(BaseSchema):
+    title: Optional[str] = None
+    status: Optional[PositionStatus] = None
+    work_location: Optional[str] = None
+    work_mode: Optional[str] = None
+
+
+class Position(PositionBase, TimestampMixin):
+    position_id: UUID
+    status: PositionStatus
+    created_by: UUID
+    opened_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+
+
+class PositionWithStats(Position):
+    total_applications: int = 0
+    new_applications: int = 0
+    in_review: int = 0
+    shortlisted: int = 0
+    criteria_approved: bool = False

@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #0A2B57;
+  --color-accent: #C72127;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: #F8FAFC;
+}
+
+/* Status badge base styles */
+.status-badge {
+  @apply inline-flex items-center px-2 py-1 rounded font-bold uppercase text-xs;
+}
+
+/* Evidence card citation styles */
+.evidence-card {
+  @apply bg-white border-l-4 rounded-r shadow-sm p-3;
+}
+
+.evidence-card.strong-match {
+  border-left-color: #067647;
+}
+
+.evidence-card.match {
+  border-left-color: #0A2B57;
+}
+
+.evidence-card.unclear {
+  border-left-color: #B54708;
+}
+
+.evidence-card.no-match {
+  border-left-color: #C72127;
+}
+
+.evidence-quote {
+  @apply bg-slate-50 italic text-slate-800 p-3 rounded text-sm mt-2 border-l-2 border-slate-200;
+}
+
+/* Search pill input style matching VinCareer */
+.search-pill {
+  @apply w-full px-4 py-2 pl-10 rounded-full bg-[#F3EEEE] border-0 focus:ring-2 focus:ring-[#2599DC] focus:bg-white text-sm transition-all;
+}
+
+/* PDF page container */
+.pdf-page-container {
+  @apply overflow-auto bg-gray-100 flex justify-center p-4;
+}
