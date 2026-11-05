@@ -64,9 +64,9 @@ export default function LoginPage() {
             {/* VinUni Logo */}
             <Box
               component="img"
-              src="https://data-talent-v2.basecdn.net/careerportalvinuni/logo-footer.png"
+              src="/vinuni-logo.png"
               alt="VinUniversity Logo"
-              sx={{ height: 48, mb: 2 }}
+              sx={{ height: 56, width: 'auto', mb: 2 }}
             />
             <Typography variant="h1" sx={{ fontSize: 24, color: '#0A2B57', mb: 1 }}>
               AI-Native CV Screening

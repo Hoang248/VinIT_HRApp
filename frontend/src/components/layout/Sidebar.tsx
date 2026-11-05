@@ -70,12 +70,34 @@ export default function Sidebar() {
       {/* Logo Area */}
       <Box sx={{ p: 3, pb: 2 }}>
         <Box
-          component="img"
-          src="https://data-talent-v2.basecdn.net/careerportalvinuni/logo-footer.png"
-          alt="VinUniversity Logo"
-          sx={{ height: 40, mb: 2 }}
-        />
-        <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          sx={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: 1,
+            px: 2,
+            py: 1.5,
+            mb: 1.5,
+            display: 'flex',
+            justifyContent: 'center',
+          }}
+        >
+          <Box
+            component="img"
+            src="/vinuni-logo.png"
+            alt="VinUniversity Logo"
+            sx={{ height: 32, width: 'auto', maxWidth: '100%' }}
+          />
+        </Box>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            color: 'rgba(255,255,255,0.75)',
+            fontSize: 12,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            textAlign: 'center',
+            fontWeight: 600,
+          }}
+        >
           AI CV Screening
         </Typography>
       </Box>

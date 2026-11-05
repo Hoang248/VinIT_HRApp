@@ -6,6 +6,11 @@ import AppLayout from '@/components/layout/AppLayout';
 export const metadata: Metadata = {
   title: 'VinUni HR - AI CV Screening Workspace',
   description: 'AI-Native CV Matching & Ranking Platform for VinUniversity HR',
+  icons: {
+    icon: '/vinuni-logo.png',
+    shortcut: '/vinuni-logo.png',
+    apple: '/vinuni-logo.png',
+  },
 };
 
 export default function RootLayout({
