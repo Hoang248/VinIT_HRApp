@@ -1,0 +1,11 @@
+{
+  "/_not-found": "app/_not-found.js",
+  "/admin/page": "app/admin/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/page": "app/page.js",
+  "/positions/[id]/applicants/[applicantId]/page": "app/positions/[id]/applicants/[applicantId]/page.js",
+  "/positions/[id]/applicants/page": "app/positions/[id]/applicants/page.js",
+  "/positions/[id]/page": "app/positions/[id]/page.js",
+  "/positions/page": "app/positions/page.js",
+  "/shortlist/page": "app/shortlist/page.js"
+}

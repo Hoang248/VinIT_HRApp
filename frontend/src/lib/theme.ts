@@ -1,14 +1,17 @@
 'use client';
 
 import { createTheme } from '@mui/material/styles';
-import { Roboto } from 'next/font/google';
 
-// Load Roboto font with Vietnamese support
-const roboto = Roboto({
-  weight: ['300', '400', '500', '700'],
-  subsets: ['latin', 'vietnamese'],
-  display: 'swap',
-});
+// System font stack (production should use next/font/google with Roboto)
+// In restricted sandbox environments, Google Fonts may be unreachable
+const fontFamily = [
+  '"Inter"',
+  '"Roboto"',
+  '"Helvetica Neue"',
+  'Arial',
+  'sans-serif',
+  '"Segoe UI"',
+].join(',');
 
 // VinUni Brand Colors per UI Style Guide
 export const brandColors = {
@@ -65,7 +68,7 @@ const theme = createTheme({
     divider: '#E2E8F0',
   },
   typography: {
-    fontFamily: roboto.style.fontFamily,
+    fontFamily,
     h1: {
       fontSize: '28px',
       lineHeight: 1.29, // 36px

@@ -236,7 +236,7 @@ export default function ApplicantsRankingPage() {
                     <Typography variant="body2" fontWeight={500}>
                       {item.candidate_name || 'Chưa trích xuất tên'}
                     </Typography>
-                    {item.needs_verification && item.evidence_coverage < 0.7 && (
+                    {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && (
                       <Chip
                         label="Độ phủ bằng chứng thấp"
                         size="small"

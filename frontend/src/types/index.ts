@@ -88,6 +88,31 @@ export interface CriterionResult {
   evidence?: EvidenceItem[];
 }
 
+export interface ApplicationWithAssessment {
+  application_id: string;
+  position_id: string;
+  source_code: string;
+  application_status: string;
+  created_at: string;
+  updated_at?: string;
+  candidate_name?: string;
+  matching_status?: string;
+  matching_score?: number | null;
+  evidence_coverage?: number | null;
+  identity?: {
+    display_name?: string;
+    email?: string;
+    phone?: string;
+  };
+  latest_assessment?: AssessmentDetail | null;
+  documents?: Array<{
+    document_id: string;
+    document_type: string;
+    original_filename: string;
+    page_count?: number;
+  }>;
+}
+
 export interface AssessmentDetail {
   assessment_id: string;
   position_id: string;
@@ -98,4 +123,17 @@ export interface AssessmentDetail {
   summary: string | null;
   criterion_results: CriterionResult[];
 }
+
+export interface RosterItem {
+  roster_id: string;
+  position_id: string;
+  application_id: string;
+  candidate_name: string;
+  matching_score: number;
+  roster_status: string;
+  added_at: string;
+  recommended_decision: string;
+  hm_notes?: string;
+}
+
 
