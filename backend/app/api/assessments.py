@@ -71,26 +71,24 @@ async def run_assessment_for_position(
             message="Không có hồ sơ nào cần đánh giá"
         )
 
-    # Create operation record
+    # Create PENDING operation so worker picks it up and runs assessments
     op_result = supabase.table("operations").insert({
         "capability": "ASSESSMENT",
-        "status": "PROCESSING",
+        "status": "PENDING",
         "requested_by": user_id,
     }).execute()
     operation_id = op_result.data[0]["operation_id"]
 
-    # TODO: Queue actual assessment processing to worker
-    # For each application:
-    # 1. Get extracted CV text
-    # 2. Get candidate profile
-    # 3. Call LLM matching for each criterion
-    # 4. Verify verbatim quotes
-    # 5. Calculate scores with matching_engine
-    # 6. Save assessment run and criterion results
-    # 7. After all assessments complete, generate ranking run
+    # Worker will automatically:
+    #   1. Pick up the ASSESSMENT operation
+    #   2. Run LLM matching for each unassessed application
+    #   3. Verify verbatim quotes against extracted CV text
+    #   4. Compute deterministic scores via matching_engine
+    #   5. After all assessments complete, auto-queue RANKING operation
+    # (see worker._run_assessments)
 
     logger.info(
-        "Assessment operation created",
+        "Assessment queued for worker processing",
         operation_id=operation_id,
         position_id=position_id_str,
         applications_to_assess=len(applications),
@@ -110,7 +108,7 @@ async def run_assessment_for_position(
     return OperationResponse(
         operation_id=UUID(operation_id),
         status="processing",
-        message=f"Đang đánh giá {len(applications)} hồ sơ theo bộ tiêu chí đã duyệt..."
+        message=f"Đã đưa {len(applications)} hồ sơ vào hàng đợi đánh giá. Quá trình sẽ bắt đầu trong vài giây..."
     )
 
 

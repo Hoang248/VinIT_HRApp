@@ -26,14 +26,20 @@ import {
   InputAdornment,
   IconButton,
   Tooltip,
+  Stack,
+  Link as MuiLink,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import SortIcon from '@mui/icons-material/Sort';
-import { useEffect, useState, useCallback } from 'react';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { assessmentsApi } from '@/lib/api';
+import Link from 'next/link';
+import { assessmentsApi, operationsApi, applicationsApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
 import type { RankingItem } from '@/types';
 
@@ -43,37 +49,87 @@ export default function ApplicantsRankingPage() {
   const positionId = params.id as string;
 
   const [rankingItems, setRankingItems] = useState<RankingItem[]>([]);
+  const [appsNeedingReview, setAppsNeedingReview] = useState<number>(0);
+  const [duplicateCount, setDuplicateCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [assessing, setAssessing] = useState(false);
+  const [operationStatus, setOperationStatus] = useState<{
+    operation_id?: string;
+    status?: string;
+    progress?: { total: number; processed: number; failed: number; percent_complete: number };
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadRanking = useCallback(async () => {
     try {
-      setLoading(true);
       const res = await assessmentsApi.getLatestRanking(positionId);
-      setRankingItems(res.data);
+      setRankingItems(res.data || []);
+      // Counts
+      setAppsNeedingReview((res.data || []).filter((i: RankingItem) =>
+        i.needs_verification && (i.evidence_coverage ?? 0) < 0.7
+      ).length);
+      setDuplicateCount((res.data || []).filter((i: RankingItem) => i.has_mismatch).length);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
+      if (err.response?.status !== 404) {
+        setError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
+      }
     } finally {
       setLoading(false);
     }
   }, [positionId]);
 
+  // Stop polling helper
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  // Poll operation status
+  const pollOperation = useCallback((operationId: string) => {
+    stopPolling();
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const res = await operationsApi.getStatus(operationId);
+        const data = res.data;
+        setOperationStatus(data);
+        if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+          stopPolling();
+          setAssessing(false);
+          if (data.status === 'COMPLETED') {
+            // Small delay to ensure ranking is written
+            setTimeout(() => loadRanking(), 1500);
+          } else {
+            setError(`Đánh giá thất bại: ${data.error_message || 'Lỗi không xác định'}`);
+          }
+        }
+      } catch (e) {
+        stopPolling();
+        setAssessing(false);
+      }
+    }, 2000);
+  }, [loadRanking, stopPolling]);
+
   useEffect(() => {
     loadRanking();
-  }, [loadRanking]);
+    return () => stopPolling();
+  }, [loadRanking, stopPolling]);
 
-  const handleGenerateRanking = async () => {
+  const handleRunAssessment = async () => {
     try {
-      setGenerating(true);
-      await assessmentsApi.generateRanking(positionId);
-      await loadRanking();
+      setAssessing(true);
+      setError(null);
+      const res = await assessmentsApi.runForPosition(positionId);
+      const opId = res.data.operation_id;
+      setOperationStatus({ operation_id: opId, status: 'PENDING', progress: undefined });
+      pollOperation(opId);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể tạo xếp hạng');
-    } finally {
-      setGenerating(false);
+      setError(err.response?.data?.detail || 'Không thể chạy đánh giá');
+      setAssessing(false);
     }
   };
 
@@ -100,6 +156,9 @@ export default function ApplicantsRankingPage() {
     return '#B54708';
   };
 
+  const assessedCount = rankingItems.filter(i => i.matching_status && i.matching_status !== 'NOT_ASSESSED').length;
+  const totalApplications = rankingItems.length;
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 10 }}>
@@ -110,7 +169,7 @@ export default function ApplicantsRankingPage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
         <Box>
           <Typography variant="h2" sx={{ fontSize: 22, color: '#0A2B57', mb: 0.5 }}>
             Danh sách ưu tiên rà soát ứng viên
@@ -131,12 +190,11 @@ export default function ApplicantsRankingPage() {
           <Button
             variant="contained"
             color="secondary"
-            startIcon={<SortIcon />}
-            onClick={handleGenerateRanking}
-            disabled={generating}
+            startIcon={assessing ? <CircularProgress size={18} color="inherit" /> : <PlaylistAddCheckIcon />}
+            onClick={handleRunAssessment}
+            disabled={assessing}
           >
-            {generating ? <CircularProgress size={20} color="inherit" sx={{ mr: 1 }} /> : null}
-            Tạo/cập nhật xếp hạng
+            {assessing ? 'Đang đánh giá...' : 'Chạy đánh giá & xếp hạng'}
           </Button>
         </Box>
       </Box>
@@ -146,6 +204,69 @@ export default function ApplicantsRankingPage() {
           {error}
         </Alert>
       )}
+
+      {/* Operation progress */}
+      {operationStatus && operationStatus.status && operationStatus.status !== 'COMPLETED' && operationStatus.status !== 'FAILED' && (
+        <Card sx={{ mb: 3, border: '1px solid #B2DDFF', backgroundColor: '#EFF8FF' }}>
+          <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+            <Stack direction="row" alignItems="center" spacing={2}>
+              <CircularProgress size={20} sx={{ color: '#134D8B' }} />
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" fontWeight={600} color="#134D8B">
+                  {assessing ? 'Đang xử lý đánh giá ứng viên...' : 'Đang xử lý...'}
+                </Typography>
+                {operationStatus.progress && (
+                  <>
+                    <LinearProgress
+                      variant="determinate"
+                      value={operationStatus.progress.percent_complete || 0}
+                      sx={{ mt: 1, height: 6, borderRadius: 3, backgroundColor: '#D1E9FF' }}
+                    />
+                    <Typography variant="caption" color="#134D8B" sx={{ mt: 0.5, display: 'block' }}>
+                      Đã xử lý {operationStatus.progress.processed}/{operationStatus.progress.total} hồ sơ
+                      {operationStatus.progress.failed > 0 && ` (${operationStatus.progress.failed} lỗi)`}
+                    </Typography>
+                  </>
+                )}
+              </Box>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Summary cards */}
+      <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: 'wrap' }}>
+        <Card sx={{ minWidth: 180, flex: '1 1 180px' }}>
+          <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+            <Typography variant="caption" color="text.secondary">Tổng hồ sơ</Typography>
+            <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#0A2B57' }}>{totalApplications}</Typography>
+          </CardContent>
+        </Card>
+        <Card sx={{ minWidth: 180, flex: '1 1 180px' }}>
+          <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+            <Typography variant="caption" color="text.secondary">Đã đánh giá</Typography>
+            <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#067647' }}>{assessedCount}</Typography>
+          </CardContent>
+        </Card>
+        <Card sx={{ minWidth: 180, flex: '1 1 180px', border: appsNeedingReview > 0 ? '1px solid #FEDF89' : undefined }}>
+          <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+            <Typography variant="caption" color="text.secondary">Cần HR xác minh</Typography>
+            <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: appsNeedingReview > 0 ? '#B54708' : '#667085' }}>
+              {appsNeedingReview}
+            </Typography>
+          </CardContent>
+        </Card>
+        {duplicateCount > 0 && (
+          <Card sx={{ minWidth: 180, flex: '1 1 180px', border: '1px solid #FECDCA' }}>
+            <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+              <Typography variant="caption" color="text.secondary">Cảnh báo trùng lặp</Typography>
+              <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#C72127' }}>
+                {duplicateCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        )}
+      </Stack>
 
       {/* Filters */}
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
@@ -162,13 +283,11 @@ export default function ApplicantsRankingPage() {
             maxWidth: 350,
             borderRadius: '30px',
             backgroundColor: '#F3EEEE',
-            '&.Mui-focused': {
-              backgroundColor: '#FFFFFF',
-            }
+            '&.Mui-focused': { backgroundColor: '#FFFFFF' }
           }}
           size="small"
         />
-        <FormControl size="small" sx={{ minWidth: 200 }}>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
           <InputLabel id="status-filter-label">Lọc theo nhóm matching</InputLabel>
           <Select
             labelId="status-filter-label"
@@ -176,11 +295,17 @@ export default function ApplicantsRankingPage() {
             label="Lọc theo nhóm matching"
             onChange={(e) => setFilterStatus(e.target.value)}
           >
-            <MenuItem value="ALL">Tất cả</MenuItem>
-            <MenuItem value="MEETS_MANDATORY">Đáp ứng bắt buộc</MenuItem>
-            <MenuItem value="NEEDS_HR_VERIFICATION">Cần xác minh</MenuItem>
-            <MenuItem value="POSSIBLE_MISMATCH">Có dấu hiệu miss-match</MenuItem>
-            <MenuItem value="NOT_ASSESSED">Chưa đánh giá</MenuItem>
+            <MenuItem value="ALL">Tất cả ({totalApplications})</MenuItem>
+            <MenuItem value="MEETS_MANDATORY">
+              Đáp ứng bắt buộc ({rankingItems.filter(i => !i.has_mismatch && !i.needs_verification).length})
+            </MenuItem>
+            <MenuItem value="NEEDS_HR_VERIFICATION">
+              Cần xác minh ({rankingItems.filter(i => i.needs_verification).length})
+            </MenuItem>
+            <MenuItem value="POSSIBLE_MISMATCH">
+              Có dấu hiệu miss-match ({rankingItems.filter(i => i.has_mismatch).length})
+            </MenuItem>
+            <MenuItem value="NOT_ASSESSED">Chưa đánh giá ({rankingItems.filter(i => !i.matching_status || i.matching_status === 'NOT_ASSESSED').length})</MenuItem>
           </Select>
         </FormControl>
       </Box>
@@ -192,9 +317,9 @@ export default function ApplicantsRankingPage() {
             <TableRow>
               <TableCell width="80">Thứ hạng</TableCell>
               <TableCell>Ứng viên</TableCell>
-              <TableCell width="150">Nhóm matching</TableCell>
+              <TableCell width="160">Nhóm matching</TableCell>
               <TableCell width="120" align="center">Điểm matching</TableCell>
-              <TableCell width="150">Độ phủ bằng chứng</TableCell>
+              <TableCell width="170">Độ phủ bằng chứng</TableCell>
               <TableCell width="120" align="right">Thao tác</TableCell>
             </TableRow>
           </TableHead>
@@ -202,95 +327,95 @@ export default function ApplicantsRankingPage() {
             {filteredItems.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-                  Chưa có dữ liệu xếp hạng. Vui lòng tải lên CV và tạo xếp hạng để xem danh sách.
+                  {rankingItems.length === 0
+                    ? 'Chưa có hồ sơ nào được đánh giá. Tải CV lên và nhấn "Chạy đánh giá & xếp hạng" để xem danh sách.'
+                    : 'Không có hồ sơ nào phù hợp bộ lọc.'}
                 </TableCell>
               </TableRow>
             ) : (
               filteredItems.map((item) => (
-                <TableRow
-                  key={item.application_id}
-                  hover
-                  sx={{ cursor: 'pointer' }}
-                  onClick={() => router.push(`/positions/${positionId}/applicants/${item.application_id}`)}
-                >
+                <TableRow key={item.application_id} hover>
                   <TableCell>
-                    {item.rank_number ? (
-                      <Typography
-                        variant="h4"
-                        sx={{
-                          fontSize: 20,
-                          fontWeight: 'bold',
-                          color: item.rank_number <= 3 ? '#C72127' : '#0A2B57',
-                          textAlign: 'center',
-                        }}
-                      >
-                        #{item.rank_number}
-                      </Typography>
-                    ) : (
-                      <Typography variant="caption" color="text.disabled" sx={{ display: 'block', textAlign: 'center' }}>
-                        Chưa xếp hạng
-                      </Typography>
-                    )}
+                    <Typography
+                      variant="h4"
+                      sx={{
+                        fontSize: 20,
+                        fontWeight: 'bold',
+                        color: item.rank_number ? '#0A2B57' : 'text.disabled',
+                      }}
+                    >
+                      {item.rank_number ?? '—'}
+                    </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" fontWeight={500}>
                       {item.candidate_name || 'Chưa trích xuất tên'}
                     </Typography>
-                    {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && (
-                      <Chip
-                        label="Độ phủ bằng chứng thấp"
-                        size="small"
-                        sx={{
-                          mt: 0.5,
-                          height: 20,
-                          fontSize: 10,
-                          backgroundColor: '#FFFAEB',
-                          color: '#B54708',
-                        }}
-                      />
-                    )}
+                    <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
+                      {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && (
+                        <Chip
+                          label="Độ phủ bằng chứng thấp"
+                          size="small"
+                          icon={<ErrorOutlineIcon fontSize="small" />}
+                          sx={{
+                            height: 20,
+                            fontSize: 10,
+                            backgroundColor: '#FFFAEB',
+                            color: '#B54708',
+                          }}
+                        />
+                      )}
+                    </Box>
                   </TableCell>
                   <TableCell>{getMatchingStatusBadge(item)}</TableCell>
                   <TableCell align="center">
                     <Typography
-                      variant="h6"
+                      variant="h4"
                       sx={{
-                        fontSize: 18,
+                        fontSize: 20,
                         fontWeight: 'bold',
                         color: getScoreColor(item.matching_score),
                       }}
                     >
                       {item.matching_score !== null && item.matching_score !== undefined
                         ? `${item.matching_score}%`
-                        : '-'}
+                        : '—'}
                     </Typography>
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box sx={{ flexGrow: 1 }}>
+                      <Box sx={{ flex: 1 }}>
                         <LinearProgress
                           variant="determinate"
-                          value={Math.round((item.evidence_coverage || 0) * 100)}
+                          value={Math.round((item.evidence_coverage ?? 0) * 100)}
                           sx={{
-                            height: 6,
-                            borderRadius: 3,
-                            backgroundColor: '#E2E8F0',
+                            height: 8,
+                            borderRadius: 4,
+                            backgroundColor: '#F2F4F7',
                             '& .MuiLinearProgress-bar': {
                               backgroundColor:
-                                (item.evidence_coverage || 0) >= 0.7 ? '#067647' : '#B54708',
-                              borderRadius: 3,
-                            }
+                                (item.evidence_coverage ?? 0) >= 0.7 ? '#067647'
+                                : (item.evidence_coverage ?? 0) >= 0.5 ? '#B54708'
+                                : '#C72127',
+                              borderRadius: 4,
+                            },
                           }}
                         />
                       </Box>
-                      <Typography variant="caption" fontWeight={600}>
-                        {Math.round((item.evidence_coverage || 0) * 100)}%
+                      <Typography variant="caption" sx={{ minWidth: 36, textAlign: 'right' }}>
+                        {item.evidence_coverage !== null && item.evidence_coverage !== undefined
+                          ? `${Math.round(item.evidence_coverage * 100)}%`
+                          : '—'}
                       </Typography>
                     </Box>
                   </TableCell>
                   <TableCell align="right">
-                    <Tooltip title="Xem chi tiết & bằng chứng">
-                      <IconButton sx={{ color: '#0A2B57' }}>
+                    <Tooltip title="Xem chi tiết & đối chiếu bằng chứng">
+                      <IconButton
+                        component={Link}
+                        href={`/positions/${positionId}/applicants/${item.application_id}`}
+                        sx={{ color: '#0A2B57' }}
+                      >
                         <VisibilityIcon />
                       </IconButton>
                     </Tooltip>
@@ -301,27 +426,6 @@ export default function ApplicantsRankingPage() {
           </TableBody>
         </Table>
       </TableContainer>
-
-      {/* Legend */}
-      <Card sx={{ mt: 3, backgroundColor: '#F8FAFC' }}>
-        <CardContent>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-            <strong>Ghi chú:</strong>
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            • Thứ tự xếp hạng chỉ áp dụng trong cùng vị trí, không so sánh giữa các vị trí khác nhau.
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            • Hồ sơ "Cần HR xác minh" hoặc độ phủ dưới 70% cần được rà soát thủ công trước khi đưa ra quyết định.
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            • "Có dấu hiệu miss-match" là cảnh báo về tiêu chí bắt buộc không được đáp ứng, <strong>không phải trạng thái tự động loại</strong>.
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-            • AI chỉ hỗ trợ ưu tiên thứ tự rà soát, mọi quyết định shortlist/loại đều do HR thực hiện.
-          </Typography>
-        </CardContent>
-      </Card>
     </Box>
   );
 }
