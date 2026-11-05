@@ -584,6 +584,203 @@ INSERT INTO app_private.retention_policy_versions (
     'APPROVED'
 );
 
+-- ========================================
+-- 9. ROW LEVEL SECURITY (RLS) POLICIES
+-- ========================================
+
+-- Enable RLS on all application tables
+ALTER TABLE app_private.user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.user_role_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.position_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.positions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.position_status_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.jd_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.criteria_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.criteria_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.criteria_approval_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.applications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.application_identities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.application_status_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.application_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.assessment_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.criterion_assessment_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.evidence_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.ranking_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.ranking_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.shortlist_shares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.shortlist_share_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.shortlist_feedback ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_private.audit_events ENABLE ROW LEVEL SECURITY;
+
+-- Helper function to check if user has role on position
+CREATE OR REPLACE FUNCTION app_private.has_position_access(p_position_id UUID, p_required_roles TEXT[] DEFAULT NULL)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM app_private.position_assignments pa
+        WHERE pa.position_id = p_position_id
+          AND pa.user_id = auth.uid()
+          AND pa.revoked_at IS NULL
+          AND (p_required_roles IS NULL OR pa.position_role = ANY(p_required_roles))
+    )
+    OR EXISTS (
+        SELECT 1 FROM app_private.user_role_assignments ur
+        WHERE ur.user_id = auth.uid()
+          AND ur.revoked_at IS NULL
+          AND ur.role_code IN ('ADMIN', 'HR_LEAD')
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ========================================
+-- RLS for Positions
+-- ========================================
+-- Users can see positions they are assigned to, or all positions if Admin/HR Lead
+CREATE POLICY positions_select ON app_private.positions
+    FOR SELECT USING (
+        app_private.has_position_access(position_id, NULL)
+    );
+
+CREATE POLICY positions_insert ON app_private.positions
+    FOR INSERT WITH CHECK (
+        auth.uid() = created_by
+        AND EXISTS (
+            SELECT 1 FROM app_private.user_role_assignments ur
+            WHERE ur.user_id = auth.uid() AND ur.role_code IN ('ADMIN', 'HR_RECRUITER', 'HR_LEAD') AND ur.revoked_at IS NULL
+        )
+    );
+
+CREATE POLICY positions_update ON app_private.positions
+    FOR UPDATE USING (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER'])
+        OR EXISTS (
+            SELECT 1 FROM app_private.user_role_assignments ur
+            WHERE ur.user_id = auth.uid() AND ur.role_code IN ('ADMIN', 'HR_LEAD') AND ur.revoked_at IS NULL
+        )
+    );
+
+-- ========================================
+-- RLS for Applications
+-- ========================================
+-- Recruiters assigned to position, or HR Lead/Admin can see applications
+CREATE POLICY applications_select ON app_private.applications
+    FOR SELECT USING (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER', 'HR_LEAD'])
+        OR EXISTS (
+            -- Hiring Manager can see applications shared with them via shortlist
+            SELECT 1 FROM app_private.shortlist_shares ss
+            JOIN app_private.shortlist_share_items si ON ss.share_id = si.share_id
+            WHERE ss.shared_with = auth.uid()
+              AND ss.status = 'ACTIVE'
+              AND si.application_id = applications.application_id
+        )
+    );
+
+CREATE POLICY applications_insert ON app_private.applications
+    FOR INSERT WITH CHECK (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER'])
+        AND auth.uid() = created_by
+    );
+
+CREATE POLICY applications_update_status ON app_private.applications
+    FOR UPDATE USING (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER'])
+    );
+
+-- ========================================
+-- RLS for Criteria
+-- ========================================
+CREATE POLICY criteria_select ON app_private.criteria_versions
+    FOR SELECT USING (app_private.has_position_access(position_id, NULL));
+
+CREATE POLICY criteria_insert ON app_private.criteria_versions
+    FOR INSERT WITH CHECK (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER'])
+    );
+
+CREATE POLICY criteria_update ON app_private.criteria_versions
+    FOR UPDATE USING (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER', 'HIRING_MANAGER'])
+    );
+
+-- ========================================
+-- RLS for Assessment & Ranking
+-- ========================================
+CREATE POLICY assessments_select ON app_private.assessment_runs
+    FOR SELECT USING (
+        app_private.has_position_access(position_id, ARRAY['HR_RECRUITER', 'HR_LEAD'])
+        OR EXISTS (
+            SELECT 1 FROM app_private.shortlist_shares ss
+            JOIN app_private.shortlist_share_items si ON ss.share_id = si.share_id
+            JOIN app_private.applications a ON a.application_id = si.application_id
+            WHERE ss.shared_with = auth.uid()
+              AND ss.status = 'ACTIVE'
+              AND a.application_id = assessment_runs.application_id
+        )
+    );
+
+-- Only backend service role (for worker) can insert assessments; users cannot create directly
+-- (Worker uses service role which bypasses RLS)
+
+-- ========================================
+-- RLS for Shortlist Shares
+-- ========================================
+CREATE POLICY shortlist_select ON app_private.shortlist_shares
+    FOR SELECT USING (
+        created_by = auth.uid() OR shared_with = auth.uid()
+    );
+
+CREATE POLICY shortlist_insert ON app_private.shortlist_shares
+    FOR INSERT WITH CHECK (
+        auth.uid() = created_by
+        AND app_private.has_position_access(position_id, ARRAY['HR_RECRUITER'])
+    );
+
+CREATE POLICY shortlist_update ON app_private.shortlist_shares
+    FOR UPDATE USING (
+        created_by = auth.uid()
+    );
+
+-- ========================================
+-- RLS for Application Documents (CV files)
+-- ========================================
+CREATE POLICY documents_select ON app_private.application_documents
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM app_private.applications a
+            WHERE a.application_id = application_documents.application_id
+            AND app_private.has_position_access(a.position_id, ARRAY['HR_RECRUITER', 'HR_LEAD'])
+        )
+        OR EXISTS (
+            -- Hiring Manager can view CV only if share explicitly allows it
+            SELECT 1 FROM app_private.shortlist_shares ss
+            JOIN app_private.shortlist_share_items si ON ss.share_id = si.share_id
+            JOIN app_private.applications a ON a.application_id = si.application_id
+            WHERE ss.shared_with = auth.uid()
+              AND ss.status = 'ACTIVE'
+              AND ss.allow_cv_view = TRUE
+              AND si.application_id = application_documents.application_id
+        )
+    );
+
+-- User profiles: users can see their own profile, and basic info of other users in their positions
+CREATE POLICY user_profiles_select ON app_private.user_profiles
+    FOR SELECT USING (true);  -- Basic profile info is visible to authenticated users within the org
+
+-- Audit logs: only Admin and HR Lead can view
+CREATE POLICY audit_select ON app_private.audit_events
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM app_private.user_role_assignments ur
+            WHERE ur.user_id = auth.uid()
+              AND ur.revoked_at IS NULL
+              AND ur.role_code IN ('ADMIN', 'HR_LEAD')
+        )
+    );
+
+-- Service role bypasses RLS (for backend worker operations)
+-- This is handled by Supabase automatically when using service_role key
+
 -- Create Storage buckets (must be done via Supabase dashboard or SQL if available)
 -- These are noted here for reference:
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('cv-originals', 'cv-originals', false);
