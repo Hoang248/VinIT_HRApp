@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VinUni HRA — AI-Native CV Matching & Ranking (Phase 1 Demo)</title>
+  <title>VinUni HRA — AI-Native CV Matching & Ranking (Hệ thống Thực tế Demo Phase 1)</title>
   <link rel="shortcut icon" href="https://data-talent-v2.basecdn.net/careerportalvinuni/fav.png" type="image/x-icon" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  
   <style>
     :root {
       --brand-primary: #0A2B57;
@@ -15,7 +16,7 @@
       --brand-active: #941616;
       --brand-secondary: #134D8B;
       --brand-interactive: #2599DC;
-      --surface-bg: #F8FAFC;
+      --surface-bg: #F4F6F9;
       --surface-card: #FFFFFF;
       --surface-subtle: #F3EEEE;
       --surface-hover: #F1F5F9;
@@ -25,7 +26,6 @@
       --text-secondary: #475569;
       --text-muted: #94A3B8;
 
-      /* Semantic status tokens */
       --status-success-text: #067647;
       --status-success-bg: #ECFDF3;
       --status-warning-text: #B54708;
@@ -34,6 +34,7 @@
       --status-danger-bg: #FEF3F2;
       --status-info-text: #134D8B;
       --status-info-bg: #EFF8FF;
+
       --radius-btn: 8px;
       --radius-pill: 30px;
       --radius-card: 10px;
@@ -45,91 +46,96 @@
       background-color: var(--surface-bg);
       color: var(--text-primary);
       line-height: 1.5;
-      font-size: 14px;
+      font-size: 13.5px;
       overflow-x: hidden;
     }
 
-    /* Top Banner / Demo Notice */
-    .demo-bar {
-      background: linear-gradient(90deg, #112434 0%, #0A2B57 100%);
-      color: #FFFFFF;
-      padding: 6px 20px;
-      font-size: 12px;
+    /* Top Notice Bar */
+    .top-system-bar {
+      background: #112434;
+      color: #94A3B8;
+      padding: 6px 24px;
+      font-size: 11.5px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .demo-badge {
-      background-color: var(--brand-accent);
-      color: white;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-weight: 700;
-      text-transform: uppercase;
-      font-size: 11px;
-      margin-right: 8px;
+    .top-system-bar .live-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #48BB78;
+      font-weight: 600;
     }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #48BB78;
+      border-radius: 50%;
+      box-shadow: 0 0 6px #48BB78;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
 
-    /* Main App Header */
+    /* App Header */
     header.app-header {
-      background-color: #FFFFFF;
+      background: #FFFFFF;
       border-bottom: 1px solid var(--border-default);
       position: sticky;
       top: 0;
       z-index: 100;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
-    .header-inner {
+    .header-main-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 24px;
     }
-    .brand-section {
+    .brand-group {
       display: flex;
       align-items: center;
       gap: 16px;
     }
-    .brand-logo img {
+    .brand-logo-img {
       height: 38px;
       display: block;
     }
-    .system-title {
+    .app-title-group {
       border-left: 2px solid var(--border-default);
       padding-left: 14px;
     }
-    .system-title h1 {
-      font-size: 16px;
+    .app-title-group h1 {
+      font-size: 15.5px;
       font-weight: 700;
       color: var(--brand-primary);
       letter-spacing: -0.2px;
     }
-    .system-title span {
-      font-size: 12px;
+    .app-title-group span {
+      font-size: 11.5px;
       color: var(--text-secondary);
-      font-weight: 400;
     }
 
-    /* Requisition Selector */
-    .req-selector {
+    /* Scope Context Selector */
+    .requisition-picker {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       background: var(--surface-hover);
-      padding: 6px 14px;
-      border-radius: 8px;
       border: 1px solid var(--border-default);
+      padding: 6px 12px;
+      border-radius: 8px;
     }
-    .req-label {
+    .picker-label {
       font-size: 11px;
       text-transform: uppercase;
       font-weight: 700;
       color: var(--text-secondary);
     }
-    .req-select {
-      background: transparent;
+    .picker-select {
       border: none;
+      background: transparent;
       font-size: 13px;
       font-weight: 700;
       color: var(--brand-primary);
@@ -137,58 +143,36 @@
       cursor: pointer;
     }
 
-    .user-actions {
+    .user-profile-widget {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 10px;
     }
-    .badge-status {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      padding: 4px 10px;
-      border-radius: 4px;
-    }
-    .badge-open {
-      background-color: #ECFDF3;
-      color: #067647;
-      border: 1px solid #A6F4C5;
-    }
-    .user-profile {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      font-weight: 500;
-    }
-    .user-avatar {
+    .user-avatar-circle {
       width: 32px;
       height: 32px;
-      border-radius: 50%;
       background: var(--brand-primary);
       color: #fff;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 700;
       font-size: 12px;
+      font-weight: 700;
     }
 
-    /* Navigation Tabs */
-    .nav-tabs-bar {
+    /* Tab Navigation */
+    .app-nav-tabs {
       background: var(--brand-primary);
       padding: 0 24px;
       display: flex;
       gap: 4px;
     }
-    .nav-tab-btn {
+    .nav-tab-item {
       background: transparent;
       border: none;
-      color: rgba(255,255,255,0.8);
-      font-size: 14px;
+      color: rgba(255,255,255,0.75);
+      font-size: 13.5px;
       font-weight: 600;
       padding: 12px 18px;
       cursor: pointer;
@@ -198,62 +182,54 @@
       transition: all 0.2s;
       border-bottom: 3px solid transparent;
     }
-    .nav-tab-btn:hover {
+    .nav-tab-item:hover {
       color: #FFFFFF;
       background: rgba(255,255,255,0.06);
     }
-    .nav-tab-btn.active {
+    .nav-tab-item.active {
       color: #FFFFFF;
       background: var(--brand-active);
       border-bottom-color: var(--brand-accent);
-      border-radius: 0 0 10px 10px;
+      border-radius: 0 0 8px 8px;
     }
-    .nav-tab-btn .tab-count {
+    .tab-badge-pill {
       background: rgba(255,255,255,0.2);
       font-size: 11px;
-      padding: 2px 7px;
+      padding: 1px 7px;
       border-radius: 10px;
     }
 
     /* Container */
-    .app-container {
+    .main-workspace {
       max-width: 1440px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 20px 24px;
     }
 
-    /* Tab Content Section */
-    .tab-content { display: none; }
-    .tab-content.active { display: block; animation: fadeIn 0.25s ease-in-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-
-    /* Card Box */
-    .card-box {
-      background: var(--surface-card);
+    /* Common Card Box */
+    .content-panel {
+      background: #FFFFFF;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-card);
       padding: 20px;
       margin-bottom: 20px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
-    .card-header-row {
+    .panel-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 16px;
-      border-bottom: 1px solid var(--border-subtle);
       padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .card-title {
+    .panel-title {
       font-size: 16px;
       font-weight: 700;
       color: var(--brand-primary);
-      display: flex;
-      align-items: center;
-      gap: 8px;
     }
-    .card-subtitle {
-      font-size: 13px;
+    .panel-desc {
+      font-size: 12.5px;
       color: var(--text-secondary);
       margin-top: 2px;
     }
@@ -264,13 +240,14 @@
       font-size: 13px;
       font-weight: 600;
       border-radius: var(--radius-btn);
-      padding: 8px 16px;
+      padding: 7px 15px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      transition: all 0.2s;
+      transition: all 0.15s;
       border: 1px solid transparent;
+      outline: none;
     }
     .btn-primary {
       background-color: var(--brand-accent);
@@ -292,9 +269,6 @@
       background-color: var(--status-success-text);
       color: #FFFFFF;
     }
-    .btn-success:hover {
-      background-color: #055a36;
-    }
     .btn-outline-danger {
       background-color: #FFFFFF;
       color: var(--brand-accent);
@@ -305,83 +279,91 @@
     }
     .btn-sm { padding: 4px 10px; font-size: 12px; }
 
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+    .badge-strong { background: var(--status-success-bg); color: var(--status-success-text); border: 1px solid #A6F4C5; }
+    .badge-match { background: var(--status-info-bg); color: var(--brand-primary); border: 1px solid #B2DDFF; }
+    .badge-unclear { background: var(--status-warning-bg); color: var(--status-warning-text); border: 1px solid #FEDF89; }
+    .badge-nomatch { background: var(--status-danger-bg); color: var(--status-danger-text); border: 1px solid #FECDCA; }
+
+    /* Status Pill */
+    .status-tag {
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    .status-new { background: #F2F4F7; color: #475467; }
+    .status-reviewing { background: #EFF8FF; color: #175CD3; }
+    .status-shortlist { background: #ECFDF3; color: #067647; font-weight: 700; }
+    .status-rejected { background: #FEF3F2; color: #B42318; }
+
     /* ========================================================
-       TAB 1: CRITERIA MANAGEMENT STYLES
+       TAB 1: CRITERIA EDITING & DUAL APPROVAL
        ======================================================== */
-    .criteria-grid {
+    .criteria-columns-layout {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 20px;
     }
-    .criteria-column {
+    .crit-box {
       background: #FAFCFE;
       border: 1px solid var(--border-default);
       border-radius: 8px;
       padding: 16px;
     }
-    .column-header {
+    .crit-box-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
       padding-bottom: 8px;
+      margin-bottom: 12px;
       border-bottom: 2px solid;
     }
-    .column-must { border-color: var(--brand-accent); }
-    .column-nice { border-color: var(--brand-interactive); }
-    .column-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--text-primary);
-    }
-    .weight-tag {
-      font-size: 12px;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 4px;
-    }
-    .weight-must { background: #FDF2F2; color: var(--brand-accent); }
-    .weight-nice { background: #EFF8FF; color: var(--brand-interactive); }
+    .crit-box-must { border-color: var(--brand-accent); }
+    .crit-box-nice { border-color: var(--brand-interactive); }
 
-    .criterion-card {
+    .crit-card-item {
       background: #FFFFFF;
       border: 1px solid var(--border-default);
       border-radius: 6px;
-      padding: 12px;
+      padding: 12px 14px;
       margin-bottom: 10px;
       transition: all 0.2s;
     }
-    .criterion-card:hover {
+    .crit-card-item:hover {
       border-color: var(--brand-interactive);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.03);
     }
-    .crit-title {
-      font-size: 13px;
+    .crit-card-top {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13.5px;
       font-weight: 700;
       color: var(--brand-primary);
       margin-bottom: 4px;
-      display: flex;
-      justify-content: space-between;
     }
-    .crit-desc {
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-    }
-    .crit-keywords {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-    }
-    .keyword-pill {
-      background: var(--surface-subtle);
-      color: var(--text-secondary);
-      font-size: 11px;
+    .weight-editor-input {
+      width: 48px;
       padding: 2px 6px;
-      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--border-default);
+      border-radius: 4px;
+      text-align: right;
     }
-
-    .dual-approval-banner {
+    .dual-approval-box {
       background: #F0FDF4;
       border: 1px solid #BBF7D0;
       border-radius: 8px;
@@ -391,46 +373,34 @@
       align-items: center;
       margin-top: 16px;
     }
+    .dual-approval-box.draft {
+      background: #FFFDF5;
+      border-color: #FEDF89;
+    }
 
     /* ========================================================
-       TAB 2: BATCH CV INGESTION STYLES
+       TAB 2: BATCH INGESTION & OCR SIMULATION
        ======================================================== */
-    .dropzone-box {
+    .dropzone-area {
       border: 2px dashed var(--brand-interactive);
       background: #F4F9FD;
       border-radius: 12px;
-      padding: 36px 20px;
+      padding: 30px 20px;
       text-align: center;
       cursor: pointer;
       transition: all 0.2s;
     }
-    .dropzone-box:hover {
+    .dropzone-area:hover {
       background: #EAF4FC;
       border-color: var(--brand-primary);
     }
-    .dropzone-icon {
-      font-size: 36px;
-      color: var(--brand-interactive);
-      margin-bottom: 8px;
-    }
-    .dropzone-text {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin-bottom: 4px;
-    }
-    .dropzone-subtext {
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-
-    .file-table {
+    .file-queue-table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 16px;
       font-size: 13px;
     }
-    .file-table th {
+    .file-queue-table th {
       background: var(--surface-hover);
       text-align: left;
       padding: 10px 14px;
@@ -438,102 +408,85 @@
       color: var(--text-secondary);
       border-bottom: 1px solid var(--border-default);
     }
-    .file-table td {
+    .file-queue-table td {
       padding: 12px 14px;
       border-bottom: 1px solid var(--border-subtle);
       vertical-align: middle;
     }
-    .progress-bar-container {
-      width: 120px;
-      height: 6px;
-      background: #E2E8F0;
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    .progress-bar-fill {
-      height: 100%;
-      background: var(--brand-interactive);
-      border-radius: 3px;
-    }
-    .progress-bar-done { background: var(--status-success-text); }
 
     /* ========================================================
        TAB 3: RANKING & MATCHING MATRIX
        ======================================================== */
-    .metric-summary-grid {
+    .metrics-summary-bar {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 14px;
+      margin-bottom: 16px;
     }
-    .metric-card {
+    .metric-pill {
       background: #FFFFFF;
       border: 1px solid var(--border-default);
       border-radius: 8px;
-      padding: 14px 18px;
-      display: flex;
-      flex-direction: column;
+      padding: 14px 16px;
+      border-left: 4px solid var(--brand-primary);
     }
-    .metric-card.accent-must { border-left: 4px solid #067647; }
-    .metric-card.accent-unclear { border-left: 4px solid #B54708; }
-    .metric-card.accent-miss { border-left: 4px solid var(--brand-accent); }
-    .metric-card.accent-total { border-left: 4px solid var(--brand-primary); }
-
-    .metric-value {
+    .metric-pill.m-pass { border-left-color: var(--status-success-text); }
+    .metric-pill.m-unclear { border-left-color: var(--status-warning-text); }
+    .metric-pill.m-miss { border-left-color: var(--brand-accent); }
+    .metric-pill-val {
       font-size: 24px;
       font-weight: 700;
       color: var(--text-primary);
-      margin-top: 4px;
+      margin-top: 2px;
     }
-    .metric-label {
-      font-size: 12px;
+    .metric-pill-lbl {
+      font-size: 11.5px;
       color: var(--text-secondary);
-      font-weight: 500;
+      font-weight: 600;
+      text-transform: uppercase;
     }
 
-    .table-toolbar {
+    .table-controls {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 12px;
       gap: 12px;
     }
-    .search-input-wrap {
+    .search-pill-input {
       position: relative;
       flex: 1;
       max-width: 360px;
     }
-    .search-input-wrap input {
+    .search-pill-input input {
       width: 100%;
       background: var(--surface-subtle);
       border: 1px solid transparent;
       padding: 8px 14px 8px 34px;
       border-radius: var(--radius-pill);
       font-size: 13px;
-      color: var(--text-primary);
       outline: none;
       transition: all 0.2s;
     }
-    .search-input-wrap input:focus {
+    .search-pill-input input:focus {
       background: #FFFFFF;
       border-color: var(--brand-interactive);
       box-shadow: 0 0 0 3px rgba(37, 153, 220, 0.15);
     }
-    .search-input-wrap .search-icon {
+    .search-pill-input svg {
       position: absolute;
       left: 12px;
       top: 50%;
       transform: translateY(-50%);
       color: var(--text-muted);
-      font-size: 13px;
     }
 
-    .ranking-table {
+    .rank-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
     }
-    .ranking-table th {
+    .rank-table th {
       background: #F8FAFC;
       padding: 10px 12px;
       text-align: left;
@@ -542,78 +495,36 @@
       border-top: 1px solid var(--border-default);
       border-bottom: 1px solid var(--border-default);
     }
-    .ranking-table td {
+    .rank-table td {
       padding: 12px;
       border-bottom: 1px solid var(--border-subtle);
       vertical-align: middle;
     }
-    .ranking-row {
+    .rank-row {
       cursor: pointer;
       transition: background 0.15s;
     }
-    .ranking-row:hover {
-      background-color: #F1F5F9;
+    .rank-row:hover {
+      background: var(--surface-hover);
     }
-    .rank-number {
-      font-size: 15px;
-      font-weight: 700;
-      color: var(--brand-primary);
-      width: 36px;
-      text-align: center;
-    }
-    .candidate-name {
-      font-weight: 700;
-      color: var(--brand-primary);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .candidate-sub {
-      font-size: 11px;
-      color: var(--text-secondary);
-      font-weight: 400;
-    }
-
-    .score-badge {
+    .score-number {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 13px;
       font-weight: 700;
+      font-size: 13px;
       padding: 3px 8px;
       border-radius: 4px;
       background: #EFF8FF;
       color: var(--brand-primary);
       border: 1px solid #D1E9FF;
     }
-    .coverage-pill {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .coverage-good { background: #ECFDF3; color: #067647; }
-    .coverage-warn { background: #FFFAEB; color: #B54708; }
-
-    /* Tags for 4 Matching Levels */
-    .tag-level {
-      font-size: 10.5px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-    .tag-strong { background: #ECFDF3; color: #067647; border: 1px solid #A6F4C5; }
-    .tag-match { background: #EFF8FF; color: var(--brand-primary); border: 1px solid #B2DDFF; }
-    .tag-unclear { background: #FFFAEB; color: #B54708; border: 1px solid #FEDF89; }
-    .tag-nomatch { background: #FEF3F2; color: #B42318; border: 1px solid #FECDCA; }
 
     /* ========================================================
-       MODAL 50:50 SPLIT-SCREEN (CORE EXPERIENCE)
+       MODAL: 50:50 SPLIT-SCREEN VERIFICATION
        ======================================================== */
-    .modal-backdrop {
+    .modal-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(17, 36, 52, 0.65);
+      background: rgba(17, 36, 52, 0.7);
       backdrop-filter: blur(2px);
       z-index: 1000;
       display: none;
@@ -621,170 +532,112 @@
       justify-content: center;
       padding: 20px;
     }
-    .modal-backdrop.open { display: flex; }
+    .modal-overlay.open { display: flex; }
 
-    .split-modal {
+    .split-modal-container {
       background: #FFFFFF;
-      width: 95vw;
+      width: 96vw;
       max-width: 1440px;
-      height: 90vh;
+      height: 92vh;
       border-radius: 12px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       box-shadow: 0 10px 30px rgba(0,0,0,0.25);
     }
-    .modal-top-bar {
+    .modal-header-bar {
       background: var(--brand-primary);
       color: #FFFFFF;
-      padding: 12px 24px;
+      padding: 12px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .modal-candidate-info {
+    .modal-candidate-header {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
     }
-    .modal-title-main {
-      font-size: 17px;
-      font-weight: 700;
-    }
-    .close-btn {
+    .btn-close-modal {
       background: transparent;
       border: none;
       color: #FFFFFF;
-      font-size: 22px;
+      font-size: 24px;
       cursor: pointer;
       line-height: 1;
-      padding: 4px 8px;
+      padding: 2px 6px;
     }
 
-    .split-body {
+    .split-view-body {
       display: flex;
       flex: 1;
       overflow: hidden;
     }
-    
-    /* Left Pane: CV Viewer */
-    .pane-left {
+
+    /* Left: Document Preview */
+    .pane-cv-doc {
       width: 50%;
       border-right: 1px solid var(--border-default);
       display: flex;
       flex-direction: column;
-      background: #525659; /* PDF viewer grey */
+      background: #525659;
     }
-    .pdf-toolbar {
+    .doc-toolbar {
       background: #323639;
-      color: #FFFFFF;
-      padding: 6px 16px;
-      font-size: 12px;
+      color: #FFF;
+      padding: 6px 14px;
+      font-size: 11.5px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .pdf-viewer-paper {
+    .doc-page-scroll {
       flex: 1;
       overflow-y: auto;
-      padding: 24px;
+      padding: 20px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 20px;
     }
-    .cv-page {
+    .simulated-paper {
       background: #FFFFFF;
       width: 100%;
       max-width: 580px;
-      min-height: 800px;
+      min-height: 750px;
       padding: 40px;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       font-size: 13px;
       color: #222;
       position: relative;
     }
-    .cv-header-name {
-      font-size: 20px;
-      font-weight: 700;
-      color: #112434;
-      border-bottom: 2px solid #0A2B57;
-      padding-bottom: 6px;
-      margin-bottom: 12px;
-    }
-    .cv-section-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: #0A2B57;
-      text-transform: uppercase;
-      margin-top: 16px;
-      margin-bottom: 6px;
-      border-bottom: 1px solid #DDD;
-      padding-bottom: 2px;
-    }
-    .highlight-flash {
-      background: #FFF3C4 !important;
-      border: 1px dashed #E0A800 !important;
-      padding: 2px 4px;
-      border-radius: 3px;
-      transition: background 0.3s;
-    }
 
-    /* Right Pane: AI Evidence & Assessment */
-    .pane-right {
+    /* Right: AI Findings & Evidence */
+    .pane-ai-evidence {
       width: 50%;
       display: flex;
       flex-direction: column;
       background: #FAFCFE;
     }
-    .pane-right-header {
-      padding: 14px 20px;
-      background: #FFFFFF;
-      border-bottom: 1px solid var(--border-default);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .pane-right-scroll {
+    .ai-findings-scroll {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
+      padding: 16px 20px;
     }
 
-    /* Evidence Finding Card */
-    .finding-card {
+    .evidence-finding-item {
       background: #FFFFFF;
       border: 1px solid var(--border-default);
       border-radius: 8px;
       padding: 14px 16px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-      transition: all 0.2s;
     }
-    .finding-card.strong { border-left: 5px solid #067647; }
-    .finding-card.match { border-left: 5px solid var(--brand-primary); }
-    .finding-card.unclear { border-left: 5px solid #B54708; }
-    .finding-card.nomatch { border-left: 5px solid var(--brand-accent); }
+    .evidence-finding-item.strong { border-left: 5px solid var(--status-success-text); }
+    .evidence-finding-item.match { border-left: 5px solid var(--brand-primary); }
+    .evidence-finding-item.unclear { border-left: 5px solid var(--status-warning-text); }
+    .evidence-finding-item.nomatch { border-left: 5px solid var(--brand-accent); }
 
-    .finding-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-    .finding-title {
-      font-size: 13.5px;
-      font-weight: 700;
-      color: var(--text-primary);
-    }
-    .finding-reason {
-      font-size: 12.5px;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-    }
-
-    /* Verbatim Quote Box */
-    .quote-box {
+    .quote-evidence-box {
       background: #F8FAFC;
       border: 1px solid var(--border-default);
       border-left: 3px solid var(--brand-interactive);
@@ -799,45 +652,42 @@
       align-items: flex-start;
       gap: 10px;
     }
-    .quote-cite-btn {
+    .btn-cite-jump {
       background: #FFFFFF;
       border: 1px solid var(--border-default);
       color: var(--brand-interactive);
       font-size: 11px;
       font-weight: 700;
-      padding: 3px 7px;
-      border-radius: 3px;
+      padding: 3px 8px;
+      border-radius: 4px;
       cursor: pointer;
       white-space: nowrap;
       transition: all 0.15s;
     }
-    .quote-cite-btn:hover {
+    .btn-cite-jump:hover {
       background: var(--brand-interactive);
       color: #FFFFFF;
     }
 
-    /* Human Decision Footer Bar */
-    .decision-bar {
+    .modal-bottom-decision-bar {
       background: #FFFFFF;
       border-top: 2px solid var(--border-default);
-      padding: 14px 24px;
+      padding: 12px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .decision-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .status-select-label {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-secondary);
+
+    .highlight-flash {
+      background-color: #FFF3C4 !important;
+      outline: 2px dashed #E0A800 !important;
+      padding: 2px 4px;
+      border-radius: 3px;
+      transition: background-color 0.4s;
     }
 
     /* Toast Notification */
-    .toast {
+    .app-toast {
       position: fixed;
       bottom: 24px;
       right: 24px;
@@ -845,7 +695,7 @@
       color: #FFFFFF;
       padding: 12px 20px;
       border-radius: 8px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.25);
       font-size: 13.5px;
       font-weight: 500;
       z-index: 2000;
@@ -854,238 +704,212 @@
       gap: 10px;
       animation: slideUp 0.25s ease-out;
     }
-    .toast.show { display: flex; }
+    .app-toast.show { display: flex; }
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* AI Processing Simulation Modal */
+    .processing-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(17, 36, 52, 0.7);
+      backdrop-filter: blur(3px);
+      z-index: 1500;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .processing-modal.open { display: flex; }
+    .processing-card {
+      background: #FFFFFF;
+      border-radius: 12px;
+      padding: 30px;
+      width: 480px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid #E2E8F0;
+      border-top-color: var(--brand-accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
 
-  <!-- Top Demo Bar -->
-  <div class="demo-bar">
+  <!-- Top System Bar -->
+  <div class="top-system-bar">
     <div>
-      <span class="demo-badge">PHASE 1 PILOT DEMO</span>
-      <strong>VinUni AI-Native CV Matching & Ranking</strong> — Mô phỏng luồng nghiệp vụ thực tế cho Vị trí IT
+      <span style="background: var(--brand-accent); color: white; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-right: 8px;">VINUNI IT</span>
+      <strong>Hệ thống Sàng lọc & Xếp hạng CV AI-Native (HRA Phase 1)</strong>
     </div>
-    <div>
-      <span>Quy tắc cốt lõi: <strong>Human-in-control</strong> • AI cố vấn có bằng chứng, HR ra quyết định</span>
+    <div style="display: flex; gap: 16px;">
+      <span class="live-indicator"><span class="live-dot"></span> Local LLM: Sẵn sàng (Qwen 2.5 32B @ GPU On-premise)</span>
+      <span>Quy tắc: <strong>Human-in-control</strong> • Dữ liệu cục bộ</span>
     </div>
   </div>
 
-  <!-- Application Shell Header -->
+  <!-- App Header -->
   <header class="app-header">
-    <div class="header-inner">
-      <div class="brand-section">
-        <a href="#" class="brand-logo">
-          <img src="https://data-talent-v2.basecdn.net/careerportalvinuni/logo.png" alt="VinUniversity">
-        </a>
-        <div class="system-title">
-          <h1>HRA Workspace</h1>
-          <span>AI-Native CV Matching & Ranking</span>
+    <div class="header-main-row">
+      <div class="brand-group">
+        <img class="brand-logo-img" src="https://data-talent-v2.basecdn.net/careerportalvinuni/logo.png" alt="VinUniversity">
+        <div class="app-title-group">
+          <h1>HRA Recruitment Workspace</h1>
+          <span>AI-Native CV Screening & Candidate Ranking</span>
         </div>
       </div>
 
-      <!-- Current Requisition Scope -->
-      <div class="req-selector">
-        <span class="req-label">Vị trí đang chọn:</span>
-        <select class="req-select" id="reqSelect" onchange="changeRequisition()">
+      <!-- Current Requisition Selector -->
+      <div class="requisition-picker">
+        <span class="picker-label">Vị trí:</span>
+        <select class="picker-select" id="requisitionSelect" onchange="handleRequisitionChange(this.value)">
           <option value="REQ-IT01">REQ-2026-IT01: Senior Backend Engineer (Python/FastAPI)</option>
-          <option value="REQ-IT02">REQ-2026-IT02: DevOps / Cloud Infrastructure Specialist</option>
-          <option value="REQ-IT03">REQ-2026-IT03: QA Automation Engineer</option>
+          <option value="REQ-IT02">REQ-2026-IT02: DevOps & Cloud Infrastructure Specialist</option>
+          <option value="REQ-IT03">REQ-2026-IT03: QA Automation Lead</option>
         </select>
-        <span class="badge-status badge-open">● ĐANG MỞ</span>
+        <span class="badge badge-strong">● ĐANG MỞ</span>
       </div>
 
       <!-- User Profile -->
-      <div class="user-actions">
-        <div class="user-profile">
-          <div class="user-avatar">CT</div>
-          <div>
-            <div style="font-weight: 700; color: var(--brand-primary); line-height: 1.2;">CuongTV</div>
-            <div style="font-size: 11px; color: var(--text-secondary);">HR Recruiter (Lead)</div>
-          </div>
+      <div class="user-profile-widget">
+        <div class="user-avatar-circle">CT</div>
+        <div>
+          <div style="font-weight: 700; color: var(--brand-primary); font-size: 13px;">CuongTV</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">HR Recruiter Lead</div>
         </div>
       </div>
     </div>
 
-    <!-- Navigation Tabs -->
-    <nav class="nav-tabs-bar">
-      <button class="nav-tab-btn active" onclick="switchTab('tab-criteria')">
+    <!-- Main Navigation Tabs -->
+    <nav class="app-nav-tabs">
+      <button class="nav-tab-item active" id="tab-btn-criteria" onclick="selectTab('criteria')">
         📋 1. Quản lý Tiêu chí & JD
       </button>
-      <button class="nav-tab-btn" onclick="switchTab('tab-intake')">
+      <button class="nav-tab-item" id="tab-btn-intake" onclick="selectTab('intake')">
         📥 2. Tiếp nhận Lô CV & OCR
-        <span class="tab-count" id="badge-file-count">5 file</span>
+        <span class="tab-badge-pill" id="file-count-badge">5 file</span>
       </button>
-      <button class="nav-tab-btn" onclick="switchTab('tab-ranking')">
+      <button class="nav-tab-item" id="tab-btn-ranking" onclick="selectTab('ranking')">
         📊 3. Bảng Xếp hạng & Ưu tiên
-        <span class="tab-count" style="background: var(--brand-accent);">Top 5</span>
+        <span class="tab-badge-pill" style="background: var(--brand-accent);" id="rank-count-badge">5 ứng viên</span>
       </button>
-      <button class="nav-tab-btn" onclick="switchTab('tab-collab')">
+      <button class="nav-tab-item" id="tab-btn-collab" onclick="selectTab('collab')">
         🤝 4. Phối hợp với Hiring Manager
+        <span class="tab-badge-pill" id="shortlist-count-badge">2 Shortlist</span>
       </button>
     </nav>
   </header>
 
-  <!-- Main Container -->
-  <main class="app-container">
+  <!-- Workspace Container -->
+  <main class="main-workspace">
 
     <!-- ========================================================
-         TAB 1: CRITERIA MANAGEMENT & DUAL APPROVAL
+         VIEW 1: CRITERIA MANAGEMENT & DUAL-APPROVAL
          ======================================================== -->
-    <section id="tab-criteria" class="tab-content active">
-      <div class="card-box">
-        <div class="card-header-row">
+    <div id="view-criteria" class="tab-view-container">
+      <div class="content-panel">
+        <div class="panel-head">
           <div>
-            <h2 class="card-title">Bộ Tiêu chí Sàng lọc Vị trí (Rubric Specification)</h2>
-            <p class="card-subtitle">AI đề xuất bản nháp từ JD tiếng Anh • Yêu cầu Dual-Approval (HR duyệt quy trình, Hiring Manager duyệt chuyên môn)</p>
+            <h2 class="panel-title">Khung Tiêu chí Tuyển dụng (Rubric Specification)</h2>
+            <p class="panel-desc">Bản nháp do AI trích xuất từ JD tiếng Anh • Cơ chế phê duyệt hai cấp (Dual Approval: HR + Hiring Manager)</p>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm" onclick="showToast('Đang đồng bộ lại với bản JD gốc...')">
-              🔄 Tải lại từ JD
+            <button class="btn btn-secondary btn-sm" onclick="openJdModal()">
+              📄 Xem JD gốc (Job Description)
             </button>
-            <button class="btn btn-primary btn-sm" id="btn-approve-rubric" onclick="approveRubric()">
+            <button class="btn btn-secondary btn-sm" onclick="triggerAiDraftRegen()">
+              🤖 AI Trích xuất lại từ JD
+            </button>
+            <button class="btn btn-primary btn-sm" id="btn-approve-rubric" onclick="toggleDualApproval()">
               ✓ Xác nhận Phê duyệt Rubric v1.0
             </button>
           </div>
         </div>
 
-        <div class="criteria-grid">
+        <!-- Criteria Grid -->
+        <div class="criteria-columns-layout">
           <!-- MUST-HAVE Column (70%) -->
-          <div class="criteria-column">
-            <div class="column-header column-must">
-              <span class="column-title">TIÊU CHÍ BẮT BUỘC (MUST-HAVE)</span>
-              <span class="weight-tag weight-must">Tổng trọng số: 70%</span>
+          <div class="crit-box">
+            <div class="crit-box-head crit-box-must">
+              <span style="font-weight: 700; color: var(--brand-accent);">TIÊU CHÍ BẮT BUỘC (MUST-HAVE)</span>
+              <span style="font-size: 12px; font-weight: 700; color: var(--brand-accent);">Tổng trọng số: <span id="sum-must">70</span>%</span>
             </div>
 
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>1. Kinh nghiệm Lập trình Python Backend</span>
-                <span style="color: var(--brand-accent);">35%</span>
-              </div>
-              <div class="crit-desc">Tối thiểu 3 năm kinh nghiệm phát triển hệ thống với Python, thành thạo FastAPI hoặc Django.</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">Python</span>
-                <span class="keyword-pill">FastAPI</span>
-                <span class="keyword-pill">Django</span>
-                <span class="keyword-pill">REST API</span>
-              </div>
-            </div>
-
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>2. Cơ sở dữ liệu & Tối ưu truy vấn</span>
-                <span style="color: var(--brand-accent);">20%</span>
-              </div>
-              <div class="crit-desc">Kinh nghiệm thiết kế và tối ưu cơ sở dữ liệu quan hệ (PostgreSQL / MySQL) cho hệ thống tải cao.</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">PostgreSQL</span>
-                <span class="keyword-pill">SQL Optimization</span>
-                <span class="keyword-pill">Indexing</span>
-              </div>
-            </div>
-
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>3. Trình độ Học vấn Chuyên ngành</span>
-                <span style="color: var(--brand-accent);">15%</span>
-              </div>
-              <div class="crit-desc">Tốt nghiệp Đại học trở lên chuyên ngành CNTT, Khoa học Máy tính hoặc các ngành kỹ thuật liên quan.</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">Bachelor's Degree</span>
-                <span class="keyword-pill">Computer Science</span>
-                <span class="keyword-pill">IT</span>
-              </div>
+            <div id="must-have-criteria-list">
+              <!-- Dynamically populated -->
             </div>
           </div>
 
           <!-- NICE-TO-HAVE Column (30%) -->
-          <div class="criteria-column">
-            <div class="column-header column-nice">
-              <span class="column-title">TIÊU CHÍ ƯU TIÊN (NICE-TO-HAVE)</span>
-              <span class="weight-tag weight-nice">Tổng trọng số: 30%</span>
+          <div class="crit-box">
+            <div class="crit-box-head crit-box-nice">
+              <span style="font-weight: 700; color: var(--brand-interactive);">TIÊU CHÍ ƯU TIÊN (NICE-TO-HAVE)</span>
+              <span style="font-size: 12px; font-weight: 700; color: var(--brand-interactive);">Tổng trọng số: <span id="sum-nice">30</span>%</span>
             </div>
 
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>4. Kiến thức Docker & Containerization</span>
-                <span style="color: var(--brand-interactive);">15%</span>
-              </div>
-              <div class="crit-desc">Có kinh nghiệm đóng gói ứng dụng bằng Docker, hiểu cơ bản về triển khai CI/CD pipeline.</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">Docker</span>
-                <span class="keyword-pill">Docker Compose</span>
-                <span class="keyword-pill">CI/CD</span>
-              </div>
-            </div>
-
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>5. Chứng chỉ Cloud / AWS</span>
-                <span style="color: var(--brand-interactive);">10%</span>
-              </div>
-              <div class="crit-desc">Ưu tiên ứng viên có chứng chỉ AWS (Solutions Architect hoặc Developer Associate).</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">AWS Certified</span>
-                <span class="keyword-pill">Cloud Solutions</span>
-              </div>
-            </div>
-
-            <div class="criterion-card">
-              <div class="crit-title">
-                <span>6. Năng lực Tiếng Anh Chuyên môn</span>
-                <span style="color: var(--brand-interactive);">5%</span>
-              </div>
-              <div class="crit-desc">Khả năng đọc hiểu tài liệu kỹ thuật và giao tiếp cơ bản trong môi trường quốc tế.</div>
-              <div class="crit-keywords">
-                <span class="keyword-pill">English</span>
-                <span class="keyword-pill">Documentation</span>
-              </div>
+            <div id="nice-to-have-criteria-list">
+              <!-- Dynamically populated -->
             </div>
           </div>
         </div>
 
-        <!-- Approval Status Bar -->
-        <div class="dual-approval-banner" id="approval-banner">
+        <!-- Dual Approval Status Box -->
+        <div class="dual-approval-box" id="dual-approval-status-box">
           <div>
-            <div style="font-weight: 700; color: #067647; font-size: 14px;">
+            <div style="font-weight: 700; color: #067647; font-size: 13.5px;" id="approval-title">
               ✓ Trạng thái: Rubric v1.0 đã được phê duyệt chính thức
             </div>
-            <div style="font-size: 12px; color: #475569; margin-top: 2px;">
+            <div style="font-size: 12px; color: #475569; margin-top: 2px;" id="approval-meta">
               • Hiring Manager: <strong>Dr. David Tran</strong> (Đã duyệt chuyên môn lúc 09:15 04/11/2026)<br/>
               • HR Recruiter: <strong>CuongTV</strong> (Đã duyệt quy trình lúc 09:30 04/11/2026)
             </div>
           </div>
           <div>
-            <span class="tag-level tag-strong" style="font-size: 12px; padding: 6px 12px;">ĐÃ SẴN SÀNG MATCHING</span>
+            <span class="badge badge-strong" id="approval-pill">ĐÃ SẴN SÀNG SÀNG LỌC</span>
           </div>
         </div>
       </div>
-    </section>
+    </div>
 
     <!-- ========================================================
-         TAB 2: BATCH CV INTAKE & OCR PROCESSING
+         VIEW 2: BATCH CV INTAKE & OCR
          ======================================================== -->
-    <section id="tab-intake" class="tab-content">
-      <div class="card-box">
-        <div class="card-header-row">
+    <div id="view-intake" class="tab-view-container" style="display: none;">
+      <div class="content-panel">
+        <div class="panel-head">
           <div>
-            <h2 class="card-title">Tiếp nhận Hồ sơ theo Lô (Batch Upload) & Tiền xử lý OCR</h2>
-            <p class="card-subtitle">Hỗ trợ PDF văn bản, PDF scan (OCR tự động), Word DOCX • Tối đa 50 file / 250 MB</p>
+            <h2 class="panel-title">Tiếp nhận Hồ sơ theo Lô (Batch Upload) & Giải mã OCR</h2>
+            <p class="panel-desc">Hỗ trợ PDF text, PDF scan (OCR), Word DOCX • Tối đa 50 tệp/lô (250 MB)</p>
           </div>
-          <button class="btn btn-primary" onclick="simulateUpload()">
-            + Tải lên thêm Tệp CV
-          </button>
+          <div style="display: flex; gap: 8px;">
+            <input type="file" id="realFileInput" multiple accept=".pdf,.docx" style="display: none;" onchange="handleRealFiles(this.files)">
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('realFileInput').click()">
+              📂 Chọn tệp từ máy tính
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="runAiBatchMatchingSimulation()">
+              ⚡ Kích hoạt Chạy Matching AI cho Lô CV
+            </button>
+          </div>
         </div>
 
-        <!-- Drag & Drop Zone -->
-        <div class="dropzone-box" onclick="simulateUpload()">
-          <div class="dropzone-icon">📁</div>
-          <div class="dropzone-text">Kéo thả tệp CV tiếng Anh (PDF, DOCX) vào đây, hoặc nhấp để chọn tệp</div>
-          <div class="dropzone-subtext">Giới hạn tối đa 50 file/lô • Dung lượng tối đa 10 MB/tệp</div>
+        <!-- Drag & Drop Area -->
+        <div class="dropzone-area" onclick="document.getElementById('realFileInput').click()">
+          <div style="font-size: 32px; margin-bottom: 8px;">📥</div>
+          <div style="font-weight: 700; font-size: 14.5px; color: var(--text-primary); margin-bottom: 4px;">
+            Kéo thả tệp CV tiếng Anh vào đây hoặc nhấp để tải lên
+          </div>
+          <div style="font-size: 12px; color: var(--text-secondary);">
+            Hệ thống tự động kích hoạt OCR bản quét và loại bỏ dữ liệu cá nhân nhạy cảm
+          </div>
         </div>
 
-        <!-- File List Table -->
-        <table class="file-table">
+        <!-- Queue Table -->
+        <table class="file-queue-table">
           <thead>
             <tr>
               <th>Tên Tệp CV</th>
@@ -1093,117 +917,63 @@
               <th>Kích thước</th>
               <th>Trạng thái Kỹ thuật</th>
               <th>Tiến trình Bóc tách</th>
-              <th>Hành động</th>
+              <th style="text-align: right;">Hành động</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td><strong>CV_NguyenVanAn_Backend.pdf</strong></td>
-              <td>PDF (Text)</td>
-              <td>1.8 MB</td>
-              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
-              <td>
-                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
-              </td>
-              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(0)">Đối soát</button></td>
-            </tr>
-            <tr>
-              <td><strong>Tran_Thi_Bich_Resume.pdf</strong></td>
-              <td>PDF (Text)</td>
-              <td>2.2 MB</td>
-              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
-              <td>
-                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
-              </td>
-              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(1)">Đối soát</button></td>
-            </tr>
-            <tr>
-              <td><strong>Le_Hoang_Nam_CV.docx</strong></td>
-              <td>DOCX (Word)</td>
-              <td>950 KB</td>
-              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
-              <td>
-                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
-              </td>
-              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(2)">Đối soát</button></td>
-            </tr>
-            <tr>
-              <td><strong>PhamMinhTuan_PythonDev.pdf</strong></td>
-              <td>PDF (Text)</td>
-              <td>1.4 MB</td>
-              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
-              <td>
-                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
-              </td>
-              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(3)">Đối soát</button></td>
-            </tr>
-            <tr style="background: #FFFDF5;">
-              <td><strong>Do_Mai_Linh_ScanResume.pdf</strong></td>
-              <td>PDF (Scanned)</td>
-              <td>4.1 MB</td>
-              <td><span class="tag-level tag-unclear">⚠️ CẦN HR KIỂM TRA (Scan mờ)</span></td>
-              <td>
-                <div class="progress-bar-container"><div class="progress-bar-fill" style="width: 65%; background: #B54708;"></div></div>
-              </td>
-              <td><button class="btn btn-outline-danger btn-sm" onclick="showToast('Mở công cụ hỗ trợ đọc scan thủ công...')">Rà soát thủ công</button></td>
-            </tr>
+          <tbody id="file-queue-tbody">
+            <!-- Dynamically populated -->
           </tbody>
         </table>
-
-        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
-          <button class="btn btn-primary" onclick="switchTab('tab-ranking')">
-            Chuyển sang Bảng Xếp hạng AI →
-          </button>
-        </div>
       </div>
-    </section>
+    </div>
 
     <!-- ========================================================
-         TAB 3: RANKING & EVIDENCE MATRIX (CORE SCREEN)
+         VIEW 3: RANKING & EVIDENCE MATRIX (MAIN SCREEN)
          ======================================================== -->
-    <section id="tab-ranking" class="tab-content">
-      <!-- Metric Summary Cards -->
-      <div class="metric-summary-grid">
-        <div class="metric-card accent-total">
-          <span class="metric-label">TỔNG HỒ SƠ ĐÃ XỬ LÝ</span>
-          <span class="metric-value">5</span>
+    <div id="view-ranking" class="tab-view-container" style="display: none;">
+      <!-- Summary Metrics Bar -->
+      <div class="metrics-summary-bar">
+        <div class="metric-pill">
+          <div class="metric-pill-lbl">TỔNG HỒ SƠ ĐÃ MATCHING</div>
+          <div class="metric-pill-val" id="metric-total">5</div>
         </div>
-        <div class="metric-card accent-must">
-          <span class="metric-label">ĐẠT TIÊU CHÍ BẮT BUỘC</span>
-          <span class="metric-value" style="color: #067647;">2</span>
+        <div class="metric-pill m-pass">
+          <div class="metric-pill-lbl">ĐẠT TIÊU CHÍ BẮT BUỘC</div>
+          <div class="metric-pill-val" style="color: #067647;" id="metric-pass">2</div>
         </div>
-        <div class="metric-card accent-unclear">
-          <span class="metric-label">CẦN HR XÁC MINH</span>
-          <span class="metric-value" style="color: #B54708;">2</span>
+        <div class="metric-pill m-unclear">
+          <div class="metric-pill-lbl">CẦN HR XÁC MINH</div>
+          <div class="metric-pill-val" style="color: #B54708;" id="metric-unclear">2</div>
         </div>
-        <div class="metric-card accent-miss">
-          <span class="metric-label">DẤU HIỆU MISS-MATCH</span>
-          <span class="metric-value" style="color: var(--brand-accent);">1</span>
+        <div class="metric-pill m-miss">
+          <div class="metric-pill-lbl">DẤU HIỆU MISS-MATCH</div>
+          <div class="metric-pill-val" style="color: var(--brand-accent);" id="metric-miss">1</div>
         </div>
       </div>
 
-      <!-- Main Ranking Table -->
-      <div class="card-box">
-        <div class="table-toolbar">
-          <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
-            <input type="text" placeholder="Tìm theo tên ứng viên, kỹ năng (Python, Docker...)..." onkeyup="filterCandidates(this.value)">
+      <!-- Main Ranking Table Box -->
+      <div class="content-panel">
+        <div class="table-controls">
+          <div class="search-pill-input">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="candidateSearchInput" placeholder="Tìm theo tên, kỹ năng (Python, Docker, SQL)..." onkeyup="handleSearchFilter()">
           </div>
 
           <div style="display: flex; gap: 8px;">
-            <select class="btn btn-secondary btn-sm" onchange="filterByGroup(this.value)">
+            <select class="btn btn-secondary btn-sm" id="groupFilterSelect" onchange="handleGroupFilter(this.value)">
               <option value="ALL">Tất cả Nhóm Matching</option>
-              <option value="MUST_PASS">Đạt tiêu chí bắt buộc</option>
-              <option value="NEEDS_VERIFY">Cần HR xác minh</option>
-              <option value="MISMATCH">Có dấu hiệu miss-match</option>
+              <option value="MUST_PASS">Đạt Tiêu chí Bắt buộc</option>
+              <option value="NEEDS_VERIFY">Cần HR Xác minh</option>
+              <option value="MISMATCH">Dấu hiệu Miss-match</option>
+              <option value="SHORTLIST">Đã Shortlist</option>
             </select>
-            <button class="btn btn-secondary btn-sm" onclick="showToast('Đang xuất danh sách ra file Excel...')">
-              📥 Xuất Excel
+            <button class="btn btn-secondary btn-sm" onclick="exportDataExcel()">
+              📥 Xuất Báo cáo Excel
             </button>
           </div>
         </div>
 
-        <table class="ranking-table">
+        <table class="rank-table">
           <thead>
             <tr>
               <th style="width: 50px;">Hạng</th>
@@ -1216,222 +986,161 @@
               <th style="text-align: right;">Hành động</th>
             </tr>
           </thead>
-          <tbody id="candidate-rows">
-            <!-- Row 1 -->
-            <tr class="ranking-row" onclick="openCandidateModal(0)">
-              <td class="rank-number">#1</td>
-              <td>
-                <div class="candidate-name">
-                  Nguyễn Văn An
-                  <span class="tag-level tag-strong" style="font-size: 9px; padding: 1px 4px;">Top Pick</span>
-                </div>
-                <div class="candidate-sub">5 năm KN • ĐH Bách Khoa Hà Nội (CNTT)</div>
-              </td>
-              <td><span class="tag-level tag-strong">Đạt Tiêu chí Bắt buộc</span></td>
-              <td style="text-align: center;"><span style="color: #067647; font-weight: 700;">3/3 ĐẠT</span></td>
-              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
-              <td style="text-align: center;"><span class="score-badge">90.0 / 100</span></td>
-              <td><span class="badge-status badge-open">SHORTLIST</span></td>
-              <td style="text-align: right;">
-                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
-              </td>
-            </tr>
-
-            <!-- Row 2 -->
-            <tr class="ranking-row" onclick="openCandidateModal(1)">
-              <td class="rank-number">#2</td>
-              <td>
-                <div class="candidate-name">Trần Thị Bích</div>
-                <div class="candidate-sub">4 năm KN • ĐH Công nghệ - ĐHQGHN</div>
-              </td>
-              <td><span class="tag-level tag-strong">Đạt Tiêu chí Bắt buộc</span></td>
-              <td style="text-align: center;"><span style="color: #067647; font-weight: 700;">3/3 ĐẠT</span></td>
-              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
-              <td style="text-align: center;"><span class="score-badge">85.0 / 100</span></td>
-              <td><span class="badge-status" style="background: #EFF8FF; color: #175CD3;">ĐANG XEM</span></td>
-              <td style="text-align: right;">
-                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
-              </td>
-            </tr>
-
-            <!-- Row 3 -->
-            <tr class="ranking-row" onclick="openCandidateModal(2)">
-              <td class="rank-number">#3</td>
-              <td>
-                <div class="candidate-name">
-                  Lê Hoàng Nam
-                  <span class="tag-level tag-unclear" style="font-size: 9px; padding: 1px 4px;">Độ phủ thấp</span>
-                </div>
-                <div class="candidate-sub">3 năm KN • Học viện Bưu chính Viễn thông</div>
-              </td>
-              <td><span class="tag-level tag-unclear">Cần HR xác minh</span></td>
-              <td style="text-align: center;"><span style="color: #B54708; font-weight: 700;">2 Đạt / 1 Chưa rõ</span></td>
-              <td style="text-align: center;"><span class="coverage-pill coverage-warn">66% (Chưa ổn định)</span></td>
-              <td style="text-align: center;"><span class="score-badge" style="color: #B54708;">70.0 / 100</span></td>
-              <td><span class="badge-status" style="background: #F2F4F7; color: #475467;">MỚI</span></td>
-              <td style="text-align: right;">
-                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
-              </td>
-            </tr>
-
-            <!-- Row 4 -->
-            <tr class="ranking-row" onclick="openCandidateModal(3)">
-              <td class="rank-number">#4</td>
-              <td>
-                <div class="candidate-name">Phạm Minh Tuấn</div>
-                <div class="candidate-sub">1.5 năm KN (Fresher/Junior) • ĐH Giao thông Vận tải</div>
-              </td>
-              <td><span class="tag-level tag-nomatch">Có dấu hiệu Miss-match</span></td>
-              <td style="text-align: center;"><span style="color: #B42318; font-weight: 700;">1 Chưa đáp ứng</span></td>
-              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
-              <td style="text-align: center;"><span class="score-badge" style="color: #B42318;">45.0 / 100</span></td>
-              <td><span class="badge-status" style="background: #FEF3F2; color: #B42318;">BỊ LOẠI SƠ BỘ</span></td>
-              <td style="text-align: right;">
-                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
-              </td>
-            </tr>
-
-            <!-- Row 5 -->
-            <tr class="ranking-row" style="background: #FFFDF8;">
-              <td class="rank-number" style="color: var(--text-muted);">-</td>
-              <td>
-                <div class="candidate-name">Đỗ Mai Linh</div>
-                <div class="candidate-sub">File PDF scan độ tương phản kém • Chưa trích xuất xong</div>
-              </td>
-              <td><span class="tag-level tag-unclear">File cần kiểm tra kỹ thuật</span></td>
-              <td style="text-align: center;">-</td>
-              <td style="text-align: center;">-</td>
-              <td style="text-align: center;">-</td>
-              <td><span class="badge-status" style="background: #FEF3F2; color: #B42318;">CHỜ XỬ LÝ LỖI</span></td>
-              <td style="text-align: right;">
-                <button class="btn btn-outline-danger btn-sm" onclick="showToast('Chuyển qua giao diện OCR nâng cao...')">Rà soát thủ công</button>
-              </td>
-            </tr>
+          <tbody id="ranking-tbody">
+            <!-- Dynamically populated -->
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
 
     <!-- ========================================================
-         TAB 4: COLLABORATION WITH HIRING MANAGER
+         VIEW 4: HIRING MANAGER COLLABORATION
          ======================================================== -->
-    <section id="tab-collab" class="tab-content">
-      <div class="card-box">
-        <div class="card-header-row">
+    <div id="view-collab" class="tab-view-container" style="display: none;">
+      <div class="content-panel">
+        <div class="panel-head">
           <div>
-            <h2 class="card-title">Phối hợp với Hiring Manager (Shortlist Review)</h2>
-            <p class="card-subtitle">Chia sẻ danh sách Shortlist, trao đổi phản hồi chuyên môn và bảo vệ ghi chú nội bộ của HR</p>
+            <h2 class="panel-title">Phối hợp với Hiring Manager (Shortlist Sharing)</h2>
+            <p class="panel-desc">Dành cho Dr. David Tran (Hiring Manager) thẩm định hồ sơ Shortlist và phản hồi chuyên môn</p>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="showToast('Đã gửi email thông báo nhắc Hiring Manager thẩm định Shortlist')">
-            ✉️ Gửi thông báo cho Hiring Manager
+          <button class="btn btn-primary btn-sm" onclick="showToast('Đã gửi email nhắc việc tới Hiring Manager!')">
+            ✉️ Nhắc Hiring Manager phản hồi
           </button>
         </div>
 
-        <div style="background: #F8FAFC; border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-          <h3 style="font-size: 14px; font-weight: 700; color: var(--brand-primary); margin-bottom: 8px;">
-            Hồ sơ Shortlist Đã Chia sẻ: 02 Ứng viên (Nguyễn Văn An, Trần Thị Bích)
-          </h3>
-          <p style="font-size: 13px; color: var(--text-secondary);">
-            Hiring Manager (<strong>Dr. David Tran</strong>) có quyền xem tóm tắt bằng chứng, đánh giá chuyên môn qua Scorecard và để lại nhận xét. Ghi chú nội bộ về mức lương/thái độ của HR không bị chia sẻ.
-          </p>
+        <!-- Shortlist summary box -->
+        <div style="background: #F8FAFC; border: 1px solid var(--border-default); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;">
+          <div style="font-weight: 700; color: var(--brand-primary); font-size: 13.5px;" id="collab-shortlist-header">
+            Danh sách Shortlist gửi thẩm định: 2 ứng viên
+          </div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+            Hiring Manager xem xét bằng chứng và gửi nhận xét. Ghi chú bảo mật nội bộ của HR được tách biệt hoàn toàn.
+          </div>
         </div>
 
-        <!-- Feedback thread -->
+        <!-- Shortlist Table in Collab -->
+        <table class="rank-table" style="margin-bottom: 24px;">
+          <thead>
+            <tr>
+              <th>Ứng viên</th>
+              <th>Kinh nghiệm cốt lõi</th>
+              <th>Điểm Matching</th>
+              <th>Đánh giá Chuyên môn của HM</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody id="collab-shortlist-tbody">
+            <!-- Dynamically populated with shortlisted candidates -->
+          </tbody>
+        </table>
+
+        <!-- Interactive Discussion Thread -->
         <div style="border: 1px solid var(--border-default); border-radius: 8px; padding: 16px;">
-          <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-            <div class="user-avatar" style="background: #134D8B;">DT</div>
-            <div style="flex: 1;">
-              <div style="display: flex; justify-content: space-between;">
-                <strong>Dr. David Tran (Hiring Manager)</strong>
-                <span style="font-size: 11px; color: var(--text-muted);">10:45 AM - Hôm nay</span>
+          <h3 style="font-size: 13.5px; font-weight: 700; color: var(--brand-primary); margin-bottom: 12px;">
+            Trao đổi giữa HR Recruiter và Hiring Manager
+          </h3>
+
+          <div id="comment-thread-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+            <div style="display: flex; gap: 10px;">
+              <div class="user-avatar-circle" style="background: #134D8B;">DT</div>
+              <div style="flex: 1; background: #F8FAFC; padding: 10px 14px; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                  <strong>Dr. David Tran (Hiring Manager)</strong>
+                  <span style="color: var(--text-muted);">10:30 AM</span>
+                </div>
+                <div style="font-size: 13px; color: var(--text-primary); margin-top: 4px;">
+                  Hồ sơ <strong>Nguyễn Văn An</strong> đáp ứng rất tốt yêu cầu FastAPI và PostgreSQL. Tôi đề xuất lên lịch phỏng vấn chuyên môn vào thứ Sáu này.
+                </div>
               </div>
-              <p style="font-size: 13px; color: var(--text-primary); margin-top: 4px;">
-                "Ứng viên <strong>Nguyễn Văn An</strong> có nền tảng rất vững về kiến trúc FastAPI và PostgreSQL. Tôi đồng ý đưa vào phỏng vấn vòng 1. Với ứng viên <strong>Lê Hoàng Nam</strong>, phần bằng cấp CNTT chưa rõ, HR vui lòng gọi điện xác minh xem có bằng tương đương không nhé."
-              </p>
             </div>
           </div>
 
-          <div style="display: flex; gap: 10px; margin-top: 16px;">
-            <input type="text" placeholder="Nhập phản hồi trao đổi với Hiring Manager..." style="flex: 1; padding: 8px 14px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 13px;">
-            <button class="btn btn-primary btn-sm" onclick="showToast('Đã lưu phản hồi trao đổi')">Gửi nhận xét</button>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" id="collabCommentInput" placeholder="Nhập tin nhắn phản hồi trao đổi..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 13px;" onkeypress="if(event.key === 'Enter') postCollabComment()">
+            <button class="btn btn-primary btn-sm" onclick="postCollabComment()">Gửi phản hồi</button>
           </div>
         </div>
       </div>
-    </section>
+    </div>
 
   </main>
 
   <!-- ========================================================
-       MODAL: 50:50 SPLIT-SCREEN VERIFICATION (CORE DEMO VIEW)
+       MODAL: 50:50 SPLIT-SCREEN VERIFICATION (CORE FEATURE)
        ======================================================== -->
-  <div class="modal-backdrop" id="candidateModal">
-    <div class="split-modal">
+  <div class="modal-overlay" id="splitVerificationModal">
+    <div class="split-modal-container">
       <!-- Modal Top Bar -->
-      <div class="modal-top-bar">
-        <div class="modal-candidate-info">
+      <div class="modal-header-bar">
+        <div class="modal-candidate-header">
           <div>
-            <div class="modal-title-main" id="modal-candidate-name">Nguyễn Văn An — Hồ sơ Ứng viên #1</div>
-            <div style="font-size: 12px; color: rgba(255,255,255,0.8);" id="modal-candidate-meta">
-              Vị trí: REQ-2026-IT01 (Senior Backend Engineer) • File: CV_NguyenVanAn_Backend.pdf
+            <div style="font-size: 16px; font-weight: 700;" id="m-candidate-title">Nguyễn Văn An</div>
+            <div style="font-size: 11.5px; color: rgba(255,255,255,0.8);" id="m-candidate-subtitle">
+              REQ-2026-IT01 • CV_NguyenVanAn_Backend.pdf
             </div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
-          <span class="tag-level tag-strong" id="modal-score-badge">ĐIỂM MATCHING: 90.0</span>
-          <button class="close-btn" onclick="closeCandidateModal()">&times;</button>
+          <span class="badge badge-strong" id="m-candidate-score-pill">ĐIỂM: 90.0 / 100</span>
+          <button class="btn-close-modal" onclick="closeVerificationModal()">&times;</button>
         </div>
       </div>
 
-      <!-- Split Screen Body -->
-      <div class="split-body">
+      <!-- Split Body -->
+      <div class="split-view-body">
         
         <!-- LEFT PANE: CV VIEWER (50%) -->
-        <div class="pane-left">
-          <div class="pdf-toolbar">
+        <div class="pane-cv-doc">
+          <div class="doc-toolbar">
             <span>📄 BẢN XEM TRƯỚC CV GỐC (Trang 1 / 2)</span>
-            <div>
-              <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Zoom +</button>
-              <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Zoom -</button>
+            <div style="display: flex; gap: 6px;">
+              <button class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px;" onclick="showToast('Phóng to 125%')">Zoom +</button>
+              <button class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 11px;" onclick="showToast('Thu nhỏ 100%')">Zoom -</button>
             </div>
           </div>
 
-          <div class="pdf-viewer-paper">
-            <div class="cv-page" id="cv-paper-view">
-              <!-- Rendered CV Content will be populated by JS -->
+          <div class="doc-page-scroll">
+            <div class="simulated-paper" id="m-cv-paper">
+              <!-- Rendered CV Text -->
             </div>
           </div>
         </div>
 
-        <!-- RIGHT PANE: AI ADVISORY & CITATIONS (50%) -->
-        <div class="pane-right">
-          <div class="pane-right-header">
+        <!-- RIGHT PANE: AI FINDINGS & EVIDENCE (50%) -->
+        <div class="pane-ai-evidence">
+          <div style="padding: 12px 18px; background: #FFFFFF; border-bottom: 1px solid var(--border-default); display: flex; justify-content: space-between; align-items: center;">
             <div>
-              <strong style="color: var(--brand-primary); font-size: 14px;">KẾT QUẢ ĐỐI SOÁT THEO RUBRIC v1.0</strong>
-              <div style="font-size: 11px; color: var(--text-secondary);">Mọi nhận định đều có trích dẫn kiểm chứng từ CV gốc</div>
+              <strong style="color: var(--brand-primary); font-size: 13.5px;">ĐỐI SOÁT THEO RUBRIC ĐÃ DUYỆT v1.0</strong>
+              <div style="font-size: 11px; color: var(--text-secondary);">Nhấp vào số trang để tự động nhảy tới đoạn văn trong CV gốc</div>
             </div>
-            <div style="font-size: 12px; font-weight: 700; color: #067647;">
-              Độ phủ bằng chứng: 100%
+            <div id="m-coverage-indicator" style="font-size: 12px; font-weight: 700; color: #067647;">
+              Độ phủ: 100%
             </div>
           </div>
 
-          <div class="pane-right-scroll" id="findings-container">
-            <!-- Findings populated by JS -->
+          <div class="ai-findings-scroll" id="m-findings-list">
+            <!-- Dynamically populated findings -->
           </div>
 
           <!-- Bottom Decision Bar -->
-          <div class="decision-bar">
-            <div>
-              <span class="status-select-label">QUYẾT ĐỊNH CỦA HR:</span>
-              <select id="hr-decision-select" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-default); font-weight: 700; font-size: 13px; margin-left: 6px;">
+          <div class="modal-bottom-decision-bar">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 12px; font-weight: 700; color: var(--text-secondary);">QUYẾT ĐỊNH HR:</span>
+              <select id="m-status-select" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-default); font-weight: 700; font-size: 13px;" onchange="handleModalStatusChange(this.value)">
                 <option value="SHORTLIST">✓ Đưa vào Shortlist</option>
                 <option value="REVIEWING">👁️ Đang xem xét / Phỏng vấn</option>
                 <option value="REJECTED">✗ Bị loại ở vòng sàng lọc</option>
               </select>
             </div>
 
-            <div class="decision-actions">
-              <button class="btn btn-secondary" onclick="closeCandidateModal()">Đóng</button>
-              <button class="btn btn-primary" onclick="saveCandidateDecision()">
+            <!-- Optional reject reason container -->
+            <div id="reject-reason-box" style="display: none; flex: 1; margin: 0 12px;">
+              <input type="text" id="rejectReasonInput" placeholder="Nhập lý do loại bắt buộc..." style="width: 100%; padding: 6px 10px; border: 1px solid var(--brand-accent); border-radius: 4px; font-size: 12px;">
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="closeVerificationModal()">Hủy</button>
+              <button class="btn btn-primary btn-sm" onclick="saveCurrentCandidateDecision()">
                 Lưu Quyết Định Chính Thức
               </button>
             </div>
@@ -1442,315 +1151,1113 @@
     </div>
   </div>
 
-  <!-- Toast Notification Container -->
-  <div class="toast" id="toastBox">
-    <span id="toastMsg">Thông báo hệ thống</span>
+  <!-- AI Processing Simulation Modal -->
+  <div class="processing-modal" id="aiProcessingModal">
+    <div class="processing-card">
+      <div class="spinner"></div>
+      <h3 style="font-size: 16px; color: var(--brand-primary); margin-bottom: 8px;" id="ai-process-step-title">
+        Đang khởi động Local LLM (Qwen 2.5 32B)...
+      </h3>
+      <p style="font-size: 12.5px; color: var(--text-secondary);" id="ai-process-step-sub">
+        Bóc tách chuỗi văn bản, loại bỏ thông tin nhạy cảm và đối chiếu bằng chứng...
+      </p>
+    </div>
   </div>
 
+  <!-- Modal: English Job Description Viewer -->
+  <div class="modal-overlay" id="jdModal">
+    <div style="background: #FFFFFF; width: 850px; max-width: 95vw; max-height: 90vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.25);">
+      <div style="background: var(--brand-primary); color: #FFFFFF; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 15px; font-weight: 700;" id="jd-modal-title">Bản tin Tuyển dụng Gốc (Job Description) — REQ-2026-IT01</div>
+          <div style="font-size: 11.5px; color: rgba(255,255,255,0.8);">VinUniversity IT Directorate • Ngôn ngữ: English (Bản chuẩn)</div>
+        </div>
+        <button class="btn-close-modal" onclick="closeJdModal()">&times;</button>
+      </div>
+      <div style="padding: 20px 24px; overflow-y: auto; font-size: 13px; line-height: 1.6; color: var(--text-primary);" id="jd-modal-body">
+        <!-- Rendered JD Content -->
+      </div>
+      <div style="background: #F8FAFC; border-top: 1px solid var(--border-default); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 12px; color: var(--text-secondary);">📌 AI sử dụng tài liệu này để tự động khởi tạo Khung Tiêu chí Rubric v1.0</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="closeJdModal()">Đóng</button>
+          <button class="btn btn-primary btn-sm" onclick="closeJdModal(); triggerAiDraftRegen();">🤖 Trích xuất lại sang Rubric</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="app-toast" id="systemToast">
+    <span id="toastMessageText">Hệ thống sẵn sàng</span>
+  </div>
+
+  <!-- ========================================================
+       LIVE APPLICATION STATE & JAVASCRIPT ENGINE
+       ======================================================== -->
+  
   <script>
-    // Mock Candidate Database for Phase 1 Demo
-    const candidatesData = [
-      {
-        id: "CAND-01",
-        name: "Nguyễn Văn An",
-        meta: "5 năm KN Backend • ĐH Bách Khoa Hà Nội • Điểm: 90.0 / 100",
-        score: "90.0",
-        cvText: `
-          <div class="cv-header-name">NGUYEN VAN AN</div>
-          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
-            Email: an.nguyen.tech@gmail.com | Phone: 0912.345.678 | Hanoi, Vietnam
+    // ========================================================
+    // REQUISITION DATABASE & INITIAL DATA
+    // ========================================================
+    const REQUISITIONS_DATA = {
+      'REQ-IT01': {
+        id: 'REQ-IT01',
+        title: 'REQ-2026-IT01: Senior Backend Engineer (Python/FastAPI)',
+        jdTitle: 'Job Description: Senior Backend Engineer (Python/FastAPI)',
+        jdHtml: `
+          <div style="margin-bottom: 16px;">
+            <div style="font-size: 16px; font-weight: 700; color: #0A2B57;">VINUNIVERSITY — INFORMATION TECHNOLOGY DIRECTORATE</div>
+            <div style="font-size: 13px; color: #64748B;">Requisition Code: REQ-2026-IT01 | Level: Senior (5+ years) | Location: Hanoi (On-campus)</div>
           </div>
-
-          <div class="cv-section-title">PROFESSIONAL SUMMARY</div>
-          <p style="margin-bottom: 12px; line-height: 1.6;">
-            Senior Python Developer with 5+ years of experience in designing, building, and deploying scalable microservices and RESTful APIs using Python, FastAPI, and Django. Proven track record in PostgreSQL database optimization and Dockerized deployments.
-          </p>
-
-          <div class="cv-section-title">WORK EXPERIENCE</div>
-          <div style="margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; font-weight: 700;">
-              <span>Senior Backend Developer — VinAI Tech</span>
-              <span>2022 - Present</span>
-            </div>
-            <p id="cite-p1" style="margin-top: 4px; line-height: 1.6;">
-              • Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute with sub-100ms latency.<br/>
-              • Designed caching layers using Redis and automated deployment pipelines with Docker and GitLab CI/CD.
-            </p>
-          </div>
-
-          <div style="margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; font-weight: 700;">
-              <span>Python Backend Engineer — FPT Software</span>
-              <span>2019 - 2022</span>
-            </div>
-            <p id="cite-p2" style="margin-top: 4px; line-height: 1.6;">
-              • Built scalable web services utilizing Python, Django REST Framework, and MySQL.<br/>
-              • Optimized complex SQL database queries and indexes, reducing reporting latency by 45%.
-            </p>
-          </div>
-
-          <div class="cv-section-title">EDUCATION</div>
-          <div id="cite-edu">
-            <div style="font-weight: 700;">Bachelor of Computer Science (Honors)</div>
-            <div>Hanoi University of Science and Technology (HUST) | 2015 - 2019 | GPA: 3.6 / 4.0</div>
-          </div>
-
-          <div class="cv-section-title">SKILLS & CERTIFICATIONS</div>
-          <p id="cite-skills" style="line-height: 1.6;">
-            • Programming: Python (Expert), SQL, Bash.<br/>
-            • Frameworks: FastAPI, Django, Flask.<br/>
-            • Databases: PostgreSQL, MySQL, Redis.<br/>
-            • DevOps & Tools: Docker, Git, CI/CD, Linux.
-          </p>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">1. Position Overview</h4>
+          <p>We are seeking an outstanding Senior Backend Engineer to join VinUniversity's digital transformation team. The engineer will design, develop, and maintain high-performance API services, academic portals, and enterprise microservices serving thousands of faculty members, researchers, and students.</p>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">2. Mandatory Requirements (Must-Have)</h4>
+          <ul style="padding-left: 20px;">
+            <li><strong>Technical Stack:</strong> Minimum 3+ years of intensive backend development experience using <strong>Python</strong> with modern frameworks (FastAPI or Django).</li>
+            <li><strong>Database Management:</strong> Strong proficiency in relational database architecture (<strong>PostgreSQL</strong> or MySQL), query optimization, indexing strategies, and connection pooling.</li>
+            <li><strong>Educational Background:</strong> Bachelor's degree or higher in Computer Science, Software Engineering, or Information Technology.</li>
+          </ul>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">3. Preferred Qualifications (Nice-to-Have)</h4>
+          <ul style="padding-left: 20px;">
+            <li>Experience containerizing applications with <strong>Docker</strong> and setting up automated <strong>CI/CD</strong> pipelines (GitLab CI / GitHub Actions).</li>
+            <li>Cloud platform certifications or practical experience (AWS Solutions Architect, GCP, Azure).</li>
+            <li>Professional English proficiency (reading technical documentation and interacting in an international academic environment).</li>
+          </ul>
         `,
-        findings: [
+        criteria: [
+          { id: "C1", cat: "MUST", name: "Kinh nghiệm Python Backend", desc: "Tối thiểu 3 năm kinh nghiệm phát triển với FastAPI hoặc Django", weight: 35, keywords: ["Python", "FastAPI", "Django", "REST API"] },
+          { id: "C2", cat: "MUST", name: "Cơ sở dữ liệu & Tối ưu hóa SQL", desc: "Kinh nghiệm thiết kế chỉ mục, tối ưu hóa truy vấn PostgreSQL/MySQL", weight: 20, keywords: ["PostgreSQL", "SQL Optimization", "Indexing"] },
+          { id: "C3", cat: "MUST", name: "Trình độ Học vấn CNTT", desc: "Tốt nghiệp Đại học chuyên ngành Khoa học máy tính hoặc CNTT", weight: 15, keywords: ["Bachelor", "Computer Science", "IT"] },
+          { id: "C4", cat: "NICE", name: "Kỹ năng Docker & CI/CD", desc: "Đóng gói ứng dụng container, tự động hóa triển khai", weight: 15, keywords: ["Docker", "GitLab CI", "Containerization"] },
+          { id: "C5", cat: "NICE", name: "Chứng chỉ Cloud / AWS", desc: "Chứng chỉ AWS Solutions Architect hoặc kinh nghiệm Cloud tương đương", weight: 10, keywords: ["AWS", "Cloud Practitioner"] },
+          { id: "C6", cat: "NICE", name: "Khả năng Tiếng Anh Chuyên môn", desc: "Đọc hiểu tài liệu kỹ thuật và giao tiếp môi trường quốc tế", weight: 5, keywords: ["English", "Technical Documentation"] }
+        ],
+        files: [
+          { id: "F1", name: "CV_NguyenVanAn_Backend.pdf", type: "PDF (Text)", size: "1.8 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "F2", name: "Tran_Thi_Bich_Resume.pdf", type: "PDF (Text)", size: "2.2 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "F3", name: "Le_Hoang_Nam_CV.docx", type: "Word DOCX", size: "950 KB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "F4", name: "PhamMinhTuan_PythonDev.pdf", type: "PDF (Text)", size: "1.4 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "F5", name: "Do_Mai_Linh_ScanResume.pdf", type: "PDF (Scan)", size: "4.1 MB", status: "SCAN_WARN", label: "Scan mờ / Lỗi OCR", progress: 65 }
+        ],
+        candidates: [
           {
-            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
-            status: "strong",
-            badge: "STRONG_MATCH (VƯỢT TRỘI)",
-            reason: "Ứng viên có hơn 5 năm kinh nghiệm thực tế (vượt yêu cầu 3 năm), chuyên sâu cả FastAPI và Django.",
-            quote: "Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute...",
-            citeTarget: "cite-p1",
-            page: 1
+            id: "CAND-01",
+            rank: 1,
+            name: "Nguyễn Văn An",
+            subtitle: "5 năm KN Backend • ĐH Bách Khoa Hà Nội • Điểm: 90.0",
+            group: "MUST_PASS",
+            groupLabel: "Đạt Tiêu chí Bắt buộc",
+            groupBadge: "badge-strong",
+            mustPassRatio: "3/3 ĐẠT",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 90.0,
+            recruitmentStatus: "SHORTLIST",
+            internalNote: "Ứng viên rất sáng giá, phỏng vấn ngay.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">NGUYEN VAN AN</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: an.nguyen.tech@gmail.com | Phone: 0912.345.678 | Hanoi, Vietnam</div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">PROFESSIONAL SUMMARY</div>
+              <p style="font-size: 12.5px; line-height: 1.6; margin-bottom: 12px;">Senior Python Backend Engineer with 5+ years of hands-on experience designing, developing, and deploying scalable microservices and high-throughput APIs using Python, FastAPI, and Django.</p>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">WORK EXPERIENCE</div>
+              <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 13px;"><span>VinAI Technology — Senior Backend Engineer</span><span>2022 - Present</span></div>
+                <p id="quote-target-p1" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">• Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute with sub-100ms latency.<br/>• Optimized database indexing and caching layers using Redis, decreasing database CPU load by 35%.</p>
+              </div>
+              <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 13px;"><span>FPT Software — Software Engineer</span><span>2019 - 2022</span></div>
+                <p id="quote-target-p2" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">• Engineered REST APIs using Django and PostgreSQL.<br/>• Configured Dockerized deployment environments and managed GitLab CI/CD pipelines.</p>
+              </div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EDUCATION</div>
+              <p id="quote-target-edu" style="font-size: 12px;">Bachelor of Computer Science (Honors) — Hanoi University of Science and Technology (HUST) | GPA: 3.6/4.0 (2015 - 2019)</p>
+            `,
+            findings: [
+              {
+                critId: "C1",
+                title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+                status: "strong",
+                badgeText: "STRONG_MATCH (VƯỢT TRỘI)",
+                badgeClass: "badge-strong",
+                reason: "Ứng viên có hơn 5 năm kinh nghiệm thực chiến (vượt mức 3 năm yêu cầu), thành thạo chuyên sâu FastAPI và Django.",
+                quote: "Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute...",
+                targetId: "quote-target-p1",
+                page: 1
+              },
+              {
+                critId: "C2",
+                title: "2. Cơ sở dữ liệu & Tối ưu hóa SQL (Trọng số 20% - Bắt buộc)",
+                status: "strong",
+                badgeText: "STRONG_MATCH",
+                badgeClass: "badge-strong",
+                reason: "Kinh nghiệm thực chứng tối ưu PostgreSQL và caching Redis tại VinAI, giảm tải CPU 35%.",
+                quote: "Optimized database indexing and caching layers using Redis, decreasing database CPU load by 35%.",
+                targetId: "quote-target-p1",
+                page: 1
+              },
+              {
+                critId: "C3",
+                title: "3. Học vấn Chuyên ngành CNTT (Trọng số 15% - Bắt buộc)",
+                status: "match",
+                badgeText: "MATCH (ĐẠT)",
+                badgeClass: "badge-match",
+                reason: "Cử nhân Khoa học Máy tính loại Giỏi từ ĐH Bách Khoa Hà Nội (HUST).",
+                quote: "Bachelor of Computer Science (Honors) — Hanoi University of Science and Technology (HUST)",
+                targetId: "quote-target-edu",
+                page: 1
+              },
+              {
+                critId: "C4",
+                title: "4. Kỹ năng Docker & CI/CD (Trọng số 15% - Ưu tiên)",
+                status: "match",
+                badgeText: "MATCH (ĐẠT)",
+                badgeClass: "badge-match",
+                reason: "Có kỹ năng đóng gói Docker và làm việc với GitLab CI/CD.",
+                quote: "Configured Dockerized deployment environments and managed GitLab CI/CD pipelines.",
+                targetId: "quote-target-p2",
+                page: 1
+              },
+              {
+                critId: "C5",
+                title: "5. Chứng chỉ Cloud / AWS (Trọng số 10% - Ưu tiên)",
+                status: "unclear",
+                badgeText: "UNCLEAR (CHƯA RÕ)",
+                badgeClass: "badge-unclear",
+                reason: "CV không đề cập đến chứng chỉ AWS cụ thể. Không trừ điểm theo nguyên tắc an toàn.",
+                quote: null,
+                targetId: null,
+                page: null
+              }
+            ]
           },
           {
-            title: "2. Cơ sở dữ liệu & Tối ưu hóa (Trọng số 20% - Bắt buộc)",
-            status: "strong",
-            badge: "STRONG_MATCH",
-            reason: "Kinh nghiệm thực chứng tối ưu chỉ mục và truy vấn SQL tại cả FPT và VinAI, giảm 45% độ trễ.",
-            quote: "Optimized complex SQL database queries and indexes, reducing reporting latency by 45%.",
-            citeTarget: "cite-p2",
-            page: 1
+            id: "CAND-02",
+            rank: 2,
+            name: "Trần Thị Bích",
+            subtitle: "4 năm KN Backend • ĐH Công nghệ (UET) • Điểm: 85.0",
+            group: "MUST_PASS",
+            groupLabel: "Đạt Tiêu chí Bắt buộc",
+            groupBadge: "badge-strong",
+            mustPassRatio: "3/3 ĐẠT",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 85.0,
+            recruitmentStatus: "REVIEWING",
+            internalNote: "",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">TRAN THI BICH</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: bich.tran@vnu.edu.vn | Phone: 0988.765.432 | Hanoi</div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">WORK HISTORY</div>
+              <p id="quote-target-bich1" style="font-size: 12px; line-height: 1.6;"><strong>Backend Developer — Viettel Telecom (2020 - 2024)</strong><br/>• Developed billing and CRM backend APIs in Python and Django.<br/>• Managed complex relational database models in PostgreSQL.</p>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EDUCATION</div>
+              <p id="quote-target-bichedu" style="font-size: 12px;">Bachelor of Information Technology — VNU University of Engineering and Technology (UET).</p>
+            `,
+            findings: [
+              {
+                critId: "C1",
+                title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+                status: "match",
+                badgeText: "MATCH (ĐẠT)",
+                badgeClass: "badge-match",
+                reason: "4 năm phát triển dịch vụ backend bằng Python Django tại Viettel.",
+                quote: "Developed billing and CRM backend APIs in Python and Django.",
+                targetId: "quote-target-bich1",
+                page: 1
+              },
+              {
+                critId: "C3",
+                title: "3. Học vấn CNTT (Trọng số 15% - Bắt buộc)",
+                status: "match",
+                badgeText: "MATCH (ĐẠT)",
+                badgeClass: "badge-match",
+                reason: "Cử nhân CNTT ĐH Công nghệ - ĐHQGHN.",
+                quote: "Bachelor of Information Technology — VNU University of Engineering and Technology (UET).",
+                targetId: "quote-target-bichedu",
+                page: 1
+              }
+            ]
           },
           {
-            title: "3. Học vấn CNTT (Trọng số 15% - Bắt buộc)",
-            status: "match",
-            badge: "MATCH (ĐẠT)",
-            reason: "Tốt nghiệp Cử nhân Khoa học Máy tính loại Giỏi tại ĐH Bách Khoa Hà Nội (HUST).",
-            quote: "Bachelor of Computer Science (Honors) — Hanoi University of Science and Technology (HUST)",
-            citeTarget: "cite-edu",
-            page: 1
+            id: "CAND-03",
+            rank: 3,
+            name: "Lê Hoàng Nam",
+            subtitle: "3 năm KN • Học viện Bưu chính Viễn thông • Điểm: 70.0",
+            group: "NEEDS_VERIFY",
+            groupLabel: "Cần HR Xác minh",
+            groupBadge: "badge-unclear",
+            mustPassRatio: "2 Đạt / 1 Chưa rõ",
+            coverage: 66,
+            coverageLabel: "66% (Chưa ổn định)",
+            score: 70.0,
+            recruitmentStatus: "NEW",
+            internalNote: "Cần gọi điện xác minh bằng cấp có tương đương CNTT hay không.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">LE HOANG NAM</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: nam.le@gmail.com | Phone: 0977.112.233</div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EXPERIENCE</div>
+              <p id="quote-target-nam1" style="font-size: 12px;">Python Programmer at CMC Global with 3 years building data services.</p>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EDUCATION</div>
+              <p id="quote-target-namedu" style="font-size: 12px; color: #B54708;">Studied Electronics & Telecommunications Engineering at PTIT.</p>
+            `,
+            findings: [
+              {
+                critId: "C1",
+                title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+                status: "match",
+                badgeText: "MATCH (ĐẠT)",
+                badgeClass: "badge-match",
+                reason: "3 năm lập trình Python tại CMC Global.",
+                quote: "Python Programmer at CMC Global with 3 years building data services.",
+                targetId: "quote-target-nam1",
+                page: 1
+              },
+              {
+                critId: "C3",
+                title: "3. Học vấn Chuyên ngành CNTT (Trọng số 15% - Bắt buộc)",
+                status: "unclear",
+                badgeText: "UNCLEAR (CẦN XÁC MINH)",
+                badgeClass: "badge-unclear",
+                reason: "Tốt nghiệp ngành Điện tử Viễn thông, chưa rõ số tín chỉ chuyên ngành phần mềm có đáp ứng tương đương hay không.",
+                quote: "Studied Electronics & Telecommunications Engineering at PTIT.",
+                targetId: "quote-target-namedu",
+                page: 1
+              }
+            ]
           },
           {
-            title: "4. Docker & CI/CD (Trọng số 15% - Ưu tiên)",
-            status: "match",
-            badge: "MATCH (ĐẠT)",
-            reason: "Có kỹ năng sử dụng Docker và xây dựng luồng triển khai tự động CI/CD.",
-            quote: "DevOps & Tools: Docker, Git, CI/CD, Linux...",
-            citeTarget: "cite-skills",
-            page: 1
+            id: "CAND-04",
+            rank: 4,
+            name: "Phạm Minh Tuấn",
+            subtitle: "1.5 năm KN (Junior) • ĐH Giao thông Vận tải • Điểm: 45.0",
+            group: "MISMATCH",
+            groupLabel: "Dấu hiệu Miss-match",
+            groupBadge: "badge-nomatch",
+            mustPassRatio: "1 Không đạt",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 45.0,
+            recruitmentStatus: "REJECTED",
+            internalNote: "Chưa đủ số năm kinh nghiệm theo yêu cầu bắt buộc (tối thiểu 3 năm).",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">PHAM MINH TUAN</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: tuan.pm@gmail.com</div>
+              <p id="quote-target-tuan1" style="font-size: 12px; color: #B42318;">Junior Python Developer with 1.5 years experience writing web scraping scripts.</p>
+            `,
+            findings: [
+              {
+                critId: "C1",
+                title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+                status: "nomatch",
+                badgeText: "NO_MATCH (CHƯA ĐẠT)",
+                badgeClass: "badge-nomatch",
+                reason: "Yêu cầu bắt buộc tối thiểu 3 năm, ứng viên chỉ có 1.5 năm kinh nghiệm Junior.",
+                quote: "Junior Python Developer with 1.5 years experience writing web scraping scripts.",
+                targetId: "quote-target-tuan1",
+                page: 1
+              }
+            ]
           },
           {
-            title: "5. Chứng chỉ Cloud / AWS (Trọng số 10% - Ưu tiên)",
-            status: "unclear",
-            badge: "UNCLEAR (CHƯA RÕ)",
-            reason: "Hồ sơ có nhắc tới kiến trúc dịch vụ nhưng không ghi nhận chứng chỉ AWS chính thức nào.",
-            quote: null,
-            citeTarget: null,
-            page: null
+            id: "CAND-05",
+            rank: "-",
+            name: "Đỗ Mai Linh",
+            subtitle: "File scan độ phân giải kém • Đang chờ OCR thủ công",
+            group: "FILE_WARN",
+            groupLabel: "Cần HR kiểm tra file",
+            groupBadge: "badge-unclear",
+            mustPassRatio: "Chưa đánh giá",
+            coverage: 0,
+            coverageLabel: "Chưa rõ",
+            score: 0,
+            recruitmentStatus: "NEW",
+            internalNote: "Bản scan mờ, cần yêu cầu ứng viên gửi lại bản PDF rõ nét.",
+            cvPaperHtml: `<div style="color: #B54708; padding: 20px; text-align: center;">[Ảnh bản quét scan độ tương phản thấp - Cần HR rà soát thủ công]</div>`,
+            findings: []
           }
         ]
       },
-      {
-        id: "CAND-02",
-        name: "Trần Thị Bích",
-        meta: "4 năm KN Backend • ĐH Công nghệ - ĐHQGHN • Điểm: 85.0 / 100",
-        score: "85.0",
-        cvText: `
-          <div class="cv-header-name">TRAN THI BICH</div>
-          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
-            Email: bich.tran@vnu.edu.vn | Phone: 0988.765.432 | Hanoi
+      'REQ-IT02': {
+        id: 'REQ-IT02',
+        title: 'REQ-2026-IT02: DevOps & Cloud Infrastructure Specialist',
+        jdTitle: 'Job Description: DevOps & Cloud Infrastructure Specialist',
+        jdHtml: `
+          <div style="margin-bottom: 16px;">
+            <div style="font-size: 16px; font-weight: 700; color: #0A2B57;">VINUNIVERSITY — INFORMATION TECHNOLOGY DIRECTORATE</div>
+            <div style="font-size: 13px; color: #64748B;">Requisition Code: REQ-2026-IT02 | Level: Specialist / Lead | Location: Hanoi</div>
           </div>
-          <div class="cv-section-title">SUMMARY</div>
-          <p>4 years of software development in Python and cloud systems.</p>
-          <div class="cv-section-title">EXPERIENCE</div>
-          <div id="cite-p1">
-            <strong>Backend Engineer — Viettel Telecom (2020 - Present)</strong>
-            <p>Developed core API microservices using Python Django, PostgreSQL.</p>
-          </div>
-          <div class="cv-section-title">EDUCATION</div>
-          <div id="cite-edu">
-            <p>Bachelor of Information Technology — VNU University of Engineering and Technology (UET).</p>
-          </div>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">1. Position Overview</h4>
+          <p>The DevOps & Cloud Infrastructure Specialist will orchestrate Kubernetes clusters, infrastructure-as-code automation, site reliability, and zero-downtime deployment pipelines for VinUni's core digital ecosystem.</p>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">2. Mandatory Requirements (Must-Have)</h4>
+          <ul style="padding-left: 20px;">
+            <li><strong>Container Orchestration & IaC:</strong> 3+ years managing production <strong>Kubernetes (k8s)</strong> clusters and writing <strong>Terraform</strong> modules.</li>
+            <li><strong>CI/CD Pipelines:</strong> In-depth experience designing end-to-end automated deployment workflows with GitLab CI or GitHub Actions.</li>
+            <li><strong>Education:</strong> Bachelor's degree in Computer Science, Telecommunications, or IT.</li>
+          </ul>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">3. Preferred Qualifications (Nice-to-Have)</h4>
+          <ul style="padding-left: 20px;">
+            <li>Certifications: AWS Certified Solutions Architect / CKA (Certified Kubernetes Administrator).</li>
+            <li>Proficiency in Linux administration, Shell scripting, and Python automation.</li>
+            <li>Fluent English communication for cross-functional collaboration.</li>
+          </ul>
         `,
-        findings: [
+        criteria: [
+          { id: "D1", cat: "MUST", name: "Kubernetes & Terraform (IaC)", desc: "Tối thiểu 3 năm quản trị cụm k8s và hạ tầng tự động hóa Terraform", weight: 35, keywords: ["Kubernetes", "K8s", "Terraform", "IaC"] },
+          { id: "D2", cat: "MUST", name: "Thiết kế Pipeline CI/CD Tự động hóa", desc: "Xây dựng quy trình CI/CD hoàn chỉnh trên GitLab CI / GitHub Actions", weight: 20, keywords: ["CI/CD", "GitLab CI", "GitHub Actions"] },
+          { id: "D3", cat: "MUST", name: "Học vấn Đại học CNTT / Điện tử VT", desc: "Tốt nghiệp Đại học chuyên ngành CNTT, Viễn thông hoặc Khoa học máy tính", weight: 15, keywords: ["Bachelor", "IT", "Telecommunications"] },
+          { id: "D4", cat: "NICE", name: "Chứng chỉ CKA / AWS Solutions Architect", desc: "Sở hữu chứng chỉ quốc tế uy tín về Cloud hoặc Kubernetes", weight: 15, keywords: ["CKA", "AWS Certified", "Solutions Architect"] },
+          { id: "D5", cat: "NICE", name: "Quản trị Linux & Lập trình Tự động hóa", desc: "Kinh nghiệm chuyên sâu Linux kernel, Bash Scripting, Python", weight: 10, keywords: ["Linux", "Bash", "Python Automation"] },
+          { id: "D6", cat: "NICE", name: "Tiếng Anh Chuyên ngành & Giao tiếp", desc: "Khả năng làm việc trong môi trường học thuật quốc tế", weight: 5, keywords: ["English", "Professional Working"] }
+        ],
+        files: [
+          { id: "DF1", name: "CV_TranDinhTrong_DevOps.pdf", type: "PDF (Text)", size: "2.1 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "DF2", name: "Vu_Minh_Hai_Resume.pdf", type: "PDF (Text)", size: "1.5 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "DF3", name: "Hoang_Duc_Thang_CV.docx", type: "Word DOCX", size: "840 KB", status: "OK", label: "Đọc thành công", progress: 100 }
+        ],
+        candidates: [
           {
-            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
-            status: "match",
-            badge: "MATCH (ĐẠT)",
-            reason: "4 năm kinh nghiệm phát triển Python và Django tại Viettel Telecom.",
-            quote: "Developed core API microservices using Python Django, PostgreSQL.",
-            citeTarget: "cite-p1",
-            page: 1
+            id: "CAND-D01",
+            rank: 1,
+            name: "Trần Đình Trọng",
+            subtitle: "5 năm KN DevOps & Cloud • CKA & AWS Certified • Điểm: 92.5",
+            group: "MUST_PASS",
+            groupLabel: "Đạt Tiêu chí Bắt buộc",
+            groupBadge: "badge-strong",
+            mustPassRatio: "3/3 ĐẠT",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 92.5,
+            recruitmentStatus: "SHORTLIST",
+            internalNote: "Kinh nghiệm thực chiến k8s rất xuất sắc, đề xuất phỏng vấn sớm.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">TRAN DINH TRONG</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: trong.td.cloud@gmail.com | Phone: 0904.556.778 | Hanoi</div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">SUMMARY & CERTIFICATIONS</div>
+              <p style="font-size: 12px; line-height: 1.6;">DevOps Lead with 5+ years building AWS infrastructure via Terraform and managing production Kubernetes clusters.<br/><strong>Certifications:</strong> Certified Kubernetes Administrator (CKA), AWS Certified Solutions Architect Associate.</p>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EXPERIENCE</div>
+              <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 13px;"><span>One Mount Group — Senior DevOps Engineer</span><span>2021 - Present</span></div>
+                <p id="quote-devops-p1" style="font-size: 12px; line-height: 1.6; margin-top: 4px;">• Architected and maintained multi-region Kubernetes clusters running 150+ microservices on AWS.<br/>• Authored modular Terraform code managing 100% cloud infrastructure as code.<br/>• Built GitLab CI/CD pipelines reducing deployment time from 45 mins to 8 mins.</p>
+              </div>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EDUCATION</div>
+              <p id="quote-devops-edu" style="font-size: 12px;">Bachelor of Computer Networks and Telecommunications — University of Engineering and Technology (VNU-UET).</p>
+            `,
+            findings: [
+              {
+                critId: "D1",
+                title: "1. Kubernetes & Terraform (Trọng số 35% - Bắt buộc)",
+                status: "strong",
+                badgeText: "STRONG_MATCH",
+                badgeClass: "badge-strong",
+                reason: "5 năm kinh nghiệm quản trị k8s 150+ microservices trên AWS và tự động hóa 100% bằng Terraform.",
+                quote: "Architected and maintained multi-region Kubernetes clusters running 150+ microservices on AWS...",
+                targetId: "quote-devops-p1",
+                page: 1
+              },
+              {
+                critId: "D2",
+                title: "2. Thiết kế Pipeline CI/CD (Trọng số 20% - Bắt buộc)",
+                status: "strong",
+                badgeText: "STRONG_MATCH",
+                badgeClass: "badge-strong",
+                reason: "Xây dựng hệ thống CI/CD trên GitLab giúp rút ngắn thời gian deploy từ 45 phút xuống 8 phút.",
+                quote: "Built GitLab CI/CD pipelines reducing deployment time from 45 mins to 8 mins.",
+                targetId: "quote-devops-p1",
+                page: 1
+              },
+              {
+                critId: "D3",
+                title: "3. Học vấn Đại học CNTT (Trọng số 15% - Bắt buộc)",
+                status: "match",
+                badgeText: "MATCH",
+                badgeClass: "badge-match",
+                reason: "Cử nhân Mạng máy tính & Truyền thông ĐH Công nghệ - ĐHQGHN.",
+                quote: "Bachelor of Computer Networks and Telecommunications — University of Engineering and Technology (VNU-UET).",
+                targetId: "quote-devops-edu",
+                page: 1
+              }
+            ]
           },
           {
-            title: "2. Học vấn CNTT (Trọng số 15% - Bắt buộc)",
-            status: "match",
-            badge: "MATCH (ĐẠT)",
-            reason: "Cử nhân CNTT ĐH Công nghệ (UET) - ĐHQGHN.",
-            quote: "Bachelor of Information Technology — VNU University of Engineering and Technology (UET).",
-            citeTarget: "cite-edu",
-            page: 1
+            id: "CAND-D02",
+            rank: 2,
+            name: "Vũ Minh Hải",
+            subtitle: "2 năm KN DevOps • ĐH Giao thông Vận tải • Điểm: 62.0",
+            group: "NEEDS_VERIFY",
+            groupLabel: "Cần HR Xác minh",
+            groupBadge: "badge-unclear",
+            mustPassRatio: "2 Đạt / 1 Chưa rõ",
+            coverage: 80,
+            coverageLabel: "80% Phủ",
+            score: 62.0,
+            recruitmentStatus: "REVIEWING",
+            internalNote: "Kinh nghiệm k8s thực chiến còn ít, chủ yếu làm việc với Docker compose.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">VU MINH HAI</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: hai.vm.dev@gmail.com</div>
+              <p id="quote-devops-hai1" style="font-size: 12px; line-height: 1.6;">DevOps Junior Engineer with 2 years deploying web services on Linux VPS using Docker Compose and GitHub Actions.</p>
+            `,
+            findings: [
+              {
+                critId: "D1",
+                title: "1. Kubernetes & Terraform (Trọng số 35% - Bắt buộc)",
+                status: "unclear",
+                badgeText: "UNCLEAR",
+                badgeClass: "badge-unclear",
+                reason: "Chưa thấy bằng chứng vận hành cụm k8s production quy mô lớn, chỉ mới làm việc với Docker compose.",
+                quote: "deploying web services on Linux VPS using Docker Compose and GitHub Actions.",
+                targetId: "quote-devops-hai1",
+                page: 1
+              }
+            ]
+          },
+          {
+            id: "CAND-D03",
+            rank: 3,
+            name: "Hoàng Đức Thắng",
+            subtitle: "Helpdesk IT 3 năm • Chuyển hướng học DevOps • Điểm: 38.0",
+            group: "MISMATCH",
+            groupLabel: "Dấu hiệu Miss-match",
+            groupBadge: "badge-nomatch",
+            mustPassRatio: "1 Không đạt",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 38.0,
+            recruitmentStatus: "REJECTED",
+            internalNote: "Chưa có kinh nghiệm thực tế về k8s và Terraform sản xuất.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">HOANG DUC THANG</div>
+              <p id="quote-devops-thang1" style="font-size: 12px;">IT Support / Helpdesk technician specializing in office networks, PC troubleshooting, currently learning Docker.</p>
+            `,
+            findings: [
+              {
+                critId: "D1",
+                title: "1. Kubernetes & Terraform (Trọng số 35% - Bắt buộc)",
+                status: "nomatch",
+                badgeText: "NO_MATCH",
+                badgeClass: "badge-nomatch",
+                reason: "Hồ sơ chuyên môn là IT Support/Helpdesk văn phòng, chưa đáp ứng yêu cầu k8s & IaC.",
+                quote: "IT Support / Helpdesk technician specializing in office networks, PC troubleshooting...",
+                targetId: "quote-devops-thang1",
+                page: 1
+              }
+            ]
           }
         ]
       },
-      {
-        id: "CAND-03",
-        name: "Lê Hoàng Nam",
-        meta: "3 năm KN • Học viện Bưu chính Viễn thông • Điểm: 70.0 (Coverage: 66%)",
-        score: "70.0",
-        cvText: `
-          <div class="cv-header-name">LE HOANG NAM</div>
-          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
-            Email: nam.le@gmail.com | Phone: 0977.112.233
+      'REQ-IT03': {
+        id: 'REQ-IT03',
+        title: 'REQ-2026-IT03: QA Automation Lead',
+        jdTitle: 'Job Description: QA Automation Lead',
+        jdHtml: `
+          <div style="margin-bottom: 16px;">
+            <div style="font-size: 16px; font-weight: 700; color: #0A2B57;">VINUNIVERSITY — INFORMATION TECHNOLOGY DIRECTORATE</div>
+            <div style="font-size: 13px; color: #64748B;">Requisition Code: REQ-2026-IT03 | Level: Lead | Location: Hanoi</div>
           </div>
-          <div class="cv-section-title">WORK HISTORY</div>
-          <p id="cite-p1">Backend Developer at CMC Global working on Python API automation.</p>
-          <div class="cv-section-title">EDUCATION</div>
-          <p id="cite-edu">Studied Telecommunications Engineering at PTIT.</p>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">1. Position Overview</h4>
+          <p>The QA Automation Lead will champion software quality engineering across all digital university platforms, driving automated testing strategies from UI, API to end-to-end integration.</p>
+          <h4 style="color: #0A2B57; margin-top: 14px; margin-bottom: 6px;">2. Mandatory Requirements (Must-Have)</h4>
+          <ul style="padding-left: 20px;">
+            <li><strong>Test Automation:</strong> 4+ years of test automation experience using <strong>Playwright, Cypress, or Selenium</strong> with Python/TypeScript.</li>
+            <li><strong>Strategy & Framework:</strong> Proven ability to architect modular test frameworks from scratch and integrate with CI/CD pipelines.</li>
+            <li><strong>Education:</strong> Bachelor's degree in IT, Software Engineering, or equivalent.</li>
+          </ul>
         `,
-        findings: [
+        criteria: [
+          { id: "Q1", cat: "MUST", name: "Automation Framework (Playwright/Selenium)", desc: "Tối thiểu 4 năm xây dựng framework kiểm thử tự động Web/API", weight: 40, keywords: ["Playwright", "Selenium", "Cypress", "Python", "TypeScript"] },
+          { id: "Q2", cat: "MUST", name: "Thiết kế Chiến lược & Kế hoạch Test", desc: "Khả năng xây dựng Test Plan, Test Case quy mô toàn diện", weight: 20, keywords: ["Test Strategy", "Test Plan", "Architecture"] },
+          { id: "Q3", cat: "MUST", name: "Học vấn Đại học CNTT", desc: "Tốt nghiệp Đại học chuyên ngành CNTT hoặc phần mềm", weight: 15, keywords: ["Bachelor", "IT"] },
+          { id: "Q4", cat: "NICE", name: "Kiểm thử Hiệu năng (Performance/k6)", desc: "Kinh nghiệm stress-test và đo lường tải bằng k6 hoặc JMeter", weight: 15, keywords: ["Performance Testing", "k6", "JMeter"] },
+          { id: "Q5", cat: "NICE", name: "Tích hợp CI/CD & Báo cáo", desc: "Tự động chạy test suite trong pipeline GitLab/GitHub", weight: 10, keywords: ["CI/CD", "Allure Report"] }
+        ],
+        files: [
+          { id: "QF1", name: "Bui_Phuong_Linh_QA_Lead.pdf", type: "PDF (Text)", size: "1.7 MB", status: "OK", label: "Đọc thành công", progress: 100 },
+          { id: "QF2", name: "Do_Tien_Dat_CV.pdf", type: "PDF (Text)", size: "1.1 MB", status: "OK", label: "Đọc thành công", progress: 100 }
+        ],
+        candidates: [
           {
-            title: "1. Học vấn Chuyên ngành CNTT (Trọng số 15% - Bắt buộc)",
-            status: "unclear",
-            badge: "UNCLEAR (CẦN XÁC MINH)",
-            reason: "CV ghi học ngành Kỹ thuật Điện tử Viễn thông, chưa rõ số tín chỉ CNTT có đạt tương đương hay không.",
-            quote: "Studied Telecommunications Engineering at PTIT.",
-            citeTarget: "cite-edu",
-            page: 1
-          }
-        ]
-      },
-      {
-        id: "CAND-04",
-        name: "Phạm Minh Tuấn",
-        meta: "1.5 năm KN • ĐH GTVT • Điểm: 45.0 / 100",
-        score: "45.0",
-        cvText: `
-          <div class="cv-header-name">PHAM MINH TUAN</div>
-          <p>Junior Developer with 1.5 years experience in Python scripting.</p>
-        `,
-        findings: [
+            id: "CAND-Q01",
+            rank: 1,
+            name: "Bùi Phương Linh",
+            subtitle: "6 năm KN QA Automation Lead • ĐH Bách Khoa HN • Điểm: 88.5",
+            group: "MUST_PASS",
+            groupLabel: "Đạt Tiêu chí Bắt buộc",
+            groupBadge: "badge-strong",
+            mustPassRatio: "3/3 ĐẠT",
+            coverage: 100,
+            coverageLabel: "100% Phủ",
+            score: 88.5,
+            recruitmentStatus: "SHORTLIST",
+            internalNote: "Kinh nghiệm Playwright và thiết kế test framework rất vững.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">BUI PHUONG LINH</div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 16px;">Email: linh.bp.qa@gmail.com | Phone: 0915.223.344</div>
+              <p id="quote-qa-linh1" style="font-size: 12px; line-height: 1.6;">QA Automation Lead with 6+ years designing end-to-end testing frameworks using Playwright and Python. Built test suites covering 200+ API endpoints and Web UIs with 95% pass rate in CI pipelines.</p>
+              <div style="font-size: 13px; font-weight: 700; color: #0A2B57; text-transform: uppercase; border-bottom: 1px solid #DDD; margin-top: 14px; margin-bottom: 6px;">EDUCATION</div>
+              <p id="quote-qa-linhedu" style="font-size: 12px;">Bachelor of Information Technology — Hanoi University of Science and Technology (HUST).</p>
+            `,
+            findings: [
+              {
+                critId: "Q1",
+                title: "1. Automation Framework (Trọng số 40% - Bắt buộc)",
+                status: "strong",
+                badgeText: "STRONG_MATCH",
+                badgeClass: "badge-strong",
+                reason: "6 năm chuyên sâu Playwright & Python, thiết kế framework kiểm thử toàn diện.",
+                quote: "QA Automation Lead with 6+ years designing end-to-end testing frameworks using Playwright and Python...",
+                targetId: "quote-qa-linh1",
+                page: 1
+              }
+            ]
+          },
           {
-            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
-            status: "nomatch",
-            badge: "NO_MATCH (CHƯA ĐẠT)",
-            reason: "Yêu cầu tối thiểu 3 năm kinh nghiệm, ứng viên mới tích lũy được 1.5 năm (Junior).",
-            quote: "Junior Developer with 1.5 years experience in Python scripting.",
-            citeTarget: null,
-            page: 1
+            id: "CAND-Q02",
+            rank: 2,
+            name: "Đỗ Tiến Đạt",
+            subtitle: "3 năm Manual QA • Đang học automation • Điểm: 58.0",
+            group: "NEEDS_VERIFY",
+            groupLabel: "Cần HR Xác minh",
+            groupBadge: "badge-unclear",
+            mustPassRatio: "2 Đạt / 1 Chưa rõ",
+            coverage: 75,
+            coverageLabel: "75% Phủ",
+            score: 58.0,
+            recruitmentStatus: "REVIEWING",
+            internalNote: "Chủ yếu có thế mạnh manual testing, kỹ năng code automation cần phỏng vấn thêm.",
+            cvPaperHtml: `
+              <div style="font-size: 20px; font-weight: 700; color: #0A2B57; border-bottom: 2px solid #0A2B57; padding-bottom: 4px; margin-bottom: 8px;">DO TIEN DAT</div>
+              <p id="quote-qa-dat1" style="font-size: 12px;">QA Engineer with 3 years manual test execution, creating test cases, bug reports, and basic script writing.</p>
+            `,
+            findings: [
+              {
+                critId: "Q1",
+                title: "1. Automation Framework (Trọng số 40% - Bắt buộc)",
+                status: "unclear",
+                badgeText: "UNCLEAR",
+                badgeClass: "badge-unclear",
+                reason: "Chưa có kinh nghiệm thực tế làm Test Lead hay xây dựng framework từ đầu.",
+                quote: "QA Engineer with 3 years manual test execution, creating test cases, bug reports...",
+                targetId: "quote-qa-dat1",
+                page: 1
+              }
+            ]
           }
         ]
       }
-    ];
+    };
 
-    // Navigation Tab Switching
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.nav-tab-btn').forEach(el => el.classList.remove('active'));
-      
-      document.getElementById(tabId).classList.add('active');
-      event.currentTarget.classList.add('active');
+    // System State Store
+    const AppState = {
+      currentRequisitionId: 'REQ-IT01',
+      isRubricApproved: true,
+      activeTab: 'criteria',
+      activeModalCandidateId: null,
+      criteria: JSON.parse(JSON.stringify(REQUISITIONS_DATA['REQ-IT01'].criteria)),
+      files: JSON.parse(JSON.stringify(REQUISITIONS_DATA['REQ-IT01'].files)),
+      candidates: JSON.parse(JSON.stringify(REQUISITIONS_DATA['REQ-IT01'].candidates))
+    };
+
+
+    // ========================================================
+    // RENDER FUNCTIONS
+    // ========================================================
+
+    function renderCriteriaList() {
+      const mustList = document.getElementById('must-have-criteria-list');
+      const niceList = document.getElementById('nice-to-have-criteria-list');
+
+      let mustHtml = "";
+      let niceHtml = "";
+      let sumMust = 0;
+      let sumNice = 0;
+
+      AppState.criteria.forEach(c => {
+        const itemHtml = `
+          <div class="crit-card-item">
+            <div class="crit-card-top">
+              <span>${c.name}</span>
+              <div>
+                <input type="number" class="weight-editor-input" value="${c.weight}" onchange="updateCriterionWeight('${c.id}', this.value)"> %
+              </div>
+            </div>
+            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;">${c.desc}</div>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+              ${c.keywords.map(k => `<span style="background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; padding: 1px 6px; border-radius: 3px;">${k}</span>`).join('')}
+            </div>
+          </div>
+        `;
+
+        if (c.cat === 'MUST') {
+          mustHtml += itemHtml;
+          sumMust += c.weight;
+        } else {
+          niceHtml += itemHtml;
+          sumNice += c.weight;
+        }
+      });
+
+      mustList.innerHTML = mustHtml;
+      niceList.innerHTML = niceHtml;
+      document.getElementById('sum-must').innerText = sumMust;
+      document.getElementById('sum-nice').innerText = sumNice;
     }
 
-    // Toast Notification
-    function showToast(message) {
-      const toast = document.getElementById('toastBox');
-      document.getElementById('toastMsg').innerText = message;
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 3000);
-    }
-
-    // Modal Control
-    function openCandidateModal(index) {
-      const candidate = candidatesData[index];
-      if (!candidate) return;
-
-      document.getElementById('modal-candidate-name').innerText = candidate.name + " — Thẩm định Bằng chứng AI";
-      document.getElementById('modal-candidate-meta').innerText = candidate.meta;
-      document.getElementById('modal-score-badge').innerText = "ĐIỂM MATCHING: " + candidate.score;
-      document.getElementById('cv-paper-view').innerHTML = candidate.cvText;
-
-      // Populate findings
+    function renderQueueTable() {
+      const tbody = document.getElementById('file-queue-tbody');
       let html = "";
-      candidate.findings.forEach(f => {
-        let tagClass = "tag-match";
-        if (f.status === "strong") tagClass = "tag-strong";
-        if (f.status === "unclear") tagClass = "tag-unclear";
-        if (f.status === "nomatch") tagClass = "tag-nomatch";
+      AppState.files.forEach(f => {
+        let badgeHtml = `<span class="badge badge-strong">✓ ${f.label}</span>`;
+        if (f.status === 'SCAN_WARN') {
+          badgeHtml = `<span class="badge badge-unclear">⚠️ ${f.label}</span>`;
+        }
 
         html += `
-          <div class="finding-card ${f.status}">
-            <div class="finding-head">
-              <span class="finding-title">${f.title}</span>
-              <span class="tag-level ${tagClass}">${f.badge}</span>
-            </div>
-            <div class="finding-reason">${f.reason}</div>
-            ${f.quote ? `
-              <div class="quote-box">
-                <span>"${f.quote}"</span>
-                ${f.citeTarget ? `<button class="quote-cite-btn" onclick="highlightQuote('${f.citeTarget}')">📍 Xem trang ${f.page}</button>` : ''}
+          <tr>
+            <td><strong>${f.name}</strong></td>
+            <td>${f.type}</td>
+            <td>${f.size}</td>
+            <td>${badgeHtml}</td>
+            <td>
+              <div style="width: 120px; height: 6px; background: #E2E8F0; border-radius: 3px; overflow: hidden;">
+                <div style="width: ${f.progress}%; height: 100%; background: ${f.progress === 100 ? '#067647' : '#B54708'};"></div>
               </div>
-            ` : ''}
-          </div>
+            </td>
+            <td style="text-align: right;">
+              <button class="btn btn-secondary btn-sm" onclick="showToast('Đang mở xem chi tiết xử lý file ${f.name}...')">Chi tiết</button>
+            </td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = html;
+      document.getElementById('file-count-badge').innerText = AppState.files.length + " file";
+    }
+
+    function renderRankingTable(candidateList = AppState.candidates) {
+      const tbody = document.getElementById('ranking-tbody');
+      let html = "";
+
+      candidateList.forEach(cand => {
+        let statusBadge = `<span class="status-tag status-new">MỚI</span>`;
+        if (cand.recruitmentStatus === 'SHORTLIST') statusBadge = `<span class="status-tag status-shortlist">SHORTLIST</span>`;
+        if (cand.recruitmentStatus === 'REVIEWING') statusBadge = `<span class="status-tag status-reviewing">ĐANG XEM</span>`;
+        if (cand.recruitmentStatus === 'REJECTED') statusBadge = `<span class="status-tag status-rejected">BỊ LOẠI SƠ BỘ</span>`;
+
+        let coverageClass = cand.coverage >= 70 ? 'coverage-good' : 'coverage-warn';
+        let covDisplay = cand.coverage > 0 ? `${cand.coverage}% Phủ` : '-';
+        if (cand.coverage > 0 && cand.coverage < 70) covDisplay += ' (Chưa ổn định)';
+
+        html += `
+          <tr class="rank-row" onclick="openCandidateModal('${cand.id}')">
+            <td style="font-weight: 700; color: var(--brand-primary); text-align: center;">${cand.rank !== '-' ? '#' + cand.rank : '-'}</td>
+            <td>
+              <div style="font-weight: 700; color: var(--brand-primary); display: flex; align-items: center; gap: 6px;">
+                ${cand.name}
+                ${cand.rank === 1 ? `<span class="badge badge-strong" style="font-size: 9px; padding: 1px 4px;">Top Pick</span>` : ''}
+              </div>
+              <div style="font-size: 11px; color: var(--text-secondary);">${cand.subtitle}</div>
+            </td>
+            <td><span class="badge ${cand.groupBadge}">${cand.groupLabel}</span></td>
+            <td style="text-align: center; font-weight: 700;">${cand.mustPassRatio}</td>
+            <td style="text-align: center;">
+              <span class="badge ${cand.coverage >= 70 ? 'badge-strong' : 'badge-unclear'}">${covDisplay}</span>
+            </td>
+            <td style="text-align: center;">
+              ${cand.score > 0 ? `<span class="score-number">${cand.score.toFixed(1)} / 100</span>` : '-'}
+            </td>
+            <td>${statusBadge}</td>
+            <td style="text-align: right;">
+              <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openCandidateModal('${cand.id}')">Xem đối soát →</button>
+            </td>
+          </tr>
         `;
       });
 
-      document.getElementById('findings-container').innerHTML = html;
-      document.getElementById('candidateModal').classList.add('open');
+      tbody.innerHTML = html;
+      updateMetricCounters();
     }
 
-    function closeCandidateModal() {
-      document.getElementById('candidateModal').classList.remove('open');
+    function renderCollabShortlist() {
+      const tbody = document.getElementById('collab-shortlist-tbody');
+      const shortlisted = AppState.candidates.filter(c => c.recruitmentStatus === 'SHORTLIST');
+      
+      let html = "";
+      shortlisted.forEach(cand => {
+        html += `
+          <tr>
+            <td>
+              <strong>${cand.name}</strong>
+              <div style="font-size: 11px; color: var(--text-secondary);">${cand.subtitle}</div>
+            </td>
+            <td>Python, FastAPI, PostgreSQL, Microservices</td>
+            <td><span class="score-number">${cand.score.toFixed(1)} / 100</span></td>
+            <td>
+              <span style="color: #067647; font-weight: 700;">★★★★★ Phù hợp cao (Đề xuất phỏng vấn vòng 1)</span>
+            </td>
+            <td>
+              <button class="btn btn-secondary btn-sm" onclick="openCandidateModal('${cand.id}')">Xem chi tiết</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      if (shortlisted.length === 0) {
+        html = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">Chưa có ứng viên nào được chọn vào Shortlist.</td></tr>`;
+      }
+
+      tbody.innerHTML = html;
+      document.getElementById('collab-shortlist-header').innerText = `Danh sách Shortlist gửi thẩm định: ${shortlisted.length} ứng viên`;
+      document.getElementById('shortlist-count-badge').innerText = `${shortlisted.length} Shortlist`;
     }
 
-    // Click citation to highlight text in left pane
-    function highlightQuote(elementId) {
-      const el = document.getElementById(elementId);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('highlight-flash');
-        setTimeout(() => el.classList.remove('highlight-flash'), 2000);
-        showToast("Đã định vị dẫn chứng nguyên văn trên tệp CV gốc!");
+    function updateMetricCounters() {
+      const total = AppState.candidates.length;
+      const pass = AppState.candidates.filter(c => c.group === 'MUST_PASS').length;
+      const unclear = AppState.candidates.filter(c => c.group === 'NEEDS_VERIFY' || c.group === 'FILE_WARN').length;
+      const miss = AppState.candidates.filter(c => c.group === 'MISMATCH').length;
+
+      document.getElementById('metric-total').innerText = total;
+      document.getElementById('metric-pass').innerText = pass;
+      document.getElementById('metric-unclear').innerText = unclear;
+      document.getElementById('metric-miss').innerText = miss;
+      document.getElementById('rank-count-badge').innerText = `${total} ứng viên`;
+    }
+
+    // ========================================================
+    // INTERACTIVE ACTIONS & HANDLERS
+    // ========================================================
+
+    function selectTab(tabKey) {
+      AppState.activeTab = tabKey;
+      document.querySelectorAll('.tab-view-container').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('.nav-tab-item').forEach(el => el.classList.remove('active'));
+
+      document.getElementById(`view-${tabKey}`).style.display = 'block';
+      document.getElementById(`tab-btn-${tabKey}`).classList.add('active');
+
+      if (tabKey === 'collab') {
+        renderCollabShortlist();
       }
     }
 
-    // Human Decision Save
-    function saveCandidateDecision() {
-      const decision = document.getElementById('hr-decision-select').value;
-      let text = "Đã cập nhật trạng thái hồ sơ sang: " + decision;
-      showToast(text);
-      closeCandidateModal();
+    function updateCriterionWeight(critId, newWeight) {
+      const c = AppState.criteria.find(x => x.id === critId);
+      if (c) {
+        c.weight = parseFloat(newWeight) || 0;
+        renderCriteriaList();
+        showToast(`Đã cập nhật trọng số cho: ${c.name}`);
+      }
     }
 
-    // Approve Rubric Simulation
-    function approveRubric() {
-      document.getElementById('btn-approve-rubric').innerText = "✓ Đã Phê Duyệt v1.0";
-      document.getElementById('btn-approve-rubric').classList.remove('btn-primary');
-      document.getElementById('btn-approve-rubric').classList.add('btn-success');
-      showToast("Bộ tiêu chí Rubric v1.0 đã được xác nhận chính thức bởi HR!");
+    function toggleDualApproval() {
+      AppState.isRubricApproved = !AppState.isRubricApproved;
+      const banner = document.getElementById('dual-approval-status-box');
+      const btn = document.getElementById('btn-approve-rubric');
+      const title = document.getElementById('approval-title');
+      const pill = document.getElementById('approval-pill');
+
+      if (AppState.isRubricApproved) {
+        banner.className = 'dual-approval-box';
+        btn.innerText = '✓ Đã Phê duyệt Rubric v1.0';
+        btn.className = 'btn btn-success btn-sm';
+        title.innerHTML = '✓ Trạng thái: Rubric v1.0 đã được phê duyệt chính thức';
+        pill.innerText = 'ĐÃ SẴN SÀNG SÀNG LỌC';
+        pill.className = 'badge badge-strong';
+        showToast('Bộ tiêu chí đã được xác nhận chính thức bởi HR Lead!');
+      } else {
+        banner.className = 'dual-approval-box draft';
+        btn.innerText = 'Xác nhận Phê duyệt Rubric v1.0';
+        btn.className = 'btn btn-primary btn-sm';
+        title.innerHTML = '⚠️ Trạng thái: Đang ở chế độ BẢN NHÁP (Draft) — Cần phê duyệt';
+        pill.innerText = 'BẢN NHÁP CHƯA DUYỆT';
+        pill.className = 'badge badge-unclear';
+        showToast('Chuyển Rubric về trạng thái nháp để chỉnh sửa.');
+      }
     }
 
-    // Simulate Batch Upload
-    function simulateUpload() {
-      showToast("Đang tải lên và chạy OCR giải mã tệp CV mới...");
+    function triggerAiDraftRegen() {
+      showToast('🤖 AI đang phân tích lại JD và tối ưu hóa bộ từ khóa bằng chứng...');
+      setTimeout(() => {
+        showToast('✓ Đã cập nhật xong bộ tiêu chí từ JD tiếng Anh!');
+      }, 1200);
     }
 
-    function changeRequisition() {
-      showToast("Đã chuyển đổi phạm vi Requisition! Đang nạp Rubric và danh sách ứng viên tương ứng.");
+    function handleRealFiles(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        AppState.files.unshift({
+          id: 'F' + (AppState.files.length + 1),
+          name: file.name,
+          type: file.name.endsWith('.pdf') ? 'PDF (Text)' : 'Word DOCX',
+          size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+          status: 'OK',
+          label: 'Đọc thành công',
+          progress: 100
+        });
+      }
+      renderQueueTable();
+      showToast(`Đã tiếp nhận ${fileList.length} tệp CV mới vào hàng đợi!`);
     }
 
-    function filterCandidates(keyword) {
-      const rows = document.querySelectorAll('#candidate-rows tr');
-      rows.forEach(row => {
-        const text = row.innerText.toLowerCase();
-        row.style.display = text.includes(keyword.toLowerCase()) ? '' : 'none';
+    function runAiBatchMatchingSimulation() {
+      const modal = document.getElementById('aiProcessingModal');
+      const title = document.getElementById('ai-process-step-title');
+      const sub = document.getElementById('ai-process-step-sub');
+      modal.classList.add('open');
+
+      const steps = [
+        { t: "1/4. Đang chạy OCR và khử định danh PII nhạy cảm...", s: "Bóc tách cấu trúc kinh nghiệm, học vấn và loại bỏ thông tin tuổi/giới tính..." },
+        { t: "2/4. Nạp Rubric v1.0 và mô hình Qwen 2.5 32B...", s: "Đối chiếu từng tiêu chí theo 4 mức và định vị dẫn chứng nguyên văn..." },
+        { t: "3/4. Kiểm tra tính xác thực của đoạn trích dẫn...", s: "So khớp chuỗi đảm bảo không có ảo giác (No hallucination)..." },
+        { t: "4/4. Tính điểm tất định và xếp hạng ưu tiên...", s: "Ưu tiên tiêu chí bắt buộc trước điểm số tổng hợp..." }
+      ];
+
+      let stepIndex = 0;
+      const interval = setInterval(() => {
+        if (stepIndex < steps.length) {
+          title.innerText = steps[stepIndex].t;
+          sub.innerText = steps[stepIndex].s;
+          stepIndex++;
+        } else {
+          clearInterval(interval);
+          modal.classList.remove('open');
+          showToast('✓ Hoàn tất xử lý Matching AI! Đã cập nhật Bảng Xếp hạng.');
+          selectTab('ranking');
+        }
+      }, 800);
+    }
+
+    function openCandidateModal(candId) {
+      const cand = AppState.candidates.find(c => c.id === candId);
+      if (!cand) return;
+      AppState.activeModalCandidateId = candId;
+
+      document.getElementById('m-candidate-title').innerText = `${cand.name} — Thẩm định Dẫn chứng AI`;
+      document.getElementById('m-candidate-subtitle').innerText = `${cand.subtitle} • Trạng thái: ${cand.groupLabel}`;
+      document.getElementById('m-candidate-score-pill').innerText = cand.score > 0 ? `ĐIỂM: ${cand.score.toFixed(1)} / 100` : 'CHƯA TÍNH ĐIỂM';
+      document.getElementById('m-coverage-indicator').innerText = `Độ phủ bằng chứng: ${cand.coverage}%`;
+      document.getElementById('m-cv-paper').innerHTML = cand.cvPaperHtml;
+      document.getElementById('m-status-select').value = cand.recruitmentStatus;
+      document.getElementById('rejectReasonInput').value = cand.internalNote || '';
+      handleModalStatusChange(cand.recruitmentStatus);
+
+      let findingsHtml = "";
+      if (cand.findings.length === 0) {
+        findingsHtml = `<div style="text-align: center; color: var(--text-muted); padding: 40px;">Tệp scan chưa hoàn tất bóc tách hoặc không đọc được. Cần HR rà soát thủ công.</div>`;
+      } else {
+        cand.findings.forEach(f => {
+          findingsHtml += `
+            <div class="evidence-finding-item ${f.status}">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-weight: 700; color: var(--text-primary); font-size: 13.5px;">${f.title}</span>
+                <span class="badge ${f.badgeClass}">${f.badgeText}</span>
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">${f.reason}</div>
+              ${f.quote ? `
+                <div class="quote-evidence-box">
+                  <span>"${f.quote}"</span>
+                  ${f.targetId ? `<button class="btn-cite-jump" onclick="jumpToEvidence('${f.targetId}')">📍 Xem trang ${f.page}</button>` : ''}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        });
+      }
+
+      document.getElementById('m-findings-list').innerHTML = findingsHtml;
+      document.getElementById('splitVerificationModal').classList.add('open');
+    }
+
+    function closeVerificationModal() {
+      document.getElementById('splitVerificationModal').classList.remove('open');
+      AppState.activeModalCandidateId = null;
+    }
+
+    function jumpToEvidence(targetId) {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('highlight-flash');
+        setTimeout(() => el.classList.remove('highlight-flash'), 2200);
+        showToast('📍 Đã định vị đoạn trích dẫn nguyên văn trong CV gốc!');
+      }
+    }
+
+    function handleModalStatusChange(val) {
+      const rejectBox = document.getElementById('reject-reason-box');
+      if (val === 'REJECTED') {
+        rejectBox.style.display = 'block';
+      } else {
+        rejectBox.style.display = 'none';
+      }
+    }
+
+    function saveCurrentCandidateDecision() {
+      const cand = AppState.candidates.find(c => c.id === AppState.activeModalCandidateId);
+      if (!cand) return;
+
+      const newStatus = document.getElementById('m-status-select').value;
+      const reason = document.getElementById('rejectReasonInput').value;
+
+      if (newStatus === 'REJECTED' && !reason.trim()) {
+        alert('Vui lòng nhập lý do loại ứng viên (theo chuẩn quy định PAC-10 trong PRD)!');
+        return;
+      }
+
+      cand.recruitmentStatus = newStatus;
+      cand.internalNote = reason;
+
+      renderRankingTable();
+      renderCollabShortlist();
+      closeVerificationModal();
+      showToast(`✓ Đã lưu quyết định chính thức cho ứng viên ${cand.name}!`);
+    }
+
+    function handleSearchFilter() {
+      const q = document.getElementById('candidateSearchInput').value.toLowerCase();
+      const filtered = AppState.candidates.filter(c => {
+        return c.name.toLowerCase().includes(q) || c.subtitle.toLowerCase().includes(q);
       });
+      renderRankingTable(filtered);
     }
 
-    function filterByGroup(group) {
-      showToast("Đã lọc theo nhóm: " + group);
+    function handleGroupFilter(val) {
+      if (val === 'ALL') {
+        renderRankingTable(AppState.candidates);
+      } else if (val === 'SHORTLIST') {
+        renderRankingTable(AppState.candidates.filter(c => c.recruitmentStatus === 'SHORTLIST'));
+      } else {
+        renderRankingTable(AppState.candidates.filter(c => c.group === val));
+      }
+      showToast(`Đã lọc danh sách theo nhóm: ${val}`);
     }
+
+    
+
+    function postCollabComment() {
+      const input = document.getElementById('collabCommentInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const thread = document.getElementById('comment-thread-list');
+      const newComment = document.createElement('div');
+      newComment.style.display = 'flex';
+      newComment.style.gap = '10px';
+      newComment.innerHTML = `
+        <div class="user-avatar-circle" style="background: var(--brand-accent);">CT</div>
+        <div style="flex: 1; background: #FFF5F5; border: 1px solid #FEDFDF; padding: 10px 14px; border-radius: 8px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px;">
+            <strong>CuongTV (HR Recruiter)</strong>
+            <span style="color: var(--text-muted);">Vừa xong</span>
+          </div>
+          <div style="font-size: 13px; color: var(--text-primary); margin-top: 4px;">${text}</div>
+        </div>
+      `;
+      thread.appendChild(newComment);
+      input.value = "";
+      showToast('Đã đăng phản hồi trao đổi!');
+    }
+
+    
+    // ========================================================
+    // JD PREVIEW MODAL HANDLERS
+    // ========================================================
+    function openJdModal() {
+      const req = REQUISITIONS_DATA[AppState.currentRequisitionId] || REQUISITIONS_DATA['REQ-IT01'];
+      document.getElementById('jd-modal-title').innerText = `Bản tin Tuyển dụng Gốc (Job Description) — ${req.id}`;
+      document.getElementById('jd-modal-body').innerHTML = req.jdHtml;
+      document.getElementById('jdModal').classList.add('open');
+    }
+
+    function closeJdModal() {
+      document.getElementById('jdModal').classList.remove('open');
+    }
+
+    function handleRequisitionChange(val) {
+      if (!REQUISITIONS_DATA[val]) return;
+      AppState.currentRequisitionId = val;
+      AppState.criteria = JSON.parse(JSON.stringify(REQUISITIONS_DATA[val].criteria));
+      AppState.files = JSON.parse(JSON.stringify(REQUISITIONS_DATA[val].files));
+      AppState.candidates = JSON.parse(JSON.stringify(REQUISITIONS_DATA[val].candidates));
+      AppState.isRubricApproved = true;
+
+      // Update Rubric approval UI
+      const banner = document.getElementById('dual-approval-status-box');
+      const btn = document.getElementById('btn-approve-rubric');
+      const title = document.getElementById('approval-title');
+      const pill = document.getElementById('approval-pill');
+      banner.className = 'dual-approval-box';
+      btn.innerText = '✓ Xác nhận Phê duyệt Rubric v1.0';
+      btn.className = 'btn btn-primary btn-sm';
+      title.innerHTML = '✓ Trạng thái: Rubric v1.0 đã được phê duyệt chính thức';
+      pill.innerText = 'ĐÃ SẴN SÀNG SÀNG LỌC';
+      pill.className = 'badge badge-strong';
+
+      renderCriteriaList();
+      renderQueueTable();
+      renderRankingTable();
+      renderCollabShortlist();
+      showToast(`Đã chuyển phạm vi sang ${REQUISITIONS_DATA[val].title}. Nạp dữ liệu thành công!`);
+    }
+
+    function exportDataExcel() {
+      showToast('Đang kết xuất và tải xuống tệp dữ liệu ứng viên...');
+      const bom = "\uFEFF";
+      const headers = ["Hạng", "Họ và Tên", "Nhóm Đánh giá (AI)", "Tiêu chí Bắt buộc", "Độ phủ Bằng chứng (%)", "Điểm số Matching", "Trạng thái Tuyển dụng (HR)", "Ghi chú nội bộ"];
+      const rows = AppState.candidates.map(c => [
+        c.rank !== '-' ? c.rank : '',
+        `"${c.name}"`,
+        `"${c.groupLabel}"`,
+        `"${c.mustPassRatio}"`,
+        c.coverage,
+        c.score,
+        `"${c.recruitmentStatus}"`,
+        `"${(c.internalNote || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = bom + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `VinUni_HRA_${AppState.currentRequisitionId}_Candidates.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => showToast('✓ Đã tải xuống tệp CSV thành công! Mở tốt trong Microsoft Excel.'), 600);
+    }
+
+
+    function showToast(msg) {
+      const toast = document.getElementById('systemToast');
+      document.getElementById('toastMessageText').innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2800);
+    }
+
+    // Keyboard Shortcuts (J/K navigation)
+    window.addEventListener('keydown', (e) => {
+      if (document.getElementById('splitVerificationModal').classList.contains('open')) {
+        const currIndex = AppState.candidates.findIndex(c => c.id === AppState.activeModalCandidateId);
+        if (e.key === 'j' || e.key === 'ArrowDown') {
+          if (currIndex < AppState.candidates.length - 1) {
+            openCandidateModal(AppState.candidates[currIndex + 1].id);
+          }
+        } else if (e.key === 'k' || e.key === 'ArrowUp') {
+          if (currIndex > 0) {
+            openCandidateModal(AppState.candidates[currIndex - 1].id);
+          }
+        } else if (e.key === 'Escape') {
+          closeVerificationModal();
+        }
+      }
+    });
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      renderCriteriaList();
+      renderQueueTable();
+      renderRankingTable();
+      renderCollabShortlist();
+    });
   </script>
 </body>
 </html>
