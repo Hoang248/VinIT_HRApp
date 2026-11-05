@@ -55,3 +55,47 @@ export interface Application {
   created_at: string;
   updated_at?: string;
 }
+
+export interface RankingItem {
+  rank_number: number | null;
+  application_id: string;
+  candidate_name: string;
+  matching_status: 'NOT_ASSESSED' | 'NEEDS_HR_VERIFICATION' | 'POSSIBLE_MISMATCH' | 'MEETS_MANDATORY';
+  matching_score: number | null;
+  evidence_coverage: number | null;
+  needs_verification: boolean;
+  has_mismatch: boolean;
+}
+
+export interface EvidenceItem {
+  evidence_id: string;
+  verbatim_quote: string;
+  page_number: number;
+  verification_status: string;
+}
+
+export interface CriterionResult {
+  criterion_id: string;
+  criterion_name: string;
+  category: string;
+  outcome: 'STRONG_MATCH' | 'MATCH' | 'UNCLEAR' | 'NO_MATCH';
+  score: number | null;
+  confidence: number | null;
+  reasoning: string | null;
+  requires_verification: boolean;
+  verbatim_quote?: string;
+  page_number?: number;
+  evidence?: EvidenceItem[];
+}
+
+export interface AssessmentDetail {
+  assessment_id: string;
+  position_id: string;
+  application_id: string;
+  matching_status: string;
+  matching_score: number | null;
+  evidence_coverage: number | null;
+  summary: string | null;
+  criterion_results: CriterionResult[];
+}
+
