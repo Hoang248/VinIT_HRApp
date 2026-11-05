@@ -28,6 +28,7 @@ import {
   Tooltip,
   Stack,
   Link as MuiLink,
+  TextField,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -36,12 +37,22 @@ import SortIcon from '@mui/icons-material/Sort';
 import ContentCutIcon from '@mui/icons-material/ContentCut';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
+import ShareIcon from '@mui/icons-material/Share';
+import Checkbox from '@mui/material/Checkbox';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContentText from '@mui/material/DialogContentText';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
+import Autocomplete from '@mui/material/Autocomplete';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { assessmentsApi, operationsApi, applicationsApi } from '@/lib/api';
+import { assessmentsApi, operationsApi, applicationsApi, shortlistApi, usersApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import type { RankingItem } from '@/types';
+import type { RankingItem, UserSummary } from '@/types';
 
 export default function ApplicantsRankingPage() {
   const params = useParams();
@@ -63,19 +74,72 @@ export default function ApplicantsRankingPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Shortlist share dialog state
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [shareRecipient, setShareRecipient] = useState<UserSummary | null>(null);
+  const [shareRecipientQuery, setShareRecipientQuery] = useState('');
+  const [shareRecipientOptions, setShareRecipientOptions] = useState<UserSummary[]>([]);
+  const [shareAllowCv, setShareAllowCv] = useState(false);
+  const [shareSubmitting, setShareSubmitting] = useState(false);
+
   const loadRanking = useCallback(async () => {
     try {
-      const res = await assessmentsApi.getLatestRanking(positionId);
-      setRankingItems(res.data || []);
-      // Counts
-      setAppsNeedingReview((res.data || []).filter((i: RankingItem) =>
-        i.needs_verification && (i.evidence_coverage ?? 0) < 0.7
+      const [rankRes, appsRes] = await Promise.all([
+        assessmentsApi.getLatestRanking(positionId).catch(() => ({ data: [] })),
+        applicationsApi.list(positionId).catch(() => ({ data: [] })),
+      ]);
+      const ranks: RankingItem[] = rankRes.data || [];
+      const apps: any[] = appsRes.data || [];
+
+      // Merge ranking with application flags
+      const appMap = new Map<string, any>();
+      apps.forEach((a: any) => appMap.set(a.application_id, a));
+      const merged = ranks.map((r: RankingItem) => {
+        const a = appMap.get(r.application_id) || {};
+        return {
+          ...r,
+          file_processing_status: a.file_processing_status,
+          file_error: a.file_error,
+          has_duplicate_warning: a.has_duplicate_warning,
+          application_status: a.application_status,
+          is_shortlisted: a.application_status === 'SHORTLIST',
+        };
+      });
+
+      // Add unassessed applications to list (if they exist in apps response but not ranks)
+      const rankedIds = new Set(merged.map(r => r.application_id));
+      apps.forEach((a: any) => {
+        if (!rankedIds.has(a.application_id)) {
+          const identity = a.identity;
+          let name = 'Chưa trích xuất tên';
+          if (Array.isArray(identity) && identity[0]) name = identity[0].display_name || name;
+          else if (identity && typeof identity === 'object') name = identity.display_name || name;
+          merged.push({
+            application_id: a.application_id,
+            candidate_name: name,
+            rank_number: null,
+            matching_status: 'NOT_ASSESSED' as const,
+            matching_score: null,
+            evidence_coverage: null,
+            needs_verification: false,
+            has_mismatch: false,
+            file_processing_status: a.file_processing_status,
+            file_error: a.file_error,
+            has_duplicate_warning: a.has_duplicate_warning,
+            application_status: a.application_status,
+            is_shortlisted: a.application_status === 'SHORTLIST',
+          });
+        }
+      });
+
+      setRankingItems(merged);
+      setAppsNeedingReview(merged.filter((i) =>
+        (i.needs_verification && (i.evidence_coverage ?? 0) < 0.7) || i.file_processing_status === 'NEEDS_HR_REVIEW'
       ).length);
-      setDuplicateCount((res.data || []).filter((i: RankingItem) => i.has_mismatch).length);
+      setDuplicateCount(merged.filter((i) => i.has_mismatch || i.has_duplicate_warning).length);
     } catch (err: any) {
-      if (err.response?.status !== 404) {
-        setError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
-      }
+      setError(err.response?.data?.detail || 'Không thể tải bảng xếp hạng');
     } finally {
       setLoading(false);
     }
@@ -133,6 +197,84 @@ export default function ApplicantsRankingPage() {
     }
   };
 
+  // Recipient search for shortlist share dialog
+  useEffect(() => {
+    if (!shareDialogOpen) return;
+    if (shareRecipientQuery.length < 1) {
+      setShareRecipientOptions([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await usersApi.list({ search: shareRecipientQuery, position_id: positionId });
+        setShareRecipientOptions(res.data || []);
+      } catch {
+        setShareRecipientOptions([]);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [shareRecipientQuery, shareDialogOpen, positionId]);
+
+  const handleToggleSelect = (appId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    const visibleIds = filteredItems.filter(i => i.is_shortlisted).map(i => i.application_id);
+    const allSelected = visibleIds.every(id => selectedIds.has(id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) visibleIds.forEach(id => next.delete(id));
+      else visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+  };
+
+  const handleOpenShare = () => {
+    // Pre-select shortlisted items
+    const shortlisted = rankingItems.filter(i => i.is_shortlisted).map(i => i.application_id);
+    setSelectedIds(new Set(shortlisted));
+    setShareDialogOpen(true);
+  };
+
+  const handleShareSubmit = async () => {
+    if (!shareRecipient || selectedIds.size === 0) return;
+    try {
+      setShareSubmitting(true);
+      await shortlistApi.create({
+        position_id: positionId,
+        shared_with_user_id: shareRecipient.user_id,
+        application_ids: Array.from(selectedIds),
+        note: '',
+        allow_cv_view: shareAllowCv,
+      });
+      setShareDialogOpen(false);
+      setShareRecipient(null);
+      setShareRecipientQuery('');
+      setSelectedIds(new Set());
+      setShareAllowCv(false);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Không thể chia sẻ shortlist');
+    } finally {
+      setShareSubmitting(false);
+    }
+  };
+
+  const handleToggleShortlist = async (appId: string, currentlyShortlisted: boolean) => {
+    const newStatus = currentlyShortlisted ? 'IN_REVIEW' : 'SHORTLIST';
+    try {
+      await applicationsApi.updateStatus(appId, newStatus);
+      await loadRanking();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Không thể cập nhật trạng thái');
+    }
+  };
+
   const filteredItems = rankingItems.filter(item => {
     if (filterStatus !== 'ALL' && item.matching_status !== filterStatus) return false;
     if (searchQuery && !item.candidate_name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
@@ -186,6 +328,14 @@ export default function ApplicantsRankingPage() {
             sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
           >
             Làm mới
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<ShareIcon />}
+            onClick={handleOpenShare}
+            sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
+          >
+            Chia sẻ Shortlist
           </Button>
           <Button
             variant="contained"
@@ -315,18 +465,27 @@ export default function ApplicantsRankingPage() {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell width="80">Thứ hạng</TableCell>
+              <TableCell padding="checkbox" width="40">
+                <Checkbox
+                  checked={filteredItems.filter(i => i.is_shortlisted).length > 0 && filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
+                  indeterminate={selectedIds.size > 0 && !filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
+                  onChange={handleSelectAllVisible}
+                  disabled={filteredItems.filter(i => i.is_shortlisted).length === 0}
+                />
+              </TableCell>
+              <TableCell width="70">Thứ hạng</TableCell>
               <TableCell>Ứng viên</TableCell>
-              <TableCell width="160">Nhóm matching</TableCell>
-              <TableCell width="120" align="center">Điểm matching</TableCell>
-              <TableCell width="170">Độ phủ bằng chứng</TableCell>
-              <TableCell width="120" align="right">Thao tác</TableCell>
+              <TableCell width="170">Nhóm matching</TableCell>
+              <TableCell width="110" align="center">Điểm</TableCell>
+              <TableCell width="160">Độ phủ</TableCell>
+              <TableCell width="100" align="center">Shortlist</TableCell>
+              <TableCell width="100" align="right">Xem</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredItems.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+                <TableCell colSpan={8} align="center" sx={{ py: 8, color: 'text.secondary' }}>
                   {rankingItems.length === 0
                     ? 'Chưa có hồ sơ nào được đánh giá. Tải CV lên và nhấn "Chạy đánh giá & xếp hạng" để xem danh sách.'
                     : 'Không có hồ sơ nào phù hợp bộ lọc.'}
@@ -334,7 +493,14 @@ export default function ApplicantsRankingPage() {
               </TableRow>
             ) : (
               filteredItems.map((item) => (
-                <TableRow key={item.application_id} hover>
+                <TableRow key={item.application_id} hover selected={selectedIds.has(item.application_id)}>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={selectedIds.has(item.application_id)}
+                      disabled={!item.is_shortlisted && item.matching_status !== 'MEETS_MANDATORY'}
+                      onChange={() => handleToggleSelect(item.application_id)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Typography
                       variant="h4"
@@ -352,18 +518,32 @@ export default function ApplicantsRankingPage() {
                       {item.candidate_name || 'Chưa trích xuất tên'}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
-                      {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && (
+                      {item.file_processing_status === 'NEEDS_HR_REVIEW' && (
+                        <Chip
+                          label="Cần HR xử lý CV"
+                          size="small"
+                          icon={<ErrorOutlineIcon fontSize="small" />}
+                          sx={{ height: 20, fontSize: 10, backgroundColor: '#FECDCA', color: '#B42318' }}
+                        />
+                      )}
+                      {item.has_duplicate_warning && (
+                        <Chip
+                          label="Hồ sơ trùng lặp"
+                          size="small"
+                          icon={<ErrorOutlineIcon fontSize="small" />}
+                          sx={{ height: 20, fontSize: 10, backgroundColor: '#FEF0C7', color: '#B54708' }}
+                        />
+                      )}
+                      {item.needs_verification && (item.evidence_coverage ?? 0) < 0.7 && !item.has_duplicate_warning && item.file_processing_status !== 'NEEDS_HR_REVIEW' && (
                         <Chip
                           label="Độ phủ bằng chứng thấp"
                           size="small"
                           icon={<ErrorOutlineIcon fontSize="small" />}
-                          sx={{
-                            height: 20,
-                            fontSize: 10,
-                            backgroundColor: '#FFFAEB',
-                            color: '#B54708',
-                          }}
+                          sx={{ height: 20, fontSize: 10, backgroundColor: '#FFFAEB', color: '#B54708' }}
                         />
+                      )}
+                      {item.file_processing_status === 'PROCESSING' && (
+                        <Chip label="Đang xử lý" size="small" sx={{ height: 20, fontSize: 10 }} />
                       )}
                     </Box>
                   </TableCell>
@@ -409,6 +589,20 @@ export default function ApplicantsRankingPage() {
                       </Typography>
                     </Box>
                   </TableCell>
+                  <TableCell align="center">
+                    <Tooltip title={item.is_shortlisted ? "Bỏ shortlist" : "Thêm vào Shortlist"}>
+                      <IconButton
+                        color={item.is_shortlisted ? "secondary" : "default"}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleToggleShortlist(item.application_id, !!item.is_shortlisted);
+                        }}
+                        size="small"
+                      >
+                        <ContentCutIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Xem chi tiết & đối chiếu bằng chứng">
                       <IconButton
@@ -426,6 +620,85 @@ export default function ApplicantsRankingPage() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Shortlist Share Dialog */}
+      <Dialog open={shareDialogOpen} onClose={() => !shareSubmitting && setShareDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Chia sẻ Shortlist cho Hiring Manager</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Chọn người nhận và danh sách ứng viên shortlist để chia sẻ. Người nhận sẽ nhận được thông báo trong hệ thống.
+          </DialogContentText>
+          <Autocomplete
+            options={shareRecipientOptions}
+            getOptionLabel={(opt: any) => opt.display_name || ''}
+            isOptionEqualToValue={(opt: any, val: any) => opt.user_id === val?.user_id}
+            inputValue={shareRecipientQuery}
+            onInputChange={(_, val) => setShareRecipientQuery(val)}
+            value={shareRecipient}
+            onChange={(_, val) => setShareRecipient(val as UserSummary | null)}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Chọn người nhận (gõ tên để tìm)"
+                margin="normal"
+                fullWidth
+                required
+              />
+            )}
+          />
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Ứng viên được chia sẻ ({selectedIds.size})
+            </Typography>
+            <Box sx={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #F2F4F7', borderRadius: 1, p: 1 }}>
+              {rankingItems.filter(i => selectedIds.has(i.application_id)).map(i => (
+                <Box key={i.application_id} sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  py: 0.75,
+                  px: 1,
+                  borderRadius: 1,
+                  '&:hover': { backgroundColor: '#F9FAFB' }
+                }}>
+                  <Typography variant="body2">{i.candidate_name}</Typography>
+                  <Chip
+                    size="small"
+                    label={i.matching_status === 'MEETS_MANDATORY' ? 'Đáp ứng' : 'Cần xem xét'}
+                    color={i.matching_status === 'MEETS_MANDATORY' ? 'success' : 'warning'}
+                  />
+                </Box>
+              ))}
+              {selectedIds.size === 0 && (
+                <Typography variant="caption" color="text.secondary">
+                  Chưa chọn ứng viên nào. Hãy đánh dấu vào ô chọn ứng viên shortlist.
+                </Typography>
+              )}
+            </Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={shareAllowCv}
+                  onChange={(e) => setShareAllowCv(e.target.checked)}
+                />
+              }
+              label="Cho phép người nhận xem/n tải file CV gốc"
+              sx={{ mt: 2 }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShareDialogOpen(false)} disabled={shareSubmitting}>Hủy</Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={handleShareSubmit}
+            disabled={!shareRecipient || selectedIds.size === 0 || shareSubmitting}
+          >
+            {shareSubmitting ? 'Đang gửi...' : 'Chia sẻ'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

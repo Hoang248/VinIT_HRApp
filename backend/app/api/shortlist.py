@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel
 from app.core.security import get_current_user
 from app.core.logging import get_logger
 from app.core.exceptions import NotFoundError
+from app.core.permissions import check_position_access
 from app.db.supabase import get_supabase_client
 
 router = APIRouter()
@@ -22,6 +23,100 @@ class CreateShortlistShareRequest(BaseModel):
 class ShortlistFeedbackRequest(BaseModel):
     application_id: Optional[UUID] = None
     content: str
+
+
+@router.get("/potential-recipients/{position_id}")
+async def get_potential_recipients(
+    position_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """List users who can receive shortlist shares for a position (HIRING_MANAGER assigned)."""
+    await check_position_access(position_id, current_user)
+    supabase = get_supabase_client()
+    position_id_str = str(position_id)
+
+    # Get HIRING_MANAGER assignments for this position, plus their profiles
+    result = supabase.table("position_assignments")\
+        .select("user_id, position_role, profile: user_profiles(display_name, preferred_locale)")\
+        .eq("position_id", position_id_str)\
+        .eq("position_role", "HIRING_MANAGER")\
+        .is_("revoked_at", "null")\
+        .execute()
+
+    recipients = []
+    for row in (result.data or []):
+        profile = row.get("profile") or {}
+        recipients.append({
+            "user_id": row["user_id"],
+            "display_name": profile.get("display_name") or "Hiring Manager",
+            "role": row["position_role"],
+        })
+
+    # Also allow sharing back to HR_RECRUITERS on the position
+    hr_result = supabase.table("position_assignments")\
+        .select("user_id, position_role, profile: user_profiles(display_name)")\
+        .eq("position_id", position_id_str)\
+        .eq("position_role", "HR_RECRUITER")\
+        .is_("revoked_at", "null")\
+        .neq("user_id", current_user["user_id"])\
+        .execute()
+
+    for row in (hr_result.data or []):
+        profile = row.get("profile") or {}
+        recipients.append({
+            "user_id": row["user_id"],
+            "display_name": profile.get("display_name") or "HR Recruiter",
+            "role": row["position_role"],
+        })
+
+    return recipients
+
+
+@router.get("/shortlisted-applications/{position_id}")
+async def list_shortlisted_applications(
+    position_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """List applications currently in SHORTLIST status for a position (to share with HM)."""
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
+    supabase = get_supabase_client()
+    position_id_str = str(position_id)
+
+    result = supabase.table("applications")\
+        .select(
+            "application_id, application_status, created_at, "
+            "identity: application_identities(display_name), "
+            "latest_assessment: assessment_runs(matching_status, matching_score, evidence_coverage)"
+        )\
+        .eq("position_id", position_id_str)\
+        .eq("application_status", "SHORTLIST")\
+        .order("created_at", desc=True)\
+        .execute()
+
+    apps = []
+    for a in (result.data or []):
+        assessments = a.get("latest_assessment", [])
+        latest = None
+        if isinstance(assessments, list) and assessments:
+            completed = [x for x in assessments if x.get("status") == "COMPLETED"]
+            if completed:
+                latest = sorted(completed, key=lambda x: x.get("created_at", ""))[-1]
+        identity = a.get("identity")
+        display_name = None
+        if isinstance(identity, list) and identity:
+            display_name = identity[0].get("display_name")
+        elif isinstance(identity, dict):
+            display_name = identity.get("display_name")
+        apps.append({
+            "application_id": a["application_id"],
+            "candidate_name": display_name or "Chưa có tên",
+            "application_status": a["application_status"],
+            "matching_status": latest.get("matching_status") if latest else None,
+            "matching_score": latest.get("matching_score") if latest else None,
+            "evidence_coverage": latest.get("evidence_coverage") if latest else None,
+        })
+
+    return apps
 
 
 @router.post("/share", status_code=status.HTTP_201_CREATED)

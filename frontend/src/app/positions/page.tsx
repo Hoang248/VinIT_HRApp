@@ -24,15 +24,15 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  DialogContentText,
+  Autocomplete,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { positionsApi } from '@/lib/api';
+import { positionsApi, usersApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import { Position } from '@/types';
+import { Position, UserSummary } from '@/types';
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -46,7 +46,12 @@ export default function PositionsPage() {
     title: '',
     org_unit: '',
     jd_content: '',
+    hiring_manager_user_id: '',
   });
+  const [hmSearchQuery, setHmSearchQuery] = useState('');
+  const [hmOptions, setHmOptions] = useState<UserSummary[]>([]);
+  const [hmLoading, setHmLoading] = useState(false);
+  const [hmSelectedName, setHmSelectedName] = useState('');
 
   useEffect(() => {
     loadPositions();
@@ -67,9 +72,14 @@ export default function PositionsPage() {
   const handleCreatePosition = async () => {
     try {
       setCreateLoading(true);
-      await positionsApi.create(formData);
+      const payload = { ...formData };
+      if (!payload.hiring_manager_user_id) delete (payload as any).hiring_manager_user_id;
+      await positionsApi.create(payload);
       setCreateDialogOpen(false);
-      setFormData({ position_code: '', title: '', org_unit: '', jd_content: '' });
+      setFormData({ position_code: '', title: '', org_unit: '', jd_content: '', hiring_manager_user_id: '' });
+      setHmSelectedName('');
+      setHmSearchQuery('');
+      setHmOptions([]);
       await loadPositions();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Không thể tạo vị trí mới');
@@ -77,6 +87,28 @@ export default function PositionsPage() {
       setCreateLoading(false);
     }
   };
+
+  // HM search
+  useEffect(() => {
+    if (!createDialogOpen) return;
+    const q = hmSearchQuery.trim();
+    if (q.length < 1) {
+      setHmOptions([]);
+      return;
+    }
+    setHmLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await usersApi.list({ search: q });
+        setHmOptions(res.data || []);
+      } catch {
+        setHmOptions([]);
+      } finally {
+        setHmLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [hmSearchQuery, createDialogOpen]);
 
   const getPositionStatusBadge = (status: string) => {
     switch (status) {
@@ -266,6 +298,44 @@ export default function PositionsPage() {
                 value={formData.org_unit}
                 onChange={(e) => setFormData({ ...formData, org_unit: e.target.value })}
                 placeholder="Phòng Công nghệ thông tin"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                freeSolo
+                options={hmOptions}
+                loading={hmLoading}
+                getOptionLabel={(opt: any) => typeof opt === 'string' ? opt : opt.display_name || ''}
+                isOptionEqualToValue={(opt: any, val: any) => opt.user_id === val?.user_id}
+                inputValue={hmSearchQuery}
+                onInputChange={(_, val) => setHmSearchQuery(val)}
+                value={formData.hiring_manager_user_id ? { user_id: formData.hiring_manager_user_id, display_name: hmSelectedName } : null}
+                onChange={(_, val: any) => {
+                  if (val && typeof val === 'object') {
+                    setFormData({ ...formData, hiring_manager_user_id: val.user_id });
+                    setHmSelectedName(val.display_name);
+                  } else {
+                    setFormData({ ...formData, hiring_manager_user_id: '' });
+                    setHmSelectedName('');
+                  }
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Hiring Manager (tùy chọn)"
+                    placeholder="Tìm theo tên người dùng..."
+                    helperText="Nếu chọn, người này sẽ tự động được gán vai trò HIRING_MANAGER cho vị trí"
+                    InputProps={{
+                      ...params.InputProps,
+                      endAdornment: (
+                        <>
+                          {hmLoading ? <CircularProgress size={16} /> : null}
+                          {params.InputProps.endAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
               />
             </Grid>
             <Grid item xs={12}>

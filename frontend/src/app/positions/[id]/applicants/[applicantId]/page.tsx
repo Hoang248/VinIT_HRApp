@@ -111,7 +111,16 @@ export default function ApplicantDetailPage() {
 
   const jumpToPage = (page: number) => {
     setSelectedPage(page);
-    // Scroll PDF viewer to page (implementation will depend on PDF.js integration)
+    // Try to navigate native PDF viewer iframe via #page=N anchor (Chrome/Edge/FF support)
+    if (cvUrl) {
+      const iframe = document.getElementById('cv-pdf-viewer') as HTMLIFrameElement | null;
+      if (iframe) {
+        try {
+          const sep = cvUrl.includes('#') ? '&' : '#';
+          iframe.src = `${cvUrl}${sep}page=${page}`;
+        } catch (_) { /* ignore */ }
+      }
+    }
   };
 
   if (loading) {
@@ -141,16 +150,41 @@ export default function ApplicantDetailPage() {
         Quay lại danh sách xếp hạng
       </Button>
 
+      {/* Warnings */}
+      {(application.file_processing_status === 'NEEDS_HR_REVIEW' || application.has_duplicate_warning) && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2, border: '1px solid #FEDF89' }}
+        >
+          {application.file_processing_status === 'NEEDS_HR_REVIEW' && (
+            <Typography variant="body2">
+              <strong>CV cần được HR xem lại:</strong> {application.file_error || 'File CV có vấn đề (lỗi xử lý, định dạng quét/OCR cần thiết, hoặc bị mã hóa).'}
+            </Typography>
+          )}
+          {application.has_duplicate_warning && (
+            <Typography variant="body2" sx={{ mt: application.file_processing_status === 'NEEDS_HR_REVIEW' ? 0.5 : 0 }}>
+              <strong>Cảnh báo trùng lặp:</strong> Phát hiện hồ sơ có thể đã tồn tại trong hệ thống. Vui lòng kiểm tra lại trước khi đưa ra quyết định.
+            </Typography>
+          )}
+        </Alert>
+      )}
+
       {/* Applicant Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
         <Box>
           <Typography variant="h1" sx={{ fontSize: 24, color: '#0A2B57', mb: 0.5 }}>
             {application.identity?.display_name || 'Hồ sơ ứng viên'}
           </Typography>
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary" fontFamily="monospace">
               ID: {application.application_id.slice(0, 8)}...
             </Typography>
+            {application.file_processing_status === 'PROCESSING' && (
+              <Chip label="Đang xử lý CV" size="small" />
+            )}
+            {application.has_duplicate_warning && (
+              <Chip label="Hồ sơ trùng lặp" size="small" sx={{ backgroundColor: '#FEF0C7', color: '#B54708' }} />
+            )}
             {assessment && (
               <>
                 {assessment.matching_status === 'MEETS_MANDATORY' && (
@@ -430,7 +464,8 @@ export default function ApplicantDetailPage() {
               {cvUrl ? (
                 <Box sx={{ height: '100%', backgroundColor: '#525659', padding: 2 }}>
                   <iframe
-                    src={cvUrl}
+                    id="cv-pdf-viewer"
+                    src={`${cvUrl}#page=${selectedPage}`}
                     width="100%"
                     height="100%"
                     style={{ border: 'none', backgroundColor: 'white' }}

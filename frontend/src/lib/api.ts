@@ -98,10 +98,19 @@ export const assessmentsApi = {
     apiClient.get(`/assessments/ranking/latest/${positionId}`),
 };
 
+export const usersApi = {
+  list: (params?: { search?: string; position_id?: string }) =>
+    apiClient.get('/users', { params }),
+};
+
 export const shortlistApi = {
   create: (data: any) => apiClient.post('/shortlist/share', data),
   getSharedWithMe: () => apiClient.get('/shortlist/shared-with-me'),
   getDetail: (id: string) => apiClient.get(`/shortlist/${id}`),
+  getPotentialRecipients: (positionId: string) =>
+    apiClient.get(`/shortlist/potential-recipients/${positionId}`),
+  getShortlistedApps: (positionId: string) =>
+    apiClient.get(`/shortlist/shortlisted-applications/${positionId}`),
   addFeedback: (id: string, content: string, applicationId?: string) =>
     apiClient.post(`/shortlist/${id}/feedback`, { content, application_id: applicationId }),
   revoke: (id: string) => apiClient.post(`/shortlist/${id}/revoke`),

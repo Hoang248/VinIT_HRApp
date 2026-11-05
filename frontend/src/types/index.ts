@@ -65,6 +65,18 @@ export interface RankingItem {
   evidence_coverage: number | null;
   needs_verification: boolean;
   has_mismatch: boolean;
+  file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';
+  file_error?: string;
+  has_duplicate_warning?: boolean;
+  is_shortlisted?: boolean;
+  application_status?: string;
+}
+
+export interface UserSummary {
+  user_id: string;
+  display_name: string;
+  position_roles?: string[];
+  system_roles?: string[];
 }
 
 export interface EvidenceItem {
@@ -105,6 +117,9 @@ export interface ApplicationWithAssessment {
     phone?: string;
   };
   latest_assessment?: AssessmentDetail | null;
+  file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';
+  file_error?: string | null;
+  has_duplicate_warning?: boolean;
   documents?: Array<{
     document_id: string;
     document_type: string;

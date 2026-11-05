@@ -33,6 +33,10 @@ class PositionBase(BaseSchema):
 
 class PositionCreate(PositionBase):
     jd_content: str = Field(..., description="Job Description text content in English")
+    hiring_manager_user_id: Optional[UUID] = Field(
+        None,
+        description="User ID of the Hiring Manager responsible for this position (will auto-assign HIRING_MANAGER role)"
+    )
 
 
 class PositionUpdate(BaseSchema):

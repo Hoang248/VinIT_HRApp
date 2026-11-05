@@ -287,20 +287,54 @@ async def list_applications(
 
     applications = result.data or []
 
-    # Enrich with latest assessment for each application
+    # Enrich with latest assessment for each application, plus duplicate/error flags
     for app in applications:
         assessments = app.get("latest_assessment", [])
         if isinstance(assessments, list) and assessments:
-            # Get most recent completed assessment
             completed = [a for a in assessments if a.get("status") == "COMPLETED"]
             if completed:
                 app["latest_assessment"] = sorted(completed, key=lambda x: x.get("created_at", ""))[-1]
             else:
                 app["latest_assessment"] = None
         elif not isinstance(assessments, list):
-            pass  # Already a single object
+            pass
         else:
             app["latest_assessment"] = None
+
+        # Flag for files needing HR review (PROCESSING_ERROR or NEEDS_REVIEW)
+        docs = app.get("documents", [])
+        if isinstance(docs, list):
+            app["file_processing_status"] = "COMPLETED"
+            for d in docs:
+                status_d = d.get("file_processing_status", "")
+                if status_d in ("ERROR_UNSUPPORTED", "NEEDS_HR_REVIEW") or d.get("processing_error"):
+                    app["file_processing_status"] = "NEEDS_HR_REVIEW"
+                    app["file_error"] = d.get("processing_error") or f"File {status_d}"
+                    break
+                if status_d in ("RECEIVED", "PROCESSING"):
+                    app["file_processing_status"] = "PROCESSING"
+        else:
+            app["file_processing_status"] = "UNKNOWN"
+
+    # Enrich with duplicate signals (at least one PENDING duplicate for any of these apps)
+    if applications:
+        app_ids = [a["application_id"] for a in applications]
+        try:
+            dup_result = supabase.table("duplicate_signals")\
+                .select("application_id_1, application_id_2")\
+                .eq("position_id", str(position_id))\
+                .in_("application_id_1", app_ids)\
+                .eq("review_status", "PENDING")\
+                .execute()
+            dup_ids = set()
+            for d in (dup_result.data or []):
+                dup_ids.add(d["application_id_1"])
+                dup_ids.add(d["application_id_2"])
+            for app in applications:
+                app["has_duplicate_warning"] = app["application_id"] in dup_ids
+        except Exception:
+            for app in applications:
+                app["has_duplicate_warning"] = False
 
     return applications
 
@@ -338,6 +372,28 @@ async def get_application(
         raise NotFoundError("Application")
 
     app_data = result.data
+
+    # Enrich file_processing_status
+    docs = app_data.get("documents", []) or []
+    fps = "UNKNOWN"
+    file_error = None
+    if docs:
+        if any(d.get("file_processing_status") == "PROCESSING" for d in docs):
+            fps = "PROCESSING"
+        elif any(d.get("file_processing_status") == "NEEDS_HR_REVIEW" for d in docs):
+            fps = "NEEDS_HR_REVIEW"
+            for d in docs:
+                if d.get("file_processing_status") == "NEEDS_HR_REVIEW":
+                    file_error = d.get("metadata", {}).get("error") or d.get("file_error")
+                    break
+        elif any(d.get("file_processing_status") == "COMPLETED" for d in docs):
+            fps = "COMPLETED"
+    app_data["file_processing_status"] = fps
+    app_data["file_error"] = file_error
+
+    # Duplicate warning
+    identity = app_data.get("identity") or []
+    app_data["has_duplicate_warning"] = bool(identity and (identity[0].get("identity_match_confidence") or 0) > 0) if isinstance(identity, list) else False
 
     # Sort assessments by date, get latest completed
     assessments = app_data.get("assessments", [])

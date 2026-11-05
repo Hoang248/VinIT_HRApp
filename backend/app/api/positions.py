@@ -43,8 +43,8 @@ async def create_position(
     supabase = get_supabase_client()
     user_id = current_user["user_id"]
 
-    # Insert position
-    position_dict = position_data.model_dump(exclude={"jd_content"})
+    # Insert position (exclude jd_content and hiring_manager_user_id which are not columns)
+    position_dict = position_data.model_dump(exclude={"jd_content", "hiring_manager_user_id"})
     position_dict["created_by"] = user_id
     position_dict["status"] = PositionStatus.OPEN.value
 
@@ -64,7 +64,42 @@ async def create_position(
         "created_by": user_id
     }).execute()
 
-    logger.info("Position created", position_id=position_id, created_by=user_id)
+    # Auto-assign creator as HR_RECRUITER on the position
+    supabase.table("position_assignments").insert({
+        "position_id": position_id,
+        "user_id": user_id,
+        "position_role": "HR_RECRUITER",
+        "assigned_by": user_id
+    }).execute()
+
+    # If hiring_manager_user_id was provided, assign them as HIRING_MANAGER
+    if position_data.hiring_manager_user_id:
+        hm_id = str(position_data.hiring_manager_user_id)
+        # Verify the user exists (has a profile)
+        profile_check = supabase.table("user_profiles").select("user_id").eq("user_id", hm_id).execute()
+        if profile_check.data:
+            supabase.table("position_assignments").insert({
+                "position_id": position_id,
+                "user_id": hm_id,
+                "position_role": "HIRING_MANAGER",
+                "assigned_by": user_id
+            }).execute()
+            # Ensure user has HIRING_MANAGER system role if not already
+            supabase.table("user_role_assignments").upsert({
+                "user_id": hm_id,
+                "role_code": "HIRING_MANAGER",
+                "granted_by": user_id,
+                "granted_at": "now()",
+            }, on_conflict="user_id,role_code").execute()
+        else:
+            logger.warning("Hiring manager user_id not found in profiles", user_id=hm_id)
+
+    logger.info(
+        "Position created",
+        position_id=position_id,
+        created_by=user_id,
+        hiring_manager=str(position_data.hiring_manager_user_id) if position_data.hiring_manager_user_id else None
+    )
     return new_position
 
 
