@@ -8,7 +8,6 @@ from app.schemas.criteria import (
     CriteriaVersion,
     CriteriaVersionCreate,
     Criterion,
-    GenerateCriteriaRequest,
     ApprovalAction,
     CriteriaApprovalRequest
 )
@@ -57,15 +56,15 @@ async def get_criteria_version(
     return result.data
 
 
-@router.post("/generate", response_model=CriteriaVersion, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/generate/{position_id}", response_model=CriteriaVersion, status_code=status.HTTP_202_ACCEPTED)
 async def generate_criteria_from_jd(
-    request: GenerateCriteriaRequest,
+    position_id: UUID,
     current_user: dict = Depends(get_current_user)
 ):
-    """Trigger AI to generate draft criteria from JD content"""
+    """Trigger AI to generate draft criteria from the latest JD of the position"""
     supabase = get_supabase_client()
     user_id = current_user["user_id"]
-    position_id_str = str(request.position_id)
+    position_id_str = str(position_id)
 
     # Verify position exists
     pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
@@ -73,6 +72,8 @@ async def generate_criteria_from_jd(
         raise NotFoundError("Position")
 
     position = pos_result.data
+
+    # TODO: Check if user has HR_RECRUITER or HIRING_MANAGER assignment on this position
 
     # Get latest JD version
     jd_result = supabase.table("jd_versions")\
@@ -83,8 +84,9 @@ async def generate_criteria_from_jd(
         .execute()
 
     if not jd_result.data:
-        raise HTTPException(status_code=400, detail="No JD found for this position")
+        raise HTTPException(status_code=400, detail="No JD found for this position. Please create position with JD content first.")
     latest_jd = jd_result.data[0]
+    jd_content = latest_jd["content_text"]
 
     # Get next version number
     existing_versions = supabase.table("criteria_versions")\
@@ -95,10 +97,10 @@ async def generate_criteria_from_jd(
         .execute()
     next_version = (existing_versions.data[0]["version_number"] + 1) if existing_versions.data else 1
 
-    # Call LLM to generate criteria draft
+    # Call LLM to generate criteria draft using JD from database
     try:
         ai_criteria = await llm_client.extract_criteria_from_jd(
-            jd_text=request.jd_content,
+            jd_text=jd_content,
             requisition_id=position["position_code"],
             job_title=position["title"]
         )
@@ -150,6 +152,17 @@ async def generate_criteria_from_jd(
         .execute()
 
     # Log audit event
+    supabase.table("audit_events").insert({
+        "actor_user_id": user_id,
+        "action_type": "GENERATE_CRITERIA_DRAFT",
+        "object_type": "CRITERIA_VERSION",
+        "object_id": cv_id,
+        "position_id": position_id_str,
+        "outcome": "SUCCESS"
+    }).execute()
+
+    logger.info("AI draft criteria generated", criteria_version_id=cv_id, position_id=position_id_str)
+    # Audit log
     supabase.table("audit_events").insert({
         "actor_user_id": user_id,
         "action_type": "GENERATE_CRITERIA_DRAFT",

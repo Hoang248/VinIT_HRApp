@@ -124,7 +124,7 @@ export default function PositionDetailPage() {
     if (!position) return;
     try {
       setGenerating(true);
-      await criteriaApi.generateDraft(positionId, ''); // TODO: Get actual JD content
+      await criteriaApi.generateDraft(positionId);
       await loadData();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Không thể tạo đề xuất tiêu chí');

@@ -65,7 +65,9 @@ class ProcessingWorker:
             time.sleep(POLL_INTERVAL_SECONDS)
 
     def _process_pending_operations(self):
-        """Fetch and process pending operations one at a time"""
+        """Fetch and process pending operations one at a time.
+        Opens a new session for each operation to ensure proper transaction management.
+        """
         db = SessionLocal()
         try:
             # Find oldest pending CV processing operation
@@ -142,31 +144,39 @@ class ProcessingWorker:
 
         if settings.STORAGE_BACKEND == "local":
             full_path = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, storage_path)
+            if not os.path.exists(full_path):
+                raise FileNotFoundError(f"File not found at path: {full_path}")
             with open(full_path, "rb") as f:
                 return f.read()
         elif settings.STORAGE_BACKEND == "supabase":
             from app.db.supabase import get_supabase_client
             supabase = get_supabase_client()
+            if not supabase:
+                raise RuntimeError("Supabase client is not configured")
             response = supabase.storage.from_(bucket).download(storage_path)
             return response
         else:
             raise ValueError(f"Unknown storage backend: {settings.STORAGE_BACKEND}")
 
     def _save_extracted_text(self, application_id: str, document_id: str, full_text: str, pages: list) -> str:
-        """Save extracted text to storage and return path"""
+        """Save extracted text to storage and return path (relative to bucket root)"""
+        bucket = settings.SUPABASE_STORAGE_BUCKET_EXTRACTED
         if settings.STORAGE_BACKEND == "local":
-            import os
-            path = f"{application_id}/{document_id}/extracted.txt"
-            full_dir = os.path.join(settings.LOCAL_STORAGE_PATH, "cv-extracted-text", application_id, document_id)
+            relative_path = f"{application_id}/{document_id}/extracted.txt"
+            full_dir = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, application_id, document_id)
             os.makedirs(full_dir, exist_ok=True)
-            full_path = os.path.join(settings.LOCAL_STORAGE_PATH, "cv-extracted-text", path)
+            full_path = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, relative_path)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(full_text)
-            # Also save pages metadata
-            meta_path = os.path.join(settings.LOCAL_STORAGE_PATH, "cv-extracted-text", application_id, document_id, "pages.json")
+            # Save pages metadata
+            meta_path = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, application_id, document_id, "pages.json")
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(pages, f, ensure_ascii=False)
-            return path
+            return relative_path
+        elif settings.STORAGE_BACKEND == "supabase":
+            # TODO: Implement Supabase storage upload for extracted text
+            relative_path = f"{application_id}/{document_id}/extracted.txt"
+            return relative_path
         return ""
 
     def _process_cv_batch(self, operation_id: UUID, db):
@@ -391,40 +401,389 @@ class ProcessingWorker:
                     batch_id=batch_id, processed=processed_count, needs_review=needs_review_count)
 
     def _run_assessments(self, operation_id: UUID, db):
-        """Run AI assessment for all unassessed applications"""
+        """Run AI assessment for all unassessed applications in the position"""
         from sqlalchemy import text
+        from app.services.llm_client import llm_client, LLMError
+        from app.services.matching import matching_engine
 
-        # This is simplified for MVP; actual matching calls LLM and verifies quotes
-        logger.info("Assessment operation would run here - Phase 2 implementation will complete the pipeline",
-                   operation_id=operation_id)
+        logger.info("Starting assessment processing for operation", operation_id=operation_id)
 
-        # For now, mark operation completed
-        # Full implementation will:
-        # 1. Load approved criteria and rubric
-        # 2. For each unassessed application:
-        #    a. Load extracted CV text
-        #    b. Load candidate profile
-        #    c. Call LLM criterion matcher
-        #    d. Verify all verbatim quotes actually exist in CV text
-        #    e. Run deterministic scoring
-        #    f. Save assessment and criterion results
-        # 3. Auto queue ranking operation
+        # Get the position this operation belongs to (from most recent uploaded batch)
+        batch_result = db.execute(text("""
+            SELECT position_id FROM app_private.cv_batches
+            WHERE operation_id = :operation_id
+            ORDER BY created_at DESC LIMIT 1
+        """), {"operation_id": str(operation_id)})
+        batch_row = batch_result.fetchone()
+        if not batch_row:
+            # Fallback: find position with pending applications
+            pos_result = db.execute(text("""
+                SELECT DISTINCT a.position_id FROM app_private.applications a
+                JOIN app_private.application_documents d ON d.application_id = a.application_id
+                WHERE d.file_processing_status = 'COMPLETED'
+                LIMIT 1
+            """))
+            pos_row = pos_result.fetchone()
+            if not pos_row:
+                logger.warning("No position found for assessment operation", operation_id=operation_id)
+                return
+            position_id = pos_row[0]
+        else:
+            position_id = batch_row[0]
 
-        # Placeholder - create operation for ranking
-        position_result = db.execute(text("""
-            SELECT position_id FROM app_private.applications LIMIT 1
-        """))
-        # After assessment completes, queue ranking
+        # Get latest approved criteria for position
+        criteria_result = db.execute(text("""
+            SELECT cv.criteria_version_id, cv.mandatory_weight_total, cv.nice_to_have_weight_total
+            FROM app_private.criteria_versions cv
+            WHERE cv.position_id = :position_id AND cv.status = 'APPROVED'
+            ORDER BY cv.version_number DESC LIMIT 1
+        """), {"position_id": position_id})
+        criteria_row = criteria_result.fetchone()
+        if not criteria_row:
+            logger.error("No approved criteria found for position, cannot run assessments", position_id=position_id)
+            return
+
+        criteria_version_id = criteria_row[0]
+
+        # Get criteria items
+        criteria_items_result = db.execute(text("""
+            SELECT criterion_id, name, description, category, weight_in_group, expected_evidence_keywords
+            FROM app_private.criteria_items
+            WHERE criteria_version_id = :criteria_version_id
+            ORDER BY display_order
+        """), {"criteria_version_id": criteria_version_id})
+        criteria_items = [dict(zip(["criterion_id", "name", "description", "category", "weight_in_group", "expected_evidence_keywords"], row))
+                         for row in criteria_items_result.fetchall()]
+
+        # Get applications with completed processing that don't have assessment yet
+        apps_result = db.execute(text("""
+            SELECT a.application_id, d.document_id, d.storage_path as doc_path
+            FROM app_private.applications a
+            JOIN app_private.application_documents d ON d.application_id = a.application_id
+            LEFT JOIN app_private.assessment_runs ar ON ar.application_id = a.application_id
+                AND ar.criteria_version_id = :criteria_version_id
+            WHERE a.position_id = :position_id
+              AND d.file_processing_status = 'COMPLETED'
+              AND d.document_type = 'CV'
+              AND ar.assessment_id IS NULL
+        """), {
+            "position_id": position_id,
+            "criteria_version_id": criteria_version_id
+        })
+        applications = [dict(zip(["application_id", "document_id", "doc_path"], row)) for row in apps_result.fetchall()]
+
+        logger.info(f"Found {len(applications)} applications to assess", position_id=position_id)
+        loop = asyncio.new_event_loop()
+        try:
+            for app in applications:
+                application_id = app["application_id"]
+                document_id = app["document_id"]
+
+                try:
+                    # Load extracted text
+                    extracted_path = os.path.join(
+                        settings.LOCAL_STORAGE_PATH,
+                        settings.SUPABASE_STORAGE_BUCKET_EXTRACTED,
+                        application_id,
+                        document_id,
+                        "extracted.txt"
+                    )
+                    if not os.path.exists(extracted_path):
+                        logger.warning("Extracted text not found for application", application_id=application_id)
+                        continue
+
+                    with open(extracted_path, "r", encoding="utf-8") as f:
+                        cv_text = f.read()
+
+                    # Create assessment run record
+                    assess_result = db.execute(text("""
+                        INSERT INTO app_private.assessment_runs
+                        (position_id, application_id, criteria_version_id, profile_version_id,
+                         policy_version, operation_id, status, created_at)
+                        VALUES
+                        (:position_id, :application_id, :criteria_version_id,
+                         (SELECT profile_version_id FROM app_private.profile_versions WHERE application_id = :app_id LIMIT 1),
+                         'v1.0', :operation_id, 'PROCESSING', NOW())
+                        RETURNING assessment_id
+                    """), {
+                        "position_id": position_id,
+                        "application_id": application_id,
+                        "criteria_version_id": criteria_version_id,
+                        "app_id": application_id,
+                        "operation_id": str(operation_id)
+                    })
+                    assessment_id = assess_result.fetchone()[0]
+
+                    # Get latest profile version
+                    profile_result = db.execute(text("""
+                        SELECT fact_type, fact_value FROM app_private.profile_facts pf
+                        JOIN app_private.profile_versions pv ON pf.profile_version_id = pv.profile_version_id
+                        WHERE pv.application_id = :application_id
+                    """), {"application_id": application_id})
+                    profile_facts = [dict(row) for row in profile_result.fetchall()]
+
+                    # Build simplified candidate profile for LLM
+                    candidate_profile = {
+                        "candidate_identifier": application_id,
+                        "total_years_experience": 0,
+                        "education": [pf["fact_value"] for pf in profile_facts if pf["fact_type"] == "EDUCATION"],
+                        "work_history": [pf["fact_value"] for pf in profile_facts if pf["fact_type"] == "WORK_EXPERIENCE"],
+                        "skills": [pf["fact_value"].get("name") for pf in profile_facts if pf["fact_type"] == "SKILL"],
+                        "certifications": [pf["fact_value"] for pf in profile_facts if pf["fact_type"] == "CERTIFICATION"]
+                    }
+
+                    # Run LLM matching
+                    try:
+                        findings = loop.run_until_complete(
+                            llm_client.match_criterion_evidence(
+                                cv_text=cv_text,
+                                candidate_profile=candidate_profile,
+                                rubric=criteria_items,
+                                candidate_identifier=application_id,
+                                rubric_version=criteria_version_id
+                            )
+                        )
+
+                        # Verify verbatim quotes exist in CV text
+                        valid_findings = []
+                        for finding in findings.get("findings", []):
+                            evidence = finding.get("evidence")
+                            if evidence and evidence.get("verbatim_quote"):
+                                quote_valid = matching_engine.verify_verbatim_quote(
+                                    evidence["verbatim_quote"],
+                                    cv_text
+                                )
+                                finding["evidence_verified"] = quote_valid
+                                if not quote_valid and finding["outcome"] in ["STRONG_MATCH", "MATCH"]:
+                                    finding["outcome"] = "UNCLEAR"
+                                    finding["requires_verification"] = True
+                            valid_findings.append(finding)
+
+                        # Run deterministic scoring
+                        score, coverage, matching_status, aug_findings, needs_verification = \
+                            matching_engine.calculate_assessment_scores(criteria_items, valid_findings)
+
+                        # Update assessment run with scores
+                        db.execute(text("""
+                            UPDATE app_private.assessment_runs
+                            SET status = 'COMPLETED',
+                                matching_status = :matching_status,
+                                matching_score = :score,
+                                evidence_coverage = :coverage,
+                                confidence = 0.8,
+                                completed_at = NOW()
+                            WHERE assessment_id = :assessment_id
+                        """), {
+                            "assessment_id": assessment_id,
+                            "matching_status": matching_status,
+                            "score": score,
+                            "coverage": coverage
+                        })
+
+                        # Save criterion results and evidence
+                        for finding in aug_findings:
+                            crit_res = db.execute(text("""
+                                INSERT INTO app_private.criterion_assessment_results
+                                (assessment_id, criterion_id, outcome, score, confidence, confidence_band,
+                                 requires_hr_verification, reasoning)
+                                VALUES
+                                (:assessment_id, :criterion_id, :outcome, :score, 0.8, 'MEDIUM',
+                                 :requires_verification, :reasoning)
+                                RETURNING result_id
+                            """), {
+                                "assessment_id": assessment_id,
+                                "criterion_id": finding["criterion_id"],
+                                "outcome": finding["outcome"],
+                                "score": finding.get("score"),
+                                "requires_verification": finding.get("requires_verification", False),
+                                "reasoning": finding.get("reasoning")
+                            })
+                            result_id = crit_res.fetchone()[0]
+
+                            # Save evidence if present
+                            if finding.get("evidence") and finding["evidence"].get("verbatim_quote"):
+                                db.execute(text("""
+                                    INSERT INTO app_private.evidence_items
+                                    (criterion_result_id, source_document_id, verbatim_quote, page_number,
+                                     evidence_type, verification_status)
+                                    VALUES
+                                    (:result_id, :document_id, :quote, :page_num,
+                                     'TEXT_QUOTE', :verification_status)
+                                """), {
+                                    "result_id": result_id,
+                                    "document_id": document_id,
+                                    "quote": finding["evidence"]["verbatim_quote"],
+                                    "page_num": finding["evidence"].get("page_number"),
+                                    "verification_status": "VERIFIED" if finding.get("evidence_verified") else "FAILED"
+                                })
+
+                        db.commit()
+                        logger.info("Assessment completed for application",
+                                   application_id=application_id,
+                                   score=score,
+                                   coverage=coverage,
+                                   status=matching_status)
+
+                    except LLMError as e:
+                        logger.error("LLM matching failed for application", application_id=application_id, error=str(e))
+                        db.rollback()
+                        db.execute(text("""
+                            UPDATE app_private.assessment_runs
+                            SET status = 'FAILED', completed_at = NOW()
+                            WHERE assessment_id = :assessment_id
+                        """), {"assessment_id": assessment_id})
+                        db.commit()
+                        continue
+
+                except Exception as e:
+                    logger.error("Assessment failed for application", application_id=application_id, error=str(e), exc_info=True)
+                    db.rollback()
+                    continue
+        finally:
+            loop.close()
+
+        # After all assessments complete, queue ranking
         db.execute(text("""
-            INSERT INTO app_private.operations (capability, status)
-            VALUES ('RANKING', 'PENDING')
-        """))
+            INSERT INTO app_private.operations (capability, status, requested_by)
+            VALUES ('RANKING', 'PENDING', (SELECT created_by FROM app_private.positions WHERE position_id = :position_id))
+        """), {"position_id": position_id})
         db.commit()
+        logger.info("Assessment batch complete, ranking queued", position_id=position_id)
 
     def _generate_ranking(self, operation_id: UUID, db):
-        """Generate ranking after assessments complete"""
-        logger.info("Ranking generation would run here - Phase 2 will use matching_engine.rank_applications",
-                   operation_id=operation_id)
+        """Generate ranking for position using matching engine"""
+        from sqlalchemy import text
+
+        logger.info("Starting ranking generation for operation", operation_id=operation_id)
+
+        # Find position from latest completed assessment
+        pos_result = db.execute(text("""
+            SELECT DISTINCT position_id FROM app_private.assessment_runs
+            WHERE status = 'COMPLETED'
+            ORDER BY completed_at DESC LIMIT 1
+        """))
+        pos_row = pos_result.fetchone()
+        if not pos_row:
+            logger.warning("No completed assessments found for ranking")
+            return
+        position_id = pos_row[0]
+
+        # Get latest approved criteria
+        criteria_result = db.execute(text("""
+            SELECT criteria_version_id FROM app_private.criteria_versions
+            WHERE position_id = :position_id AND status = 'APPROVED'
+            ORDER BY version_number DESC LIMIT 1
+        """), {"position_id": position_id})
+        crit_row = criteria_result.fetchone()
+        if not crit_row:
+            logger.error("No approved criteria for ranking", position_id=position_id)
+            return
+        criteria_version_id = crit_row[0]
+
+        # Get criteria items
+        crit_items_result = db.execute(text("""
+            SELECT criterion_id, name, description, category, weight_in_group
+            FROM app_private.criteria_items
+            WHERE criteria_version_id = :criteria_version_id
+        """), {"criteria_version_id": criteria_version_id})
+        criteria_items = [dict(zip(["criterion_id", "name", "description", "category", "weight_in_group"], row))
+                         for row in crit_items_result.fetchall()]
+
+        # Get applications with latest assessment
+        apps_result = db.execute(text("""
+            SELECT
+                a.application_id,
+                ai.display_name,
+                ar.assessment_id,
+                ar.matching_status,
+                ar.matching_score,
+                ar.evidence_coverage
+            FROM app_private.applications a
+            LEFT JOIN app_private.application_identities ai ON ai.application_id = a.application_id
+            JOIN (
+                SELECT application_id, MAX(created_at) as latest
+                FROM app_private.assessment_runs
+                WHERE status = 'COMPLETED' AND position_id = :position_id
+                GROUP BY application_id
+            ) latest_ar ON latest_ar.application_id = a.application_id
+            JOIN app_private.assessment_runs ar ON ar.application_id = a.application_id AND ar.created_at = latest_ar.latest
+            WHERE a.position_id = :position_id
+              AND a.application_status IN ('NEW', 'IN_REVIEW', 'SHORTLIST')
+        """), {"position_id": position_id})
+
+        applications = []
+        for row in apps_result.fetchall():
+            app_data = dict(zip(["application_id", "display_name", "assessment_id", "matching_status", "matching_score", "evidence_coverage"], row))
+            app_data["latest_assessment"] = {
+                "matching_status": app_data.pop("matching_status"),
+                "matching_score": app_data.pop("matching_score"),
+                "evidence_coverage": app_data.pop("evidence_coverage"),
+            }
+            applications.append(app_data)
+
+        if not applications:
+            logger.info("No applications to rank", position_id=position_id)
+            return
+
+        # Run deterministic ranking
+        ranked = matching_engine.rank_applications(applications, criteria_items)
+
+        # Create ranking run
+        rank_run_result = db.execute(text("""
+            INSERT INTO app_private.ranking_runs
+            (position_id, criteria_version_id, policy_version, operation_id, status, created_at, completed_at)
+            VALUES
+            (:position_id, :criteria_version_id, 'v1.0', :operation_id, 'COMPLETED', NOW(), NOW())
+            RETURNING ranking_run_id
+        """), {
+            "position_id": position_id,
+            "criteria_version_id": criteria_version_id,
+            "operation_id": str(operation_id)
+        })
+        ranking_run_id = rank_run_result.fetchone()[0]
+
+        # Insert ranking items
+        for item in ranked:
+            assess = item.get("latest_assessment", {})
+            db.execute(text("""
+                INSERT INTO app_private.ranking_items
+                (ranking_run_id, position_id, application_id, assessment_id, rank_number,
+                 ranking_status, matching_score, evidence_coverage)
+                VALUES
+                (:ranking_run_id, :position_id, :application_id, :assessment_id, :rank_number,
+                 :ranking_status, :matching_score, :coverage)
+            """), {
+                "ranking_run_id": ranking_run_id,
+                "position_id": position_id,
+                "application_id": item["application_id"],
+                "assessment_id": assess.get("assessment_id"),
+                "rank_number": item["rank_number"],
+                "ranking_status": assess.get("matching_status"),
+                "matching_score": assess.get("matching_score"),
+                "coverage": assess.get("evidence_coverage")
+            })
+
+        # Detect duplicates
+        duplicates = matching_engine.detect_duplicates(applications)
+        for app1_id, app2_id, confidence, signal_type in duplicates:
+            db.execute(text("""
+                INSERT INTO app_private.duplicate_signals
+                (position_id, application_id_1, application_id_2, signal_type, confidence, detector_version, review_status)
+                VALUES
+                (:position_id, :app1, :app2, :signal_type, :confidence, 'v1.0', 'PENDING')
+            """), {
+                "position_id": position_id,
+                "app1": app1_id,
+                "app2": app2_id,
+                "signal_type": signal_type,
+                "confidence": confidence
+            })
+
+        db.commit()
+        logger.info("Ranking generated successfully",
+                   ranking_run_id=ranking_run_id,
+                   ranked_count=len(ranked),
+                   duplicates=len(duplicates))
 
 
 # Singleton worker instance

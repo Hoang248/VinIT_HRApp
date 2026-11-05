@@ -181,7 +181,9 @@ async def enable_ai_config(
         )
 
         row = result.fetchone()
+        db.commit()
         if not row:
+            db.rollback()
             raise HTTPException(status_code=404, detail="AI Configuration not found")
 
         db.commit()

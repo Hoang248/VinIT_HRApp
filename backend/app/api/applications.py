@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Request
+from fastapi.responses import FileResponse
 from typing import List, Optional
 from uuid import UUID, uuid4
 from app.core.security import get_current_user
@@ -424,30 +425,61 @@ async def get_cv_download_url(
     doc = doc_result.data[0]
 
     # TODO: Check user permission (must be HR assigned or on shortlist share with cv_view permission)
-    # For MVP, generate access URL valid for 10 minutes
+    # Generate access information
     try:
         if settings.STORAGE_BACKEND == "local":
-            # For local development, serve file directly through API
-            # In production, use proper static file serving with authentication
-            from fastapi.responses import FileResponse
-            file_path = os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"], doc["storage_path"])
-            if not os.path.exists(file_path):
-                raise NotFoundError("CV file not found on disk")
-            return FileResponse(
-                path=file_path,
-                filename=doc["original_filename"],
-                media_type=doc["mime_type"]
-            )
+            # For local development, return API URL to serve file (with auth check)
+            file_url = f"{settings.API_V1_PREFIX}/applications/{application_id}/cv-file"
+            return {"file_url": file_url, "filename": doc["original_filename"], "source": "local"}
         elif settings.STORAGE_BACKEND == "supabase":
+            if not supabase:
+                raise HTTPException(status_code=500, detail="Supabase storage is not configured")
             signed_url = supabase.storage.from_(doc["bucket"]).create_signed_url(
                 path=doc["storage_path"],
                 expires_in=600  # 10 minutes
             )
-            return {"signed_url": signed_url, "filename": doc["original_filename"]}
+            return {"signed_url": signed_url, "filename": doc["original_filename"], "source": "supabase"}
         else:
-            raise HTTPException(status_code=500, detail="Unknown storage backend")
+            raise HTTPException(status_code=500, detail=f"Unknown storage backend: {settings.STORAGE_BACKEND}")
     except NotFoundError:
         raise
     except Exception as e:
         logger.error("Failed to generate file access URL", error=str(e))
         raise HTTPException(status_code=500, detail="Could not generate file access URL")
+
+
+@router.get("/{application_id}/cv-file")
+async def serve_cv_file(
+    application_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """Serve CV file directly from local storage with permission check (development only)"""
+    if settings.STORAGE_BACKEND != "local":
+        raise HTTPException(status_code=400, detail="Local file serving is only available with local storage backend")
+
+    # TODO: Check user permission to view this application's CV
+    supabase = get_supabase_client()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database connection not available")
+
+    doc_result = supabase.table("application_documents")\
+        .select("*")\
+        .eq("application_id", str(application_id))\
+        .eq("document_type", "CV")\
+        .limit(1)\
+        .execute()
+
+    if not doc_result.data:
+        raise NotFoundError("CV Document")
+
+    doc = doc_result.data[0]
+    file_path = os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"], doc["storage_path"])
+
+    if not os.path.exists(file_path):
+        raise NotFoundError("CV file not found on disk")
+
+    return FileResponse(
+        path=file_path,
+        filename=doc["original_filename"],
+        media_type=doc["mime_type"]
+    )

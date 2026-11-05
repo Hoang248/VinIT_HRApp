@@ -55,8 +55,8 @@ export const criteriaApi = {
   listVersions: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/versions`),
   getById: (id: string) => apiClient.get(`/criteria/${id}`),
-  generateDraft: (positionId: string, jdContent: string) =>
-    apiClient.post('/criteria/generate', { position_id: positionId, jd_content: jdContent }),
+  generateDraft: (positionId: string) =>
+    apiClient.post(`/criteria/generate/${positionId}`),
   approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApproved: (positionId: string) =>
