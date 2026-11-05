@@ -188,6 +188,11 @@ def application_access(user_id: str, position_id: str, application_id: str) -> d
                 OR EXISTS (SELECT 1 FROM app_private.position_assignments pa
                            WHERE pa.user_id = :user_id AND pa.position_id = :position_id
                              AND pa.revoked_at IS NULL AND pa.position_role IN ('HR_RECRUITER', 'HR_LEAD')) AS hr_access,
+                EXISTS (SELECT 1 FROM app_private.user_role_assignments ur
+                        WHERE ur.user_id = :user_id AND ur.revoked_at IS NULL AND ur.role_code = 'HR_LEAD')
+                OR EXISTS (SELECT 1 FROM app_private.position_assignments pa
+                           WHERE pa.user_id = :user_id AND pa.position_id = :position_id
+                             AND pa.revoked_at IS NULL AND pa.position_role IN ('HR_RECRUITER', 'HR_LEAD')) AS hr_notes_access,
                 EXISTS (SELECT 1 FROM app_private.shortlist_shares s
                         JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
                         WHERE s.shared_with = :user_id AND s.position_id = :position_id
@@ -207,6 +212,7 @@ def application_access(user_id: str, position_id: str, application_id: str) -> d
         if not row["hr_access"] and not row["shared"]:
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem hồ sơ này")
         return {"can_update_status": bool(row["hr_access"]),
+                "can_manage_hr_notes": bool(row["hr_notes_access"]),
                 "can_view_cv": bool(row["hr_access"] or row["shared_cv"])}
     finally:
         db.close()

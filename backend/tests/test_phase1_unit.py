@@ -66,6 +66,11 @@ def test_llm_external_endpoint_policy_fails_closed(monkeypatch):
     instance.base_url = "https://8.8.8.8/v1"
     monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", True)
     instance._check_endpoint_policy()
+    instance.base_url = "http://8.8.8.8/v1"
+    with pytest.raises(LLMError, match="HTTPS"):
+        instance._check_endpoint_policy()
+    instance.base_url = "http://127.0.0.1:11434/v1"
+    instance._check_endpoint_policy()
 
 
 @pytest.mark.asyncio
@@ -143,6 +148,9 @@ async def test_llm_client_does_not_route_cv_through_environment_proxy(monkeypatc
             return FakeResponse()
     monkeypatch.setattr("app.services.llm_client.httpx.AsyncClient", FakeClient)
     monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", False)
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr("app.services.llm_client.get_active_runtime", lambda db: {
+        "provider": "local", "model_name": settings.LLM_MODEL_NAME, "api_base": settings.LLM_API_BASE, "temperature_default": .1})
     llm = LLMClient(); llm.base_url = "http://127.0.0.1:11434/v1"
     assert await llm._call_llm("system", "test") == {"ok": True}
     assert captured["trust_env"] is False
@@ -196,3 +204,86 @@ def test_login_distinguishes_invalid_credentials_from_unavailable_service(monkey
         fake.failure = RuntimeError("network failure")
         response = client.post("/v1/auth/login", json=credentials)
         assert response.status_code == 503 and "không khả dụng" in response.json()["detail"]
+
+
+def test_redaction_minimises_common_vietnamese_and_english_identifiers():
+    from app.services.redaction import redact_text, redact_payload, redact_professional_profile
+    raw = """--- Page 1 ---
+Nguyễn Văn An
+Email: an.synthetic@example.test
+Điện thoại: +84 912 345 678
+Ngày sinh: 01/01/1990
+Địa chỉ: 123 Phố Ví Dụ, Hà Nội
+Giới tính: Nam
+Nguyễn Văn An built Python services for five years.
+Portfolio https://example.test/person
+--- Page 2 ---
+Professional experience: 2015 - 2024.
+"""
+    redacted = redact_text(raw, detect_first_line_name=True)
+    for secret in ("Nguyễn Văn An", "an.synthetic@example.test", "912 345 678", "01/01/1990", "123 Phố", "Nam", "example.test/person"):
+        assert secret not in redacted
+    assert "built Python services for five years" in redacted
+    assert "--- Page 2 ---" in redacted and "2015 - 2024" in redacted
+    assert redact_text(redacted, detect_first_line_name=True) == redacted
+    clean = redact_payload({"email": "x@example.test", "skills": ["Python"], "work_history": [{"phone": "123456789", "description": "Contact x@example.test"}]})
+    assert "email" not in clean and "phone" not in clean["work_history"][0]
+    assert "x@example.test" not in str(clean) and clean["skills"] == ["Python"]
+    structured = redact_professional_profile({
+        "name": "Synthetic Candidate", "email": "x@example.test", "skills": ["Python"],
+        "certifications": [{"name": "Cloud Practitioner", "email": "x@example.test"}],
+        "languages": [{"name": "English", "level": "Professional", "gender": "X"}],
+        "projects": [{"name": "Search Platform", "description": "Built a service"}],
+        "work_history": [{"name": "Synthetic Candidate", "role": "Developer"}],
+    })
+    assert "name" not in structured and "email" not in str(structured) and "gender" not in str(structured)
+    assert structured["certifications"][0]["name"] == "Cloud Practitioner"
+    assert structured["languages"][0]["name"] == "English"
+    assert structured["projects"][0]["name"] == "Search Platform"
+    assert "name" not in structured["work_history"][0]
+
+
+@pytest.mark.asyncio
+async def test_real_llm_boundary_redacts_cv_profile_and_rubric_and_sets_guardrails(monkeypatch):
+    from app.services.llm_client import LLMClient
+    captured = []
+    class FakeResponse:
+        def __init__(self, payload): self.payload = payload
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": __import__("json").dumps(self.payload)}}]}
+    class FakeClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            captured.append(kwargs["json"])
+            if len(captured) == 1:
+                return FakeResponse({"candidate_identifier": "fake", "total_years_experience": 2,
+                                     "education": [], "work_history": [], "skills": ["Python"],
+                                     "certifications": [{"name": "Cloud Practitioner", "email": "x@example.test"}]})
+            return FakeResponse({"candidate_identifier": "fake", "rubric_version": "fake", "findings": []})
+    monkeypatch.setattr("app.services.llm_client.httpx.AsyncClient", FakeClient)
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr("app.services.llm_client.get_active_runtime", lambda db: {
+        "provider": "local", "model_name": settings.LLM_MODEL_NAME, "api_base": settings.LLM_API_BASE, "temperature_default": .1})
+    llm = LLMClient(); llm.base_url = "http://127.0.0.1:11434/v1"
+    cv = "Nguyễn Văn An\nEmail: an.synthetic@example.test\nPhone: +84 912 345 678\nBuilt Python services for two years."
+    profile = await llm.extract_candidate_profile(cv, "synthetic-id")
+    assert profile["candidate_identifier"] == "synthetic-id"
+    assert profile["certifications"][0]["name"] == "Cloud Practitioner"
+    assert "email" not in profile["certifications"][0]
+    await llm.match_criterion_evidence(cv, {"email": "an.synthetic@example.test", "skills": ["Python"],
+        "languages": [{"name": "English", "phone": "123456789"}],
+        "projects": [{"name": "Search Platform", "description": "Python services"}]},
+        [{"criterion_id": "criterion", "name": "Python", "description": "Contact hr@example.test", "category": "MUST_HAVE"}],
+        "synthetic-id", "synthetic-rubric")
+    for payload in captured:
+        sent = str(payload["messages"][1]["content"])
+        assert "Nguyễn Văn An" not in sent and "an.synthetic@example.test" not in sent and "912 345 678" not in sent
+        assert "Python" in sent and "REDACTED" in sent
+        system = payload["messages"][0]["content"]
+        assert "untrusted data" in system and "protected traits" in system and "human" in system
+    assert "hr@example.test" not in str(captured[1])
+    assert "English" in str(captured[1]) and "Search Platform" in str(captured[1])
+    assert "123456789" not in str(captured[1])

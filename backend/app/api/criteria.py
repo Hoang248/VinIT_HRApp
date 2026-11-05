@@ -79,7 +79,7 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
     try:
         draft = await llm_client.extract_criteria_from_jd(jd_text=jd["content_text"], requisition_id=position["position_code"], job_title=position["title"])
     except LLMError as exc:
-        logger.error("Criteria generation failed", error=str(exc))
+        logger.error("Criteria generation failed", error_type=type(exc).__name__)
         raise HTTPException(status_code=503, detail="Không thể tạo tiêu chí bằng AI. Vui lòng kiểm tra cấu hình và thử lại.")
     try:
         raw = draft["criteria"]
@@ -103,6 +103,9 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": str(position_id)})
+        latest_jd = db.execute(text("SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1"), {"id": str(position_id)}).scalar_one_or_none()
+        if str(latest_jd) != str(jd["jd_version_id"]):
+            raise HTTPException(status_code=409, detail="JD đã thay đổi trong lúc tạo tiêu chí. Vui lòng thử lại.")
         version = db.execute(text("SELECT COALESCE(MAX(version_number), 0) + 1 FROM app_private.criteria_versions WHERE position_id = :id"), {"id": str(position_id)}).scalar_one()
         version_id = db.execute(text("""
             INSERT INTO app_private.criteria_versions (position_id, jd_version_id, version_number, origin, status)
@@ -182,21 +185,33 @@ async def approve_criteria(
         if not position or not db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": str(position)}).first():
             raise NotFoundError("Criteria version")
         cv = db.execute(text("""
-            SELECT position_id, status, mandatory_weight_total, nice_to_have_weight_total
+            SELECT position_id, jd_version_id, status, mandatory_weight_total, nice_to_have_weight_total, approved_by_hr
             FROM app_private.criteria_versions WHERE criteria_version_id = :cv_id FOR UPDATE
         """), {"cv_id": cv_id_str}).mappings().first()
         if not cv:
             raise NotFoundError("Criteria version")
         position_id = str(cv["position_id"])
+        account = db.execute(text("SELECT account_status FROM app_private.user_profiles WHERE user_id = :id FOR SHARE"), {"id": user_id}).scalar_one_or_none()
+        if account != 'ACTIVE':
+            raise HTTPException(status_code=403, detail="Tài khoản chưa được kích hoạt hoặc đã bị khóa")
         position_roles = set(db.execute(text("""
             SELECT position_role FROM app_private.position_assignments
-            WHERE position_id = :position_id AND user_id = :user_id AND revoked_at IS NULL
+            WHERE position_id = :position_id AND user_id = :user_id AND revoked_at IS NULL FOR SHARE
         """), {"position_id": position_id, "user_id": user_id}).scalars())
         system_roles = set(db.execute(text("""
             SELECT role_code FROM app_private.user_role_assignments
-            WHERE user_id = :user_id AND revoked_at IS NULL
+            WHERE user_id = :user_id AND revoked_at IS NULL FOR SHARE
         """), {"user_id": user_id}).scalars())
         new_status, reviewer_role = criteria_decision(cv["status"], request.action, position_roles, system_roles)
+        if new_status in ("PENDING_HM_APPROVAL", "APPROVED"):
+            latest_jd = db.execute(text("SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1"), {"id": position_id}).scalar_one_or_none()
+            if str(latest_jd) != str(cv["jd_version_id"]):
+                raise HTTPException(status_code=409, detail="JD đã thay đổi. Vui lòng tạo và duyệt tiêu chí cho phiên bản JD mới nhất.")
+        if new_status == "APPROVED":
+            # One account may hold both roles.  The position and criteria rows
+            # are locked above so this check and the decision are indivisible.
+            if not cv["approved_by_hr"] or str(cv["approved_by_hr"]) == str(user_id):
+                raise HTTPException(status_code=409, detail="Hai bước duyệt phải do hai tài khoản khác nhau thực hiện")
         if new_status == "APPROVED" and db.execute(text("""
             SELECT 1 FROM app_private.operations WHERE position_id = :position_id
               AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING')
@@ -370,6 +385,7 @@ async def get_latest_approved_criteria(position_id: UUID, current_user: dict = D
     try:
         version_id = db.execute(text("""
             SELECT criteria_version_id FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED'
+              AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1)
             ORDER BY version_number DESC LIMIT 1
         """), {"id": str(position_id)}).scalar_one_or_none()
         return _load_criteria(db, version_id) if version_id else None

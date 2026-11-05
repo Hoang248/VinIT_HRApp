@@ -22,7 +22,8 @@ async def _queue_position_operation(position_id: UUID, user: dict, capability: s
         # Serialize check-and-queue across API requests for the same position.
         if not db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": position}).first():
             raise NotFoundError("Position")
-        if not db.execute(text("SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED' LIMIT 1"), {"id": position}).first():
+        if not db.execute(text("""SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED'
+            AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1) LIMIT 1"""), {"id": position}).first():
             raise CriteriaNotApprovedError()
         active = db.execute(text("""
             SELECT operation_id FROM app_private.operations WHERE position_id = :id
@@ -74,6 +75,24 @@ async def get_assessment(assessment_id: UUID, current_user: dict = Depends(get_c
         access = application_access(current_user["user_id"], str(row["position_id"]), str(row["application_id"]))
         if not access["can_view_cv"]:
             raise HTTPException(status_code=403, detail="Shortlist này chỉ cho phép xem tóm tắt")
+        if not access["can_update_status"] and not db.execute(text("""
+            SELECT 1 FROM app_private.shortlist_share_items si
+            JOIN app_private.shortlist_shares s ON s.share_id = si.share_id
+            JOIN app_private.position_assignments hm ON hm.position_id = s.position_id
+                AND hm.user_id = s.shared_with AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL
+            JOIN app_private.applications a ON a.application_id = si.application_id
+            JOIN app_private.assessment_runs ar ON ar.assessment_id = si.assessment_id
+            WHERE s.shared_with = :user_id AND s.status = 'ACTIVE' AND s.allow_cv_view
+              AND si.assessment_id = :assessment_id
+              AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                  WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+              AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                  WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                    AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                        WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                  ORDER BY c.version_number DESC LIMIT 1)
+        """), {"user_id": current_user["user_id"], "assessment_id": str(assessment_id)}).first():
+            raise HTTPException(status_code=403, detail="Bạn không có quyền xem đánh giá này")
         assessment = dict(row)
         results = db.execute(text("""
             SELECT r.*, c.name AS criterion_name, c.category, r.requires_hr_verification AS requires_verification
@@ -108,14 +127,24 @@ async def get_latest_ranking(position_id: UUID, current_user: dict = Depends(get
                    ri.matching_score, ri.evidence_coverage, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
             FROM app_private.ranking_items ri
             JOIN app_private.applications a ON a.application_id = ri.application_id
+            JOIN app_private.assessment_runs ar ON ar.assessment_id = ri.assessment_id
             LEFT JOIN app_private.application_identities i ON i.application_id = ri.application_id
             WHERE a.application_status IN ('NEW', 'IN_REVIEW', 'SHORTLIST')
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
               AND ri.ranking_run_id = (
                 SELECT ranking_run_id FROM app_private.ranking_runs
                 WHERE position_id = :position AND status = 'COMPLETED'
                   AND criteria_version_id = (
                       SELECT criteria_version_id FROM app_private.criteria_versions
                       WHERE position_id = :position AND status = 'APPROVED'
+                        AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = :position ORDER BY version_number DESC LIMIT 1)
                       ORDER BY version_number DESC LIMIT 1
                   )
                 ORDER BY created_at DESC, ranking_run_id DESC LIMIT 1

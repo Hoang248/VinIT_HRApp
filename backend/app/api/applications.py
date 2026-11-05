@@ -74,7 +74,8 @@ async def create_cv_batch(position_id: UUID, files: List[UploadFile] = File(...)
             raise NotFoundError("Position")
         if pos != "OPEN":
             raise HTTPException(status_code=400, detail="Không thể tải CV cho vị trí đã đóng hoặc tạm dừng")
-        approved = db.execute(text("SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED' LIMIT 1"), {"id": position_id_str}).first()
+        approved = db.execute(text("""SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED'
+            AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1) LIMIT 1"""), {"id": position_id_str}).first()
         if not approved:
             raise HTTPException(status_code=400, detail="Tiêu chí cần được HR và Hiring Manager duyệt trước khi tải CV")
         active = db.execute(text("""
@@ -163,8 +164,8 @@ async def create_cv_batch(position_id: UUID, files: List[UploadFile] = File(...)
                         os.remove(full_path)
                 else:
                     storage.storage.from_(settings.SUPABASE_STORAGE_BUCKET_CV).remove([path])
-            except Exception:
-                logger.exception("Could not remove orphaned upload")
+            except Exception as exc:
+                logger.error("Could not remove orphaned upload", error_type=type(exc).__name__)
         raise
     finally:
         db.close()
@@ -220,6 +221,13 @@ async def list_applications(
             LEFT JOIN LATERAL (
                 SELECT ar.* FROM app_private.assessment_runs ar
                 WHERE ar.application_id = a.application_id AND ar.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
                 ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
             ) latest ON TRUE
             WHERE a.position_id = :position_id
@@ -231,7 +239,7 @@ async def list_applications(
         applications = [dict(row) for row in rows]
         for item in applications:
             _normalize_application(item)
-            item.update({"can_view_cv": True, "can_update_status": True})
+            item.update({"can_view_cv": True, "can_view_assessment_evidence": bool(item["latest_assessment"]), "can_update_status": True})
         return applications
     finally:
         db.close()
@@ -261,13 +269,43 @@ async def get_application(application_id: UUID, current_user: dict = Depends(get
                 AND review_status = 'PENDING' AND (application_id_1 = :id OR application_id_2 = :id))
         """), {"id": app_id, "position_id": str(row["position_id"])}).scalar_one())
         assessment = db.execute(text("""
-            SELECT * FROM app_private.assessment_runs WHERE application_id = :id AND status = 'COMPLETED'
-            ORDER BY created_at DESC, assessment_id DESC LIMIT 1
-        """), {"id": app_id}).mappings().first()
+            SELECT ar.* FROM app_private.assessment_runs ar
+            JOIN app_private.applications a ON a.application_id = ar.application_id
+            WHERE ar.application_id = :id AND ar.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
+                  AND (:hr_access OR EXISTS (
+                      SELECT 1 FROM app_private.shortlist_share_items si
+                      JOIN app_private.shortlist_shares s ON s.share_id = si.share_id
+                      JOIN app_private.position_assignments hm ON hm.position_id = s.position_id
+                          AND hm.user_id = s.shared_with AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL
+                      WHERE s.shared_with = :user_id AND s.status = 'ACTIVE'
+                        AND si.application_id = a.application_id AND si.assessment_id = ar.assessment_id
+                  ))
+            ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
+        """), {"id": app_id, "hr_access": access["can_update_status"], "user_id": current_user["user_id"]}).mappings().first()
         latest = dict(assessment) if assessment else None
+        app["can_view_assessment_evidence"] = False
         if latest:
             latest["criterion_results"] = []
-            if access["can_view_cv"]:
+            # A separate summary-only share must not gain evidence just because
+            # another active share grants access to an older CV snapshot.
+            can_view_evidence = access["can_update_status"] or bool(access["can_view_cv"] and db.execute(text("""
+                SELECT 1 FROM app_private.shortlist_share_items si
+                JOIN app_private.shortlist_shares s ON s.share_id = si.share_id
+                JOIN app_private.position_assignments hm ON hm.position_id = s.position_id
+                    AND hm.user_id = s.shared_with AND hm.position_role = 'HIRING_MANAGER' AND hm.revoked_at IS NULL
+                WHERE s.shared_with = :user_id AND s.status = 'ACTIVE' AND s.allow_cv_view
+                  AND si.application_id = :application_id AND si.assessment_id = :assessment_id
+            """), {"user_id": current_user["user_id"], "application_id": app_id,
+                    "assessment_id": latest["assessment_id"]}).first())
+            app["can_view_assessment_evidence"] = can_view_evidence
+            if can_view_evidence:
                 results = db.execute(text("""
                     SELECT car.*, ci.name AS criterion_name, ci.category,
                            car.requires_hr_verification AS requires_verification
@@ -285,7 +323,13 @@ async def get_application(application_id: UUID, current_user: dict = Depends(get
                     latest["criterion_results"].append(criterion_result)
         app["latest_assessment"] = latest
         if not access["can_view_cv"]:
+            # Summary-only sharing includes the display name, not contact
+            # details, original documents or processing diagnostics.
+            if app.get("identity"):
+                app["identity"] = {"display_name": app["identity"].get("display_name")}
             app["documents"] = []
+            app["file_processing_status"] = "UNKNOWN"
+            app["file_error"] = None
         return app
     finally:
         db.close()
@@ -403,7 +447,7 @@ async def get_cv_signed_url(application_id: UUID, current_user: dict = Depends(g
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Failed to generate file access URL", error=str(exc))
+        logger.error("Failed to generate file access URL", error_type=type(exc).__name__)
         raise HTTPException(status_code=502, detail="Could not generate file access URL")
 
 

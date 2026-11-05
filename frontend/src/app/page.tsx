@@ -1,5 +1,8 @@
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
+import LanguageSwitcher from '@/i18n/LanguageSwitcher';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -12,9 +15,10 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-import axios from 'axios';
+import { authApi } from '@/lib/api';
 
 export default function LoginPage() {
+  const { t } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,7 +31,7 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const response = await axios.post('/v1/auth/login', { email, password });
+      const response = await authApi.login(email, password);
       const { access_token } = response.data;
 
       // Store token in localStorage for MVP Phase 1
@@ -37,7 +41,7 @@ export default function LoginPage() {
       router.push('/positions');
     } catch (err: any) {
       setError(
-        err.response?.data?.detail || 'Đăng nhập thất bại, vui lòng kiểm tra lại email và mật khẩu'
+        err.response?.data?.detail || t("Đăng nhập thất bại, vui lòng kiểm tra lại email và mật khẩu")
       );
     } finally {
       setLoading(false);
@@ -59,6 +63,7 @@ export default function LoginPage() {
     >
       <Card sx={{ width: '100%', maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
         <CardContent sx={{ p: 4 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}><LanguageSwitcher /></Box>
           <Box sx={{ textAlign: 'center', mb: 4 }}>
             {/* VinUni Logo */}
             <Box
@@ -68,16 +73,14 @@ export default function LoginPage() {
               sx={{ height: 56, width: 'auto', mb: 2 }}
             />
             <Typography variant="h1" sx={{ fontSize: 24, color: '#0A2B57', mb: 1 }}>
-              AI-Native CV Screening
+              {t("Sàng lọc CV với AI")}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Dành cho HR Recruiter & Hiring Manager tại VinUniversity
-            </Typography>
+            <Typography variant="body2" color="text.secondary">{t("Dành cho HR Recruiter & Hiring Manager tại VinUniversity")}</Typography>
           </Box>
 
           {error && (
             <Alert severity="error" sx={{ mb: 3 }}>
-              {error}
+              {t(error)}
             </Alert>
           )}
 
@@ -93,7 +96,7 @@ export default function LoginPage() {
               placeholder="nguyenvana@vinuni.edu.vn"
             />
             <TextField
-              label="Mật khẩu"
+              label={t("Mật khẩu")}
               type="password"
               fullWidth
               value={password}
@@ -111,7 +114,7 @@ export default function LoginPage() {
               disabled={loading}
               sx={{ py: 1.5 }}
             >
-              {loading ? <CircularProgress size={24} color="inherit" /> : 'Đăng nhập'}
+              {loading ? <CircularProgress size={24} color="inherit" /> : t("Đăng nhập")}
             </Button>
           </form>
 
@@ -120,8 +123,7 @@ export default function LoginPage() {
             color="text.disabled"
             sx={{ display: 'block', textAlign: 'center', mt: 3 }}
           >
-            © {new Date().getFullYear()} VinUniversity. Nội bộ sử dụng.
-          </Typography>
+            © {new Date().getFullYear()} {t("VinUniversity. Nội bộ sử dụng.")}</Typography>
         </CardContent>
       </Card>
     </Box>

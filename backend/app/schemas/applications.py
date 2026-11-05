@@ -133,7 +133,9 @@ class ApplicationWithAssessment(Application):
     file_error: Optional[str] = None
     has_duplicate_warning: bool = False
     can_view_cv: bool = False
+    can_view_assessment_evidence: bool = False
     can_update_status: bool = False
+    can_manage_hr_notes: bool = False
 
 
 class RankingItem(BaseSchema):

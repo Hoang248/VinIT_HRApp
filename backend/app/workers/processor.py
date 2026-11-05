@@ -10,26 +10,63 @@ import os
 import json
 import re
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy import text
-from app.db.database import SessionLocal
+from sqlalchemy.orm import Session
+from app.db.database import SessionLocal, engine
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.document_processor import document_processor, DocumentType
 from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
+from app.services.redaction import redact_text
+from app.services.ai_config import get_active_runtime, runtime_context
 from datetime import datetime
 
 logger = get_logger(__name__)
 
 # Processing queue polling interval (seconds)
 POLL_INTERVAL_SECONDS = 5
+HEARTBEAT_SECONDS = 20
+
+
+class LostOwnership(RuntimeError):
+    """The connection or fencing token for an operation was lost."""
+
+
+class FencedSession(Session):
+    """Keep all worker writes on the connection holding its advisory lock.
+
+    A SQLAlchemy Connection can transparently reconnect after an invalidation.
+    Before every commit, check both its backend PID and its attempt token so a
+    reconnected or superseded worker cannot commit stale results.
+    """
+    def assert_ownership(self):
+        owner = self.info.get("owner")
+        if not owner:
+            return
+        try:
+            row = self.execute(text("""
+                SELECT pg_backend_pid() AS pid, worker_token::text AS token
+                FROM app_private.operations WHERE operation_id = :operation_id
+            """), {"operation_id": owner["operation_id"]}).mappings().first()
+        except Exception as exc:
+            raise LostOwnership("Cannot verify worker ownership") from exc
+        if not row or row["pid"] != owner["pid"] or row["token"] != owner["token"]:
+            raise LostOwnership("Worker no longer owns this operation")
+
+    def commit(self):
+        self.assert_ownership()
+        return super().commit()
 
 
 class ProcessingWorker:
     def __init__(self):
         self.running = False
         self.thread = None
+        # Continue past a page of live advisory locks on the next poll. Without
+        # this cursor, 100 long-running older jobs could starve newer jobs.
+        self._queue_cursor = None
         self._ensure_storage_dirs()
 
     def _ensure_storage_dirs(self):
@@ -62,95 +99,180 @@ class ProcessingWorker:
             try:
                 self._process_pending_operations()
             except Exception as e:
-                logger.error("Error in worker loop", error=str(e), exc_info=True)
+                logger.error("Error in worker loop", error_type=type(e).__name__)
             time.sleep(POLL_INTERVAL_SECONDS)
 
+    def _heartbeat(self, operation_id: str, token: str, stop: threading.Event):
+        """Health signal only, never a lease that can steal a live worker's job."""
+        while not stop.wait(HEARTBEAT_SECONDS):
+            db = SessionLocal()
+            try:
+                db.execute(text("""
+                    UPDATE app_private.operations SET heartbeat_at = NOW()
+                    WHERE operation_id = :id AND worker_token = :token AND status = 'PROCESSING'
+                """), {"id": operation_id, "token": token})
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.warning("Worker heartbeat failed", operation_id=operation_id, error_type=type(exc).__name__)
+            finally:
+                db.close()
+
     def _process_pending_operations(self):
-        """Fetch and process pending operations one at a time.
-        Opens a new session for each operation to ensure proper transaction management.
+        """Claim one pending or abandoned operation without stealing live work.
+
+        A session-level PostgreSQL advisory lock is held by the *same dedicated
+        database connection* used for every handler transaction. PostgreSQL
+        releases it when the worker process/connection dies. Heartbeat age alone
+        never authorises a takeover. Existing pre-fencing workers must be drained
+        before deploying this code.
         """
-        db = SessionLocal()
+        connection = engine.connect()
+        db = FencedSession(bind=connection, autoflush=False)
+        operation_id = None
+        lock_owned = False
+        heartbeat_stop = threading.Event()
+        heartbeat = None
+        context_token = None
         try:
-            # Find oldest pending CV processing operation
-            result = db.execute(text("""
-                SELECT operation_id, capability
+            cursor_filter = "" if self._queue_cursor is None else (
+                "AND (created_at, operation_id) > (:cursor_time, CAST(:cursor_id AS uuid))"
+            )
+            cursor_params = {} if self._queue_cursor is None else {
+                "cursor_time": self._queue_cursor[0], "cursor_id": str(self._queue_cursor[1])
+            }
+            rows = db.execute(text(f"""
+                SELECT operation_id, capability, status, ai_config_id, ai_config_snapshot, created_at
                 FROM app_private.operations
-                WHERE status = 'PENDING'
-                ORDER BY created_at ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """))
-            row = result.fetchone()
+                WHERE status IN ('PENDING', 'PROCESSING')
+                  AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING')
+                  {cursor_filter}
+                ORDER BY created_at, operation_id
+                LIMIT 100 FOR UPDATE SKIP LOCKED
+            """), cursor_params).mappings().all()
+            chosen = None
+            for row in rows:
+                got_lock = db.execute(text("""
+                    SELECT pg_try_advisory_lock(hashtextextended(:id, 418630021))
+                """), {"id": str(row["operation_id"])}).scalar_one()
+                if got_lock:
+                    chosen = row
+                    lock_owned = True
+                    operation_id = str(row["operation_id"])
+                    break
+            if not chosen:
+                self._queue_cursor = (rows[-1]["created_at"], rows[-1]["operation_id"]) if rows else None
+                db.rollback()
+                return
+            self._queue_cursor = None
 
-            if not row:
-                return  # No work to do
-
-            operation_id = row[0]
-            capability = row[1]
-
-            logger.info("Worker picked up operation", operation_id=operation_id, capability=capability)
-
-            # Mark as processing
+            capability, was_processing = chosen["capability"], chosen["status"] == "PROCESSING"
+            token = str(uuid4())
+            backend_pid = db.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            runtime = chosen["ai_config_snapshot"] or get_active_runtime(db)
             db.execute(text("""
                 UPDATE app_private.operations
-                SET status = 'PROCESSING', started_at = NOW()
+                SET status = 'PROCESSING', started_at = COALESCE(started_at, NOW()),
+                    attempt_started_at = NOW(), heartbeat_at = NOW(), worker_token = :token,
+                    attempt_count = attempt_count + 1,
+                    recovery_count = recovery_count + CASE WHEN :recovered THEN 1 ELSE 0 END,
+                    ai_config_id = :config_id, ai_config_snapshot = CAST(:snapshot AS jsonb),
+                    error_code = NULL, error_message = NULL
                 WHERE operation_id = :operation_id
-            """), {"operation_id": str(operation_id)})
-            db.commit()
-
-            # Route to appropriate handler
-            try:
-                if capability == "CV_PROCESSING":
-                    self._process_cv_batch(operation_id, db)
-                elif capability == "ASSESSMENT":
-                    self._run_assessments(operation_id, db)
-                elif capability == "RANKING":
-                    self._generate_ranking(operation_id, db)
-                else:
-                    logger.warning("Unknown operation capability", capability=capability)
-                    db.execute(text("""
-                        UPDATE app_private.operations
-                        SET status = 'FAILED', error_message = 'Unknown capability', completed_at = NOW()
-                        WHERE operation_id = :operation_id
-                    """), {"operation_id": str(operation_id)})
-                    db.commit()
-                    return
-
-                # Mark completed if handler didn't error
+            """), {"operation_id": operation_id, "token": token, "recovered": was_processing,
+                    "config_id": runtime.get("config_id"), "snapshot": json.dumps(runtime)})
+            if was_processing:
                 db.execute(text("""
-                    UPDATE app_private.operations
-                    SET status = 'COMPLETED', completed_at = NOW()
-                    WHERE operation_id = :operation_id AND status != 'FAILED'
-                """), {"operation_id": str(operation_id)})
+                    INSERT INTO app_private.operation_recovery_events(operation_id) VALUES (:operation_id)
+                """), {"operation_id": operation_id})
+            db.commit()
+            context_token = runtime_context.set(runtime)
+            db.info["owner"] = {"operation_id": operation_id, "pid": backend_pid, "token": token}
+            logger.info("Worker claimed operation", operation_id=operation_id, capability=capability, recovered=was_processing)
+            heartbeat = threading.Thread(target=self._heartbeat, args=(operation_id, token, heartbeat_stop), daemon=True)
+            heartbeat.start()
+
+            try:
+                if was_processing:
+                    # Only this fenced owner may reset unfinished child work.
+                    db.execute(text("""
+                        UPDATE app_private.assessment_runs SET status = 'FAILED', completed_at = NOW()
+                        WHERE operation_id = :operation_id AND status = 'PROCESSING'
+                    """), {"operation_id": operation_id})
+                    if capability == "CV_PROCESSING":
+                        db.execute(text("""
+                            UPDATE app_private.application_documents d
+                            SET file_processing_status = 'RECEIVED', processing_error = NULL
+                            FROM app_private.cv_batch_items bi
+                            JOIN app_private.cv_batches b ON b.batch_id = bi.batch_id
+                            WHERE b.operation_id = :operation_id AND d.application_id = bi.application_id
+                              AND d.file_processing_status = 'PROCESSING'
+                        """), {"operation_id": operation_id})
+                    db.commit()
+
+                if capability == "CV_PROCESSING":
+                    self._process_cv_batch(UUID(operation_id), db)
+                elif capability == "ASSESSMENT":
+                    self._run_assessments(UUID(operation_id), db)
+                else:
+                    self._generate_ranking(UUID(operation_id), db)
+
+                db.execute(text("""
+                    UPDATE app_private.operations SET status = 'COMPLETED', completed_at = NOW(), heartbeat_at = NOW()
+                    WHERE operation_id = :operation_id AND worker_token = :token
+                """), {"operation_id": operation_id, "token": token})
                 db.commit()
                 logger.info("Operation completed successfully", operation_id=operation_id)
-
-            except Exception as e:
-                logger.error("Operation failed", operation_id=operation_id, error=str(e), exc_info=True)
+            except LostOwnership:
                 db.rollback()
-                if capability == "CV_PROCESSING":
-                    # A batch-level failure must not leave untouched documents
-                    # appearing to process forever. Completed documents remain intact.
+                logger.warning("Worker lost operation ownership; no further writes", operation_id=operation_id)
+            except Exception as exc:
+                logger.error("Operation failed", operation_id=operation_id, error_type=type(exc).__name__)
+                db.rollback()
+                # A connection may have been replaced after the original error.
+                # Refuse even the failure write when this worker is no longer owner.
+                try:
+                    db.assert_ownership()
+                    if capability == "CV_PROCESSING":
+                        db.execute(text("""
+                            UPDATE app_private.application_documents d
+                            SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = 'Lô xử lý thất bại'
+                            FROM app_private.cv_batch_items bi JOIN app_private.cv_batches b ON b.batch_id = bi.batch_id
+                            WHERE b.operation_id = :operation_id AND bi.application_id = d.application_id
+                              AND d.file_processing_status IN ('RECEIVED', 'PROCESSING')
+                        """), {"operation_id": operation_id})
+                        db.execute(text("""
+                            UPDATE app_private.cv_batches SET status = 'FAILED', completed_at = NOW()
+                            WHERE operation_id = :operation_id AND status = 'PROCESSING'
+                        """), {"operation_id": operation_id})
                     db.execute(text("""
-                        UPDATE app_private.application_documents d
-                        SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = 'Lô xử lý thất bại'
-                        FROM app_private.cv_batch_items bi JOIN app_private.cv_batches b ON b.batch_id = bi.batch_id
-                        WHERE b.operation_id = :operation_id AND bi.application_id = d.application_id
-                          AND d.file_processing_status IN ('RECEIVED', 'PROCESSING')
-                    """), {"operation_id": str(operation_id)})
-                    db.execute(text("""
-                        UPDATE app_private.cv_batches SET status = 'FAILED', completed_at = NOW()
-                        WHERE operation_id = :operation_id AND status = 'PROCESSING'
-                    """), {"operation_id": str(operation_id)})
-                db.execute(text("""
-                    UPDATE app_private.operations
-                    SET status = 'FAILED', error_code = 'PROCESSING_ERROR', error_message = :error, completed_at = NOW()
-                    WHERE operation_id = :operation_id
-                """), {"operation_id": str(operation_id), "error": str(e)[:500]})
-                db.commit()
-
+                        UPDATE app_private.operations
+                        SET status = 'FAILED', error_code = 'PROCESSING_ERROR',
+                            error_message = 'Không thể xử lý tác vụ; vui lòng kiểm tra và thử lại.', completed_at = NOW()
+                        WHERE operation_id = :operation_id AND worker_token = :token
+                    """), {"operation_id": operation_id, "token": token})
+                    db.commit()
+                except LostOwnership:
+                    db.rollback()
+                    logger.warning("Worker could not record failure after losing ownership", operation_id=operation_id)
         finally:
-            db.close()
+            heartbeat_stop.set()
+            if context_token is not None:
+                runtime_context.reset(context_token)
+            if heartbeat:
+                heartbeat.join(timeout=2)
+            db.info.pop("owner", None)
+            db.close()  # rollback any unfinished transaction before unlocking
+            if lock_owned:
+                try:
+                    connection.execute(text("SELECT pg_advisory_unlock(hashtextextended(:id, 418630021))"),
+                                       {"id": operation_id})
+                    connection.commit()
+                except Exception:
+                    # Never return a session with a possibly-held advisory lock
+                    # to the pool. A broken connection is discarded instead.
+                    connection.invalidate()
+            connection.close()
 
     def _read_file_content(self, document) -> bytes:
         """Read file content from configured storage backend"""
@@ -173,14 +295,14 @@ class ProcessingWorker:
         else:
             raise ValueError(f"Unknown storage backend: {settings.STORAGE_BACKEND}")
 
-    def _save_extracted_text(self, application_id: str, document_id: str, full_text: str, pages: list) -> str:
+    def _save_extracted_text(self, application_id: str, document_id: str, full_text: str, pages: list, attempt_token: str) -> str:
         """Persist extracted text in the configured backend so assessment can read it."""
         bucket = settings.SUPABASE_STORAGE_BUCKET_EXTRACTED
         application_id, document_id = str(application_id), str(document_id)
-        relative_path = f"{application_id}/{document_id}/extracted.txt"
-        pages_path = f"{application_id}/{document_id}/pages.json"
+        relative_path = f"{application_id}/{document_id}/{attempt_token}/extracted.txt"
+        pages_path = f"{application_id}/{document_id}/{attempt_token}/pages.json"
         if settings.STORAGE_BACKEND == "local":
-            full_dir = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, application_id, document_id)
+            full_dir = os.path.join(settings.LOCAL_STORAGE_PATH, bucket, application_id, document_id, attempt_token)
             os.makedirs(full_dir, exist_ok=True)
             with open(os.path.join(settings.LOCAL_STORAGE_PATH, bucket, relative_path), "w", encoding="utf-8") as f:
                 f.write(full_text)
@@ -267,12 +389,24 @@ class ProcessingWorker:
                 content = self._read_file_content(doc)
 
                 # Process document: extract text
-                full_text, pages, doc_type = loop.run_until_complete(
+                raw_text, raw_pages, doc_type = loop.run_until_complete(
                     document_processor.process_document(content, doc["original_filename"], doc["mime_type"])
                 )
+                # Identity is extracted locally, never sent to the model.  The
+                # stored/model text and the evidence verifier use exactly the
+                # same minimised text, including for later re-assessments.
+                email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", raw_text)
+                phone_match = re.search(r"(?<!\w)(?:\+?\d[\d .()\-]{7,}\d)(?!\w)", raw_text)
+                full_text = redact_text(raw_text, detect_first_line_name=True)
+                # Never persist OCR diagnostic fields, which can contain raw text.
+                pages = [{"page_number": page.get("page_number"),
+                          "content": redact_text(page.get("content") or "", detect_first_line_name=True)}
+                         for page in raw_pages]
 
-                # Save extracted text
-                extracted_path = self._save_extracted_text(application_id, document_id, full_text, pages)
+                # Save minimised extracted text
+                db.assert_ownership()
+                extracted_path = self._save_extracted_text(application_id, document_id, full_text, pages,
+                                                           db.info["owner"]["token"])
 
                 # Update document processing run
                 db.execute(text("""
@@ -319,8 +453,6 @@ class ProcessingWorker:
                     # Extract basic contact signals locally; never infer a name from the
                     # opaque candidate_identifier returned by the model.
                     display_name = os.path.splitext(doc["original_filename"])[0]
-                    email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", full_text)
-                    phone_match = re.search(r"(?<!\w)(?:\+?\d[\d .()\-]{7,}\d)(?!\w)", full_text)
                     email = email_match.group(0).lower() if email_match else None
                     phone = re.sub(r"\D", "", phone_match.group(0)) if phone_match else None
 
@@ -359,6 +491,17 @@ class ProcessingWorker:
                             "confidence": 0.85
                         })
 
+                    for section, fact_type in (("languages", "LANGUAGE"), ("projects", "PROJECT")):
+                        for item in candidate_profile.get(section, []):
+                            value = {"name": item} if isinstance(item, str) else item
+                            facts.append({
+                                "profile_version_id": profile_version_id,
+                                "fact_type": fact_type,
+                                "fact_value": json.dumps(value),
+                                "source_page_number": value.get("page_number"),
+                                "confidence": 0.85,
+                            })
+
                     if facts:
                         for fact in facts:
                             db.execute(text("""
@@ -382,13 +525,13 @@ class ProcessingWorker:
 
                 except LLMError as e:
                     logger.error("Profile extraction failed, marking for HR review",
-                                application_id=application_id, error=str(e))
+                                application_id=application_id, error_type=type(e).__name__)
                     db.rollback()
                     db.execute(text("""
                         UPDATE app_private.application_documents
                         SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
                         WHERE document_id = :document_id
-                    """), {"document_id": document_id, "error": f"Profile extraction failed: {str(e)[:200]}"})
+                    """), {"document_id": document_id, "error": "Không thể trích xuất hồ sơ; HR cần kiểm tra"})
                     needs_review_count += 1
                     db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
                     db.commit()
@@ -400,29 +543,44 @@ class ProcessingWorker:
                 db.commit()
                 loop.close()
 
+            except LostOwnership:
+                db.rollback()
+                loop.close()
+                raise
             except Exception as e:
-                logger.error("Document processing failed", document_id=document_id, error=str(e))
+                logger.error("Document processing failed", document_id=document_id, error_type=type(e).__name__)
                 db.rollback()
                 db.execute(text("""
                     UPDATE app_private.application_documents
                     SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
                     WHERE document_id = :document_id
-                """), {"document_id": document_id, "error": str(e)[:200]})
+                """), {"document_id": document_id, "error": "Không thể xử lý tài liệu; HR cần kiểm tra"})
                 needs_review_count += 1
                 db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
                 db.commit()
                 loop.close()
 
-        # Preserve initial validation failures and mark the batch complete. The
-        # enclosing operation remains PROCESSING while assessment/ranking runs.
+        # Reconcile durable document and validation states after a crash. This
+        # also resumes assessment if all documents completed in a prior attempt.
+        counts = db.execute(text("""
+            SELECT COUNT(*) FILTER (WHERE bi.validation_result = 'ACCEPTED' AND EXISTS (
+                       SELECT 1 FROM app_private.application_documents d
+                       WHERE d.application_id = bi.application_id AND d.file_processing_status = 'COMPLETED')) AS processed,
+                   COUNT(*) FILTER (WHERE bi.validation_result = 'ERROR' OR EXISTS (
+                       SELECT 1 FROM app_private.application_documents d WHERE d.application_id = bi.application_id
+                         AND d.file_processing_status IN ('NEEDS_HR_REVIEW', 'ERROR_UNSUPPORTED'))) AS failed
+            FROM app_private.cv_batch_items bi WHERE bi.batch_id = :batch_id
+        """), {"batch_id": str(batch_id)}).mappings().one()
+        processed_count, failed_count = int(counts["processed"]), int(counts["failed"])
         db.execute(text("""
             UPDATE app_private.cv_batches
-            SET status = CASE WHEN failed_files = 0 THEN 'COMPLETED' ELSE 'PARTIALLY_COMPLETED' END,
+            SET processed_files = :processed, failed_files = :failed,
+                status = CASE WHEN :failed = 0 THEN 'COMPLETED' ELSE 'PARTIALLY_COMPLETED' END,
                 completed_at = NOW()
             WHERE batch_id = :batch_id
-        """), {"batch_id": str(batch_id)})
+        """), {"batch_id": str(batch_id), "processed": processed_count, "failed": failed_count})
         db.commit()
-        logger.info("Batch processing complete", batch_id=batch_id, processed=processed_count, needs_review=needs_review_count)
+        logger.info("Batch processing complete", batch_id=batch_id, processed=processed_count, needs_review=failed_count)
 
         if processed_count:
             criteria_result = db.execute(text("""
@@ -447,6 +605,7 @@ class ProcessingWorker:
         cv = db.execute(text("""
             SELECT criteria_version_id, jd_version_id, mandatory_weight_total, nice_to_have_weight_total
             FROM app_private.criteria_versions WHERE position_id = :position_id AND status = 'APPROVED'
+              AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :position_id ORDER BY version_number DESC LIMIT 1)
             ORDER BY version_number DESC LIMIT 1
         """), {"position_id": position_id}).mappings().first()
         if not cv:
@@ -482,7 +641,7 @@ class ProcessingWorker:
               AND NOT EXISTS (
                   SELECT 1 FROM app_private.assessment_runs ar
                   WHERE ar.application_id = a.application_id AND ar.criteria_version_id = :criteria_version_id
-                    AND ar.status = 'COMPLETED'
+                    AND ar.profile_version_id = profile.profile_version_id AND ar.status = 'COMPLETED'
               )
             ORDER BY a.application_id, d.created_at DESC
         """), {"position_id": position_id, "criteria_version_id": criteria_version_id}).mappings().all()
@@ -495,17 +654,21 @@ class ProcessingWorker:
                 try:
                     if not app["profile_version_id"] or not app["extracted_text_storage_path"]:
                         raise RuntimeError("Thiếu hồ sơ trích xuất hoặc văn bản CV")
-                    cv_text = self._load_extracted_text(app["extracted_text_storage_path"])
+                    # Old extracted files may predate minimisation. Redact again
+                    # before both the AI call and exact-quote verification.
+                    cv_text = redact_text(self._load_extracted_text(app["extracted_text_storage_path"]),
+                                          detect_first_line_name=True)
                     assessment_id = db.execute(text("""
                         INSERT INTO app_private.assessment_runs
                             (position_id, application_id, jd_version_id, criteria_version_id, profile_version_id,
-                             policy_version, operation_id, status)
+                             policy_version, operation_id, ai_config_id, status)
                         VALUES (:position_id, :application_id, :jd_version_id, :criteria_version_id,
-                                :profile_version_id, 'v1.0', :operation_id, 'PROCESSING')
+                                :profile_version_id, 'v1.0', :operation_id, :ai_config_id, 'PROCESSING')
                         RETURNING assessment_id
                     """), {"position_id": position_id, "application_id": application_id,
                             "jd_version_id": str(cv["jd_version_id"]), "criteria_version_id": criteria_version_id,
-                            "profile_version_id": str(app["profile_version_id"]), "operation_id": str(operation_id)}).scalar_one()
+                            "profile_version_id": str(app["profile_version_id"]), "operation_id": str(operation_id),
+                            "ai_config_id": (runtime_context.get() or {}).get("config_id")}).scalar_one()
                     db.commit()
                     facts = db.execute(text("""
                         SELECT fact_type, fact_value FROM app_private.profile_facts
@@ -518,6 +681,8 @@ class ProcessingWorker:
                         "work_history": [f["fact_value"] for f in facts if f["fact_type"] == "WORK_EXPERIENCE"],
                         "skills": [f["fact_value"].get("name") for f in facts if f["fact_type"] == "SKILL"],
                         "certifications": [f["fact_value"] for f in facts if f["fact_type"] == "CERTIFICATION"],
+                        "languages": [f["fact_value"] for f in facts if f["fact_type"] == "LANGUAGE"],
+                        "projects": [f["fact_value"] for f in facts if f["fact_type"] == "PROJECT"],
                     }
                     findings = loop.run_until_complete(llm_client.match_criterion_evidence(
                         cv_text=cv_text, candidate_profile=candidate_profile, rubric=criteria_items,
@@ -573,10 +738,13 @@ class ProcessingWorker:
                                     "quote": evidence["verbatim_quote"], "page_number": evidence.get("page_number"),
                                     "verification_status": "VERIFIED" if result.get("evidence_verified") else "FAILED"})
                     db.commit()
+                except LostOwnership:
+                    db.rollback()
+                    raise
                 except Exception as e:
                     db.rollback()
                     failed_count += 1
-                    logger.error("Assessment failed for application", application_id=application_id, error=str(e))
+                    logger.error("Assessment failed for application", application_id=application_id, error_type=type(e).__name__)
                     if assessment_id:
                         db.execute(text("""
                             UPDATE app_private.assessment_runs SET status = 'FAILED', completed_at = NOW()
@@ -585,10 +753,10 @@ class ProcessingWorker:
                         db.commit()
         finally:
             loop.close()
-        # Use the same operation id: completion now guarantees ranking is ready.
-        self._generate_ranking(operation_id, db, criteria_version_id=criteria_version_id)
         if failed_count:
             raise RuntimeError(f"Không thể đánh giá {failed_count} hồ sơ. Vui lòng kiểm tra kết nối AI và thử lại.")
+        # Use the same operation id: completion now guarantees ranking is ready.
+        self._generate_ranking(operation_id, db, criteria_version_id=criteria_version_id)
 
     def _generate_ranking(self, operation_id: UUID, db, criteria_version_id: Optional[str] = None):
         """Generate a snapshot for one position and one approved rubric version."""
@@ -597,10 +765,20 @@ class ProcessingWorker:
             criteria_version_id = db.execute(text("""
                 SELECT criteria_version_id FROM app_private.criteria_versions
                 WHERE position_id = :position_id AND status = 'APPROVED'
+                  AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :position_id ORDER BY version_number DESC LIMIT 1)
                 ORDER BY version_number DESC LIMIT 1
             """), {"position_id": position_id}).scalar_one_or_none()
         if not criteria_version_id:
             raise RuntimeError("Không có bộ tiêu chí đã duyệt để xếp hạng")
+        already_published = db.execute(text("""
+            SELECT 1 FROM app_private.ranking_runs r
+            WHERE r.operation_id = :operation_id AND r.status = 'COMPLETED'
+              AND NOT EXISTS (SELECT 1 FROM app_private.assessment_runs a
+                  WHERE a.operation_id = :operation_id AND a.status = 'COMPLETED' AND a.completed_at > r.created_at)
+            LIMIT 1
+        """), {"operation_id": str(operation_id)}).first()
+        if already_published:
+            return
         rows = db.execute(text("""
             SELECT DISTINCT ON (a.application_id) a.application_id, i.display_name, ar.assessment_id,
                    ar.matching_status, ar.matching_score, ar.evidence_coverage
@@ -609,6 +787,8 @@ class ProcessingWorker:
             JOIN app_private.assessment_runs ar ON ar.application_id = a.application_id
             WHERE a.position_id = :position_id AND a.application_status IN ('NEW', 'IN_REVIEW', 'SHORTLIST')
               AND ar.status = 'COMPLETED' AND ar.criteria_version_id = :criteria_version_id
+              AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                    WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
             ORDER BY a.application_id, ar.created_at DESC, ar.assessment_id DESC
         """), {"position_id": position_id, "criteria_version_id": str(criteria_version_id)}).mappings().all()
         applications = [{"application_id": row["application_id"], "display_name": row["display_name"],
@@ -618,11 +798,11 @@ class ProcessingWorker:
         ranked = matching_engine.rank_applications(applications, [])
         ranking_run_id = db.execute(text("""
             INSERT INTO app_private.ranking_runs
-                (position_id, criteria_version_id, policy_version, operation_id, status, completed_at)
-            VALUES (:position_id, :criteria_version_id, 'v1.0', :operation_id, 'COMPLETED', NOW())
+                (position_id, criteria_version_id, policy_version, operation_id, ai_config_id, status, completed_at)
+            VALUES (:position_id, :criteria_version_id, 'v1.0', :operation_id, :ai_config_id, 'COMPLETED', NOW())
             RETURNING ranking_run_id
         """), {"position_id": position_id, "criteria_version_id": str(criteria_version_id),
-                "operation_id": str(operation_id)}).scalar_one()
+                "operation_id": str(operation_id), "ai_config_id": (runtime_context.get() or {}).get("config_id")}).scalar_one()
         for item in ranked:
             assessment = item["latest_assessment"]
             db.execute(text("""
@@ -650,6 +830,7 @@ class ProcessingWorker:
                 WHERE NOT EXISTS (
                     SELECT 1 FROM app_private.duplicate_signals WHERE position_id = :position_id
                       AND signal_type = :signal_type
+                      AND NOT (review_status = 'DISMISSED' AND COALESCE(detector_version, '') = 'identity-changed')
                       AND ((application_id_1 = :first AND application_id_2 = :second)
                            OR (application_id_1 = :second AND application_id_2 = :first))
                 )

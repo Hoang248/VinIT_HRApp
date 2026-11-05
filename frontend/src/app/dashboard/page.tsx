@@ -1,5 +1,7 @@
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
+
 import * as React from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -35,6 +37,7 @@ const percent = (value: number | null | undefined) =>
   value == null ? '—' : `${Math.round(value * 100)}%`;
 
 export default function DashboardPage() {
+  const { t } = useI18n();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -47,40 +50,38 @@ export default function DashboardPage() {
       const response = await dashboardApi.getSummary();
       setSummary(response.data);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Không thể tải dữ liệu tổng hợp. Vui lòng thử lại.');
+      setError(err.response?.data?.detail || t("Không thể tải dữ liệu tổng hợp. Vui lòng thử lại."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { loadData(true); }, [loadData]);
 
   const cards = summary ? [
-    { label: 'Vị trí đang mở', value: summary.open_positions, icon: <WorkOutlineIcon />, color: '#134D8B', bg: '#EAF3FC' },
-    { label: 'Tổng hồ sơ', value: summary.total_applications, icon: <PeopleOutlineIcon />, color: '#0A2B57', bg: '#EAF3FC' },
-    { label: 'CV cần HR kiểm tra', value: summary.files_needing_hr_review, icon: <WarningAmberIcon />, color: '#B54708', bg: '#FFFAEB' },
-    { label: 'Đã shortlist', value: summary.applications_by_status.SHORTLIST, icon: <FactCheckOutlinedIcon />, color: '#067647', bg: '#ECFDF3' },
+    { label: t("Vị trí đang mở"), value: summary.open_positions, icon: <WorkOutlineIcon />, color: '#134D8B', bg: '#EAF3FC' },
+    { label: t("Tổng hồ sơ"), value: summary.total_applications, icon: <PeopleOutlineIcon />, color: '#0A2B57', bg: '#EAF3FC' },
+    { label: t("CV cần HR kiểm tra"), value: summary.files_needing_hr_review, icon: <WarningAmberIcon />, color: '#B54708', bg: '#FFFAEB' },
+    { label: t("Đã shortlist"), value: summary.applications_by_status.SHORTLIST, icon: <FactCheckOutlinedIcon />, color: '#067647', bg: '#ECFDF3' },
   ] : [];
 
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap', mb: 3 }}>
         <Box>
-          <Typography variant="overline" color="secondary.main">TỔNG QUAN TUYỂN DỤNG</Typography>
-          <Typography component="h1" variant="h1" sx={{ color: '#0A2B57', mt: 0.5 }}>Bảng điều khiển</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-            Số liệu theo vị trí và hồ sơ bạn được phép xem.
-          </Typography>
+          <Typography variant="overline" color="secondary.main">{t("TỔNG QUAN TUYỂN DỤNG")}</Typography>
+          <Typography component="h1" variant="h1" sx={{ color: '#0A2B57', mt: 0.5 }}>{t("Bảng điều khiển")}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t("Số liệu theo vị trí và hồ sơ bạn được phép xem.")}</Typography>
         </Box>
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={() => loadData()} disabled={refreshing || loading}>
-          {refreshing ? 'Đang cập nhật…' : 'Làm mới'}
+          {refreshing ? t("Đang cập nhật…") : t("Làm mới")}
         </Button>
       </Box>
 
-      {error && <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" onClick={() => loadData(!summary)}>Thử lại</Button>}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" onClick={() => loadData(!summary)}>{t("Thử lại")}</Button>}>{t(error)}</Alert>}
       {loading && (
-        <Grid container spacing={2} aria-label="Đang tải số liệu">
+        <Grid container spacing={2} aria-label={t("Đang tải số liệu")}>
           {[0, 1, 2, 3].map(n => <Grid item xs={12} sm={6} lg={3} key={n}><Skeleton variant="rounded" height={130} /></Grid>)}
           <Grid item xs={12}><Skeleton variant="rounded" height={260} /></Grid>
         </Grid>
@@ -106,24 +107,22 @@ export default function DashboardPage() {
           </Grid>
 
           {summary.total_applications === 0 && (
-            <Alert severity="info" sx={{ mb: 3 }} action={<Button component={Link} href="/positions" color="inherit">Xem vị trí</Button>}>
-              Chưa có hồ sơ trong phạm vi bạn được phép xem. Hãy bắt đầu từ một vị trí tuyển dụng.
-            </Alert>
+            <Alert severity="info" sx={{ mb: 3 }} action={<Button component={Link} href="/positions" color="inherit">{t("Xem vị trí")}</Button>}>{t("Chưa có hồ sơ trong phạm vi bạn được phép xem. Hãy bắt đầu từ một vị trí tuyển dụng.")}</Alert>
           )}
 
           <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
               <Card sx={{ height: '100%', border: '1px solid #E9EEF4' }}>
                 <CardContent>
-                  <Typography variant="h2" sx={{ fontSize: 18, color: '#0A2B57' }}>Trạng thái hồ sơ</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>Các giai đoạn do HR cập nhật</Typography>
+                  <Typography variant="h2" sx={{ fontSize: 18, color: '#0A2B57' }}>{t("Trạng thái hồ sơ")}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>{t("Các giai đoạn do HR cập nhật")}</Typography>
                   <TableContainer>
-                    <Table size="small" aria-label="Phân bố trạng thái hồ sơ">
-                      <TableHead><TableRow><TableCell>Trạng thái</TableCell><TableCell align="right">Số hồ sơ</TableCell></TableRow></TableHead>
+                    <Table size="small" aria-label={t("Phân bố trạng thái hồ sơ")}>
+                      <TableHead><TableRow><TableCell>{t("Trạng thái")}</TableCell><TableCell align="right">{t("Số hồ sơ")}</TableCell></TableRow></TableHead>
                       <TableBody>
                         {(Object.keys(APPLICATION_STATUSES) as ApplicationStatus[]).map(code => (
                           <TableRow key={code}>
-                            <TableCell><StatusBadge type={APPLICATION_STATUSES[code].badge} label={APPLICATION_STATUSES[code].label} /></TableCell>
+                            <TableCell><StatusBadge type={APPLICATION_STATUSES[code].badge} label={t(APPLICATION_STATUSES[code].label)} /></TableCell>
                             <TableCell align="right" sx={{ fontWeight: 600 }}>{summary.applications_by_status[code] ?? 0}</TableCell>
                           </TableRow>
                         ))}
@@ -136,41 +135,39 @@ export default function DashboardPage() {
             <Grid item xs={12} md={6}>
               <Card sx={{ height: '100%', border: '1px solid #E9EEF4' }}>
                 <CardContent>
-                  <Typography variant="h2" sx={{ fontSize: 18, color: '#0A2B57' }}>Chất lượng xử lý</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>Tính theo hồ sơ trong phạm vi được phân quyền</Typography>
+                  <Typography variant="h2" sx={{ fontSize: 18, color: '#0A2B57' }}>{t("Chất lượng xử lý")}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>{t("Tính theo hồ sơ trong phạm vi được phân quyền")}</Typography>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, mb: 1 }}>
-                    <Typography variant="body2">Độ phủ bằng chứng trung bình</Typography>
+                    <Typography variant="body2">{t("Độ phủ bằng chứng trung bình")}</Typography>
                     <Typography variant="body2" fontWeight={700}>{percent(summary.average_coverage)}</Typography>
                   </Box>
                   {summary.average_coverage != null && <LinearProgress variant="determinate" value={Math.min(100, summary.average_coverage * 100)} sx={{ height: 7, borderRadius: 4, mb: 1 }} />}
                   <Typography variant="caption" color="text.secondary">
-                    {summary.coverage_sample_size ? `Từ đánh giá hoàn tất gần nhất của ${summary.coverage_sample_size} hồ sơ.` : 'Chưa có đánh giá hoàn tất để tính độ phủ.'}
+                    {summary.coverage_sample_size ? t("Từ đánh giá hoàn tất gần nhất của {0} hồ sơ.", summary.coverage_sample_size) : t("Chưa có đánh giá hoàn tất để tính độ phủ.")}
                   </Typography>
                   <Box sx={{ mt: 3, display: 'grid', gap: 2 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body2">Hồ sơ có độ phủ dưới 70%</Typography>
+                      <Typography variant="body2">{t("Hồ sơ có độ phủ dưới 70%")}</Typography>
                       <Typography variant="body2" fontWeight={700}>{summary.coverage_under_threshold}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body2">Tỷ lệ CV cần HR kiểm tra</Typography>
+                      <Typography variant="body2">{t("Tỷ lệ CV cần HR kiểm tra")}</Typography>
                       <Typography variant="body2" fontWeight={700}>{percent(summary.files_needing_review_rate)}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body2"><ContentCopyIcon sx={{ fontSize: 15, verticalAlign: 'text-bottom', mr: 0.5 }} />Hồ sơ có cảnh báo trùng</Typography>
+                      <Typography variant="body2"><ContentCopyIcon sx={{ fontSize: 15, verticalAlign: 'text-bottom', mr: 0.5 }} />{t("Hồ sơ có cảnh báo trùng")}</Typography>
                       <Typography variant="body2" fontWeight={700}>{summary.duplicate_alerts}</Typography>
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body2">Hồ sơ đang xử lý CV</Typography>
+                      <Typography variant="body2">{t("Hồ sơ đang xử lý CV")}</Typography>
                       <Chip label={summary.applications_processing} size="small" color={summary.applications_processing ? 'info' : 'default'} />
                     </Box>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-                      <Typography variant="body2">Hồ sơ đã được đánh giá</Typography>
+                      <Typography variant="body2">{t("Hồ sơ đã được đánh giá")}</Typography>
                       <Typography variant="body2" fontWeight={700}>{summary.assessments_completed}</Typography>
                     </Box>
                   </Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
-                    Cảnh báo trùng là số hồ sơ có ít nhất một tín hiệu chưa xử lý, không phải số cặp trùng.
-                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>{t("Cảnh báo trùng là số hồ sơ có ít nhất một tín hiệu chưa xử lý, không phải số cặp trùng.")}</Typography>
                 </CardContent>
               </Card>
             </Grid>

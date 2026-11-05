@@ -1,5 +1,8 @@
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
+import { localizeServerMessage } from '@/i18n/serverMessages';
+
 import * as React from 'react';
 import {
   Box,
@@ -39,6 +42,8 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { applicationsApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
+import CandidateProfilePanel from '@/components/candidates/CandidateProfilePanel';
+import HRNotesPanel from '@/components/candidates/HRNotesPanel';
 import type { ApplicationWithAssessment } from '@/types';
 import { APPLICATION_STATUSES, APPLICATION_TRANSITIONS, isApplicationStatus } from '@/lib/applicationStatus';
 
@@ -77,6 +82,7 @@ const outcomeStyles: Record<string, { borderColor: string; label: string; color:
 };
 
 export default function ApplicantDetailPage() {
+  const { t, dateLocale, locale } = useI18n();
   const params = useParams();
   const positionId = params.id as string;
   const applicantId = params.applicantId as string;
@@ -105,13 +111,13 @@ export default function ApplicantDetailPage() {
       if (initial) setLoading(true);
       const res = await applicationsApi.getById(applicantId);
       if (currentRequest !== requestId.current) return;
-      if (res.data.position_id !== positionId) throw new Error('Hồ sơ không thuộc vị trí này');
+      if (res.data.position_id !== positionId) throw new Error(t("Hồ sơ không thuộc vị trí này"));
       setApplication(res.data);
       setError(null);
       if (res.data.can_update_status) {
         applicationsApi.getStatusEvents(applicantId).then(events => {
           if (currentRequest === requestId.current) { setHistory(events.data || []); setHistoryError(null); }
-        }).catch(() => { if (currentRequest === requestId.current) setHistoryError('Không thể tải lịch sử trạng thái.'); });
+        }).catch(() => { if (currentRequest === requestId.current) setHistoryError(t("Không thể tải lịch sử trạng thái.")); });
       } else { setHistory([]); setHistoryError(null); }
       if (res.data.can_view_cv) {
         try {
@@ -128,10 +134,10 @@ export default function ApplicantDetailPage() {
             setCvUrl(blobUrl.current);
           } else {
             setCvUrl(null);
-            setCvError('Không thể lấy đường dẫn CV.');
+            setCvError(t("Không thể lấy đường dẫn CV."));
           }
         } catch {
-          if (currentRequest === requestId.current) { setCvUrl(null); setCvError('Không thể tải CV gốc. Vui lòng thử lại sau.'); }
+          if (currentRequest === requestId.current) { setCvUrl(null); setCvError(t("Không thể tải CV gốc. Vui lòng thử lại sau.")); }
         }
       } else {
         if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
@@ -140,10 +146,10 @@ export default function ApplicantDetailPage() {
     } catch (err: any) {
       if (currentRequest === requestId.current) {
         if (err.response?.status === 403 || err.response?.status === 404) setApplication(null);
-        setError(err.response?.data?.detail || err.message || 'Không thể tải thông tin hồ sơ');
+        setError(err.response?.data?.detail || t("Không thể tải thông tin hồ sơ"));
       }
     } finally { if (currentRequest === requestId.current) setLoading(false); }
-  }, [applicantId, positionId]);
+  }, [applicantId, positionId, t]);
 
   useEffect(() => {
     loadData(true);
@@ -153,14 +159,14 @@ export default function ApplicantDetailPage() {
   const handleStatusUpdate = async () => {
     if (!newStatus || statusSubmitting) return;
     const rejected = newStatus.startsWith('REJECTED');
-    if (rejected && !statusReason.trim()) { setStatusError('Vui lòng nhập lý do loại hồ sơ.'); return; }
+    if (rejected && !statusReason.trim()) { setStatusError(t("Vui lòng nhập lý do loại hồ sơ.")); return; }
     try {
       setStatusSubmitting(true); setStatusError(null);
       await applicationsApi.updateStatus(applicantId, newStatus, statusReason.trim() || undefined, statusNote.trim() || undefined);
       setStatusDialogOpen(false); setSuccess(true);
       await loadData();
     } catch (err: any) {
-      setStatusError(err.response?.data?.detail || 'Cập nhật trạng thái không thành công');
+      setStatusError(err.response?.data?.detail || t("Cập nhật trạng thái không thành công"));
     } finally { setStatusSubmitting(false); }
   };
 
@@ -175,15 +181,16 @@ export default function ApplicantDetailPage() {
   }
 
   if (!application) {
-    return <Alert severity="error" action={<Button onClick={() => loadData(true)}>Thử lại</Button>}>{error || 'Không tìm thấy hồ sơ ứng viên'}</Alert>;
+    return <Alert severity="error" action={<Button onClick={() => loadData(true)}>{t("Thử lại")}</Button>}>{t(error || "Không tìm thấy hồ sơ ứng viên")}</Alert>;
   }
 
   const assessment = application.latest_assessment;
   const criteriaResults = assessment?.criterion_results || [];
+  const canViewEvidence = Boolean(application.can_view_assessment_evidence);
   const currentStatus = isApplicationStatus(application.application_status) ? application.application_status : null;
   const nextStatuses = currentStatus ? APPLICATION_TRANSITIONS[currentStatus] : [];
   const statusLabel = currentStatus ? APPLICATION_STATUSES[currentStatus] : null;
-  const selectedLabel = isApplicationStatus(newStatus) ? APPLICATION_STATUSES[newStatus].label : newStatus;
+  const selectedLabel = isApplicationStatus(newStatus) ? t(APPLICATION_STATUSES[newStatus].label) : newStatus;
   const isPdf = application.documents?.[0]?.mime_type === 'application/pdf' || /\.pdf$/i.test(application.documents?.[0]?.original_filename || '');
 
   return (
@@ -195,7 +202,7 @@ export default function ApplicantDetailPage() {
         startIcon={<ArrowBackIcon />}
         sx={{ color: '#0A2B57', mb: 2 }}
       >
-        {application.can_update_status ? 'Quay lại danh sách xếp hạng' : 'Quay lại shortlist'}
+        {application.can_update_status ? t("Quay lại danh sách xếp hạng") : t("Quay lại shortlist")}
       </Button>
 
       {/* Warnings */}
@@ -206,13 +213,12 @@ export default function ApplicantDetailPage() {
         >
           {application.file_processing_status === 'NEEDS_HR_REVIEW' && (
             <Typography variant="body2">
-              <strong>CV cần được HR xem lại:</strong> {application.file_error || 'File CV có vấn đề (lỗi xử lý, định dạng quét/OCR cần thiết, hoặc bị mã hóa).'}
+              <strong>{t("CV cần được HR xem lại:")}</strong> {application.file_error ? localizeServerMessage(application.file_error, locale) : t("File CV có vấn đề (lỗi xử lý, định dạng quét/OCR cần thiết, hoặc bị mã hóa).")}
             </Typography>
           )}
           {application.has_duplicate_warning && (
             <Typography variant="body2" sx={{ mt: application.file_processing_status === 'NEEDS_HR_REVIEW' ? 0.5 : 0 }}>
-              <strong>Cảnh báo trùng lặp:</strong> Phát hiện hồ sơ có thể đã tồn tại trong hệ thống. Vui lòng kiểm tra lại trước khi đưa ra quyết định.
-            </Typography>
+              <strong>{t("Cảnh báo trùng lặp:")}</strong> {t("Phát hiện hồ sơ có thể đã tồn tại trong hệ thống. Vui lòng kiểm tra lại trước khi đưa ra quyết định.")}</Typography>
           )}
         </Alert>
       )}
@@ -221,32 +227,32 @@ export default function ApplicantDetailPage() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap', mb: 2 }}>
         <Box>
           <Typography variant="h1" sx={{ fontSize: 24, color: '#0A2B57', mb: 0.5 }}>
-            {application.identity?.display_name || 'Hồ sơ ứng viên'}
+            {application.identity?.display_name || t("Hồ sơ ứng viên")}
           </Typography>
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary" fontFamily="monospace">
               ID: {application.application_id.slice(0, 8)}...
             </Typography>
             {application.file_processing_status === 'PROCESSING' && (
-              <Chip label="Đang xử lý CV" size="small" />
+              <Chip label={t("Đang xử lý CV")} size="small" />
             )}
             {application.has_duplicate_warning && (
-              <Chip label="Hồ sơ trùng lặp" size="small" sx={{ backgroundColor: '#FEF0C7', color: '#B54708' }} />
+              <Chip label={t("Hồ sơ trùng lặp")} size="small" sx={{ backgroundColor: '#FEF0C7', color: '#B54708' }} />
             )}
             {assessment && (
               <>
                 {assessment.matching_status === 'MEETS_MANDATORY' && (
-                  <StatusBadge type="match-meets" label="Đáp ứng bắt buộc" />
+                  <StatusBadge type="match-meets" label={t("Đáp ứng bắt buộc")} />
                 )}
                 {assessment.matching_status === 'NEEDS_HR_VERIFICATION' && (
-                  <StatusBadge type="match-verify" label="Cần HR xác minh" />
+                  <StatusBadge type="match-verify" label={t("Cần HR xác minh")} />
                 )}
                 {assessment.matching_status === 'POSSIBLE_MISMATCH' && (
-                  <StatusBadge type="match-mismatch" label="Có dấu hiệu miss-match" />
+                  <StatusBadge type="match-mismatch" label={t("Có dấu hiệu miss-match")} />
                 )}
               </>
             )}
-            {statusLabel && <StatusBadge type={statusLabel.badge} label={statusLabel.label} />}
+            {statusLabel && <StatusBadge type={statusLabel.badge} label={t(statusLabel.label)} />}
           </Box>
         </Box>
 
@@ -259,15 +265,14 @@ export default function ApplicantDetailPage() {
             rel="noreferrer"
             disabled={!cvUrl}
             sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
-          >
-            Tải CV gốc
-          </Button>
+          >{t("Tải CV gốc")}</Button>
           {application.can_update_status && nextStatuses.length > 0 && (
             <FormControl size="small" sx={{ minWidth: 220 }}>
-              <InputLabel>Cập nhật trạng thái</InputLabel>
+              <InputLabel id="application-status-label">{t("Cập nhật trạng thái")}</InputLabel>
               <Select
+                labelId="application-status-label"
                 value=""
-                label="Cập nhật trạng thái"
+                label={t("Cập nhật trạng thái")}
                 onChange={(e) => {
                   if (e.target.value) {
                     setNewStatus(e.target.value);
@@ -277,34 +282,37 @@ export default function ApplicantDetailPage() {
                 }}
               >
                 {nextStatuses.map(code => (
-                  <MenuItem key={code} value={code}>{APPLICATION_STATUSES[code].label}</MenuItem>
+                  <MenuItem key={code} value={code}>{t(APPLICATION_STATUSES[code].label)}</MenuItem>
                 ))}
               </Select>
             </FormControl>
           )}
           {application.can_update_status && currentStatus && nextStatuses.length === 0 && (
-            <Chip label="Hồ sơ đã kết thúc" size="small" color="default" />
+            <Chip label={t("Hồ sơ đã kết thúc")} size="small" color="default" />
           )}
         </Box>
       </Box>
 
+      {application.can_view_cv && <CandidateProfilePanel key={applicantId} applicationId={applicantId} canEdit={!!application.can_update_status} onSaved={() => { loadData(); }} />}
+      {application.can_manage_hr_notes && <HRNotesPanel key={applicantId} applicationId={applicantId} />}
+
       {application.can_update_status && (
         <Accordion disableGutters elevation={0} sx={{ mb: 3, border: '1px solid #E4E7EC', borderRadius: '8px !important', '&:before': { display: 'none' } }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />} aria-controls="status-history-content" id="status-history-header">
-            <Typography fontWeight={600}>Lịch sử trạng thái {history.length > 0 && `(${history.length})`}</Typography>
+            <Typography fontWeight={600}>{t("Lịch sử trạng thái ")}{history.length > 0 && `(${history.length})`}</Typography>
           </AccordionSummary>
           <AccordionDetails id="status-history-content">
-            {historyError ? <Alert severity="error">{historyError}</Alert> : history.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">Chưa có thay đổi trạng thái.</Typography>
+            {historyError ? <Alert severity="error">{t(historyError)}</Alert> : history.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">{t("Chưa có thay đổi trạng thái.")}</Typography>
             ) : history.map(event => (
               <Box key={event.event_id} sx={{ py: 1.5, borderTop: '1px solid #EDF1F5' }}>
                 <Typography variant="body2" fontWeight={600}>
-                  {event.previous_status && isApplicationStatus(event.previous_status) ? APPLICATION_STATUSES[event.previous_status].label : event.previous_status || '—'} →{' '}
-                  {isApplicationStatus(event.new_status) ? APPLICATION_STATUSES[event.new_status].label : event.new_status}
+                  {event.previous_status && isApplicationStatus(event.previous_status) ? t(APPLICATION_STATUSES[event.previous_status].label) : event.previous_status || '—'} →{' '}
+                  {isApplicationStatus(event.new_status) ? t(APPLICATION_STATUSES[event.new_status].label) : event.new_status}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">{event.changed_by_name || 'HR'} · {new Date(event.changed_at).toLocaleString('vi-VN')}</Typography>
-                {event.reason && <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>Lý do: {event.reason}</Typography>}
-                {event.note && <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>Ghi chú: {event.note}</Typography>}
+                <Typography variant="caption" color="text.secondary">{event.changed_by_name || 'HR'} · {new Date(event.changed_at).toLocaleString(dateLocale)}</Typography>
+                {event.reason && <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>{t("Lý do: ")}{event.reason}</Typography>}
+                {event.note && <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>{t("Ghi chú: ")}{event.note}</Typography>}
               </Box>
             ))}
           </AccordionDetails>
@@ -312,9 +320,7 @@ export default function ApplicantDetailPage() {
       )}
 
       {assessment?.evidence_coverage != null && assessment.evidence_coverage < 0.7 && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          Chưa đủ dữ liệu để xếp hạng ổn định. Điểm chỉ mang tính tham khảo; HR cần kiểm tra bằng chứng trước khi quyết định.
-        </Alert>
+        <Alert severity="warning" sx={{ mb: 2 }}>{t("Chưa đủ dữ liệu để xếp hạng ổn định. Điểm chỉ mang tính tham khảo; HR cần kiểm tra bằng chứng trước khi quyết định.")}</Alert>
       )}
 
       {/* Score summary */}
@@ -323,7 +329,7 @@ export default function ApplicantDetailPage() {
           <Grid item xs={12} sm={4}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
-                <Typography variant="caption" color="text.secondary">Điểm matching tổng hợp</Typography>
+                <Typography variant="caption" color="text.secondary">{t("Điểm matching tổng hợp")}</Typography>
                 <Typography
                   variant="h3"
                   sx={{
@@ -343,7 +349,7 @@ export default function ApplicantDetailPage() {
           <Grid item xs={12} sm={4}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
-                <Typography variant="caption" color="text.secondary">Độ phủ bằng chứng</Typography>
+                <Typography variant="caption" color="text.secondary">{t("Độ phủ bằng chứng")}</Typography>
                 <Typography
                   variant="h3"
                   sx={{
@@ -356,9 +362,7 @@ export default function ApplicantDetailPage() {
                   {assessment.evidence_coverage !== null ? `${Math.round(assessment.evidence_coverage * 100)}%` : '-'}
                 </Typography>
                 {assessment.evidence_coverage !== null && assessment.evidence_coverage < 0.7 && (
-                  <Typography variant="caption" color="#B54708">
-                    Chưa đủ dữ liệu để xếp hạng ổn định
-                  </Typography>
+                  <Typography variant="caption" color="#B54708">{t("Chưa đủ dữ liệu để xếp hạng ổn định")}</Typography>
                 )}
               </CardContent>
             </Card>
@@ -366,12 +370,12 @@ export default function ApplicantDetailPage() {
           <Grid item xs={12} sm={4}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
-                <Typography variant="caption" color="text.secondary">Số tiêu chí đánh giá</Typography>
+                <Typography variant="caption" color="text.secondary">{t("Số tiêu chí đánh giá")}</Typography>
                 <Typography variant="h3" sx={{ fontSize: 32, fontWeight: 'bold', color: '#0A2B57', mt: 1 }}>
-                  {application.can_view_cv ? criteriaResults.length : '—'}
+                  {canViewEvidence ? criteriaResults.length : '—'}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {application.can_view_cv ? `${criteriaResults.filter(r => r.outcome === 'MATCH' || r.outcome === 'STRONG_MATCH').length} đáp ứng, ${criteriaResults.filter(r => r.outcome === 'UNCLEAR').length} chưa rõ` : 'Chỉ được phép xem tóm tắt'}
+                  {canViewEvidence ? t("{0} đáp ứng, {1} chưa rõ", criteriaResults.filter(r => r.outcome === 'MATCH' || r.outcome === 'STRONG_MATCH').length, criteriaResults.filter(r => r.outcome === 'UNCLEAR').length) : t("Chỉ được phép xem tóm tắt")}
                 </Typography>
               </CardContent>
             </Card>
@@ -381,7 +385,7 @@ export default function ApplicantDetailPage() {
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-          {error}
+          {t(error)}
         </Alert>
       )}
 
@@ -389,15 +393,11 @@ export default function ApplicantDetailPage() {
       <Grid container spacing={3}>
         {/* Left Column: Criteria Assessment & Evidence */}
         <Grid item xs={12} md={6}>
-          <Typography variant="h4" sx={{ fontSize: 16, fontWeight: 600, color: '#0A2B57', mb: 2 }}>
-            Kết quả đánh giá theo tiêu chí
-          </Typography>
+          <Typography variant="h4" sx={{ fontSize: 16, fontWeight: 600, color: '#0A2B57', mb: 2 }}>{t("Kết quả đánh giá theo tiêu chí")}</Typography>
 
           {criteriaResults.length === 0 ? (
             <Card>
-              <CardContent sx={{ textAlign: 'center', py: 6, color: 'text.secondary' }}>
-                Chưa có kết quả đánh giá cho hồ sơ này
-              </CardContent>
+              <CardContent sx={{ textAlign: 'center', py: 6, color: 'text.secondary' }}>{assessment && !canViewEvidence ? t("Bản đánh giá này chỉ được chia sẻ ở chế độ tóm tắt.") : t("Chưa có kết quả đánh giá cho hồ sơ này")}</CardContent>
             </Card>
           ) : (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -421,7 +421,7 @@ export default function ApplicantDetailPage() {
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                         <Box>
                           <Chip
-                            label={style.label}
+                            label={t(style.label)}
                             size="small"
                             sx={{
                               backgroundColor: `${style.borderColor}15`,
@@ -434,7 +434,7 @@ export default function ApplicantDetailPage() {
                             }}
                           />
                           <Chip
-                            label={result.category === 'MUST_HAVE' ? 'Bắt buộc' : 'Ưu tiên'}
+                            label={result.category === 'MUST_HAVE' ? t("Bắt buộc") : t("Ưu tiên")}
                             size="small"
                             sx={{
                               backgroundColor: result.category === 'MUST_HAVE' ? '#FDF2F2' : '#E8F1FC',
@@ -493,7 +493,7 @@ export default function ApplicantDetailPage() {
                           </Typography>
                           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
                             <Chip
-                              label={!verified ? 'Trích dẫn chưa xác minh' : (isPdf && page ? `Trang ${page} · Đã xác minh` : 'Đoạn trích đã xác minh')}
+                              label={!verified ? t("Trích dẫn chưa xác minh") : (isPdf && page ? t("Trang {0} · Đã xác minh", page) : t("Đoạn trích đã xác minh"))}
                               size="small"
                               sx={{
                                 backgroundColor: verified ? '#0A2B57' : '#B54708',
@@ -508,9 +508,7 @@ export default function ApplicantDetailPage() {
                       )}
 
                       {result.outcome === 'UNCLEAR' && (
-                        <Alert severity="warning" icon={false} sx={{ mt: 2, py: 0, fontSize: 12 }}>
-                          Không tìm thấy bằng chứng rõ ràng. Vui lòng kiểm tra CV để xác minh.
-                        </Alert>
+                        <Alert severity="warning" icon={false} sx={{ mt: 2, py: 0, fontSize: 12 }}>{t("Không tìm thấy bằng chứng rõ ràng. Vui lòng kiểm tra CV để xác minh.")}</Alert>
                       )}
                     </CardContent>
                   </Card>
@@ -523,18 +521,16 @@ export default function ApplicantDetailPage() {
         {/* Right Column: CV Viewer */}
         <Grid item xs={12} md={6}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h4" sx={{ fontSize: 16, fontWeight: 600, color: '#0A2B57' }}>
-              CV gốc
-            </Typography>
+            <Typography variant="h4" sx={{ fontSize: 16, fontWeight: 600, color: '#0A2B57' }}>{t("CV gốc")}</Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Tooltip title="Trang trước">
-                <IconButton aria-label="Trang trước" size="small" disabled={!cvUrl || !isPdf || selectedPage <= 1} onClick={() => jumpToPage(selectedPage - 1)}>
+              <Tooltip title={t("Trang trước")}>
+                <IconButton aria-label={t("Trang trước")} size="small" disabled={!cvUrl || !isPdf || selectedPage <= 1} onClick={() => jumpToPage(selectedPage - 1)}>
                   <NavigateBeforeIcon />
                 </IconButton>
               </Tooltip>
-              <Typography variant="body2">Trang {selectedPage}</Typography>
-              <Tooltip title="Trang sau">
-                <IconButton aria-label="Trang sau" size="small" disabled={!cvUrl || !isPdf} onClick={() => jumpToPage(selectedPage + 1)}>
+              <Typography variant="body2">{t("Trang")} {selectedPage}</Typography>
+              <Tooltip title={t("Trang sau")}>
+                <IconButton aria-label={t("Trang sau")} size="small" disabled={!cvUrl || !isPdf} onClick={() => jumpToPage(selectedPage + 1)}>
                   <NavigateNextIcon />
                 </IconButton>
               </Tooltip>
@@ -556,7 +552,7 @@ export default function ApplicantDetailPage() {
                 </Box>
               ) : (
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'text.secondary' }}>
-                  <Typography variant="body2">{!application.can_view_cv ? 'Shortlist này không cho phép xem CV gốc.' : cvError || (cvUrl && !isPdf ? 'Tệp DOCX cần được tải xuống để xem.' : 'Không thể tải CV. Vui lòng thử lại.')}</Typography>
+                  <Typography variant="body2">{!application.can_view_cv ? t("Shortlist này không cho phép xem CV gốc.") : cvError ? t(cvError) : (cvUrl && !isPdf ? t("Tệp DOCX cần được tải xuống để xem.") : t("Không thể tải CV. Vui lòng thử lại."))}</Typography>
                 </Box>
               )}
             </CardContent>
@@ -566,29 +562,27 @@ export default function ApplicantDetailPage() {
 
       {/* Status changes follow the server transition matrix. */}
       <Dialog open={statusDialogOpen} onClose={() => !statusSubmitting && setStatusDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Xác nhận chuyển sang: {selectedLabel}</DialogTitle>
+        <DialogTitle>{t("Xác nhận chuyển sang: ")}{selectedLabel}</DialogTitle>
         <DialogContent dividers>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Trạng thái hiện tại: <strong>{statusLabel?.label}</strong>. Quyết định và lý do sẽ được lưu vào lịch sử hồ sơ.
-          </Typography>
-          {statusError && <Alert severity="error" sx={{ mb: 2 }}>{statusError}</Alert>}
+          <Typography variant="body2" sx={{ mb: 2 }}>{t("            Trạng thái hiện tại:")} <strong>{statusLabel ? t(statusLabel.label) : ""}</strong>{t(". Quyết định và lý do sẽ được lưu vào lịch sử hồ sơ.")}</Typography>
+          {statusError && <Alert severity="error" sx={{ mb: 2 }}>{t(statusError)}</Alert>}
           {newStatus.startsWith('REJECTED') && (
-            <TextField label="Lý do loại hồ sơ" required fullWidth multiline minRows={2} value={statusReason}
+            <TextField label={t("Lý do loại hồ sơ")} required fullWidth multiline minRows={2} value={statusReason}
               onChange={e => setStatusReason(e.target.value)} inputProps={{ maxLength: 1000 }} sx={{ mb: 2 }} />
           )}
-          <TextField label="Ghi chú (tùy chọn)" fullWidth multiline minRows={2} value={statusNote}
+          <TextField label={t("Ghi chú (tùy chọn)")} fullWidth multiline minRows={2} value={statusNote}
             onChange={e => setStatusNote(e.target.value)} inputProps={{ maxLength: 2000 }} />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setStatusDialogOpen(false)} disabled={statusSubmitting}>Hủy</Button>
+          <Button onClick={() => setStatusDialogOpen(false)} disabled={statusSubmitting}>{t("Hủy")}</Button>
           <Button variant="contained" color={newStatus.startsWith('REJECTED') ? 'error' : 'secondary'}
             disabled={statusSubmitting || (newStatus.startsWith('REJECTED') && !statusReason.trim())} onClick={handleStatusUpdate}>
-            {statusSubmitting ? 'Đang lưu…' : 'Xác nhận'}
+            {statusSubmitting ? t("Đang lưu…") : t("Xác nhận")}
           </Button>
         </DialogActions>
       </Dialog>
       <Snackbar open={success} autoHideDuration={4000} onClose={() => setSuccess(false)}
-        message="Đã cập nhật trạng thái hồ sơ" />
+        message={t("Đã cập nhật trạng thái hồ sơ")} />
     </Box>
   );
 }

@@ -22,7 +22,7 @@ def get_supabase_client() -> Optional[Client]:
             settings.SUPABASE_SERVICE_ROLE_KEY
         )
     except Exception as e:
-        logger.error("Failed to initialize Supabase client", error=str(e))
+        logger.error("Failed to initialize Supabase client", error_type=type(e).__name__)
         return None
 
 

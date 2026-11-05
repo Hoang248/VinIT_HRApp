@@ -1,5 +1,7 @@
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
+
 import * as React from 'react';
 import { Box, Divider, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import WorkIcon from '@mui/icons-material/Work';
@@ -18,6 +20,7 @@ const menuItems = [
 ];
 
 export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean }) {
+  const { t } = useI18n();
   const pathname = usePathname();
   const content = (
     <>
@@ -25,10 +28,10 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: 
         <Box sx={{ backgroundColor: '#fff', borderRadius: 1.5, px: 2, py: 1.5, mb: 1.5, display: 'flex', justifyContent: 'center' }}>
           <Box component="img" src="/vinuni-logo.png" alt="VinUniversity" sx={{ height: 32, width: 'auto', maxWidth: '100%' }} />
         </Box>
-        <Typography variant="overline" sx={{ color: 'rgba(255,255,255,.75)', display: 'block', textAlign: 'center' }}>AI CV SCREENING</Typography>
+        <Typography variant="overline" sx={{ color: 'rgba(255,255,255,.75)', display: 'block', textAlign: 'center' }}>{t("Sàng lọc CV với AI")}</Typography>
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.12)' }} />
-      <List sx={{ pt: 2 }} component="nav" aria-label="Điều hướng chính">
+      <List sx={{ pt: 2 }} component="nav" aria-label={t("Điều hướng chính")}>
         {menuItems.filter(item => item.href !== '/admin' || isAdmin).map(item => (
           <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton component={Link} href={item.href} onClick={onClose} selected={pathname.startsWith(item.href)}
@@ -37,13 +40,13 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: 
                 '&.Mui-selected': { backgroundColor: '#941616', '&:hover': { backgroundColor: '#7a1212' }, '& .MuiListItemIcon-root': { color: 'white' } },
                 '&:hover': { backgroundColor: 'rgba(255,255,255,.08)' } }}>
               <ListItemIcon sx={{ color: 'rgba(255,255,255,.75)', minWidth: 40 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.text} primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }} />
+              <ListItemText primary={t(item.text)} primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }} />
             </ListItemButton>
           </ListItem>
         ))}
       </List>
       <Box sx={{ flexGrow: 1 }} />
-      <Box sx={{ p: 2, textAlign: 'center' }}><Typography variant="caption" sx={{ color: 'rgba(255,255,255,.5)' }}>© {new Date().getFullYear()} VinUniversity<br />Nội bộ sử dụng</Typography></Box>
+      <Box sx={{ p: 2, textAlign: 'center' }}><Typography variant="caption" sx={{ color: 'rgba(255,255,255,.5)' }}>© {new Date().getFullYear()} VinUniversity<br />{t("Nội bộ sử dụng")}</Typography></Box>
     </>
   );
   const paper = { width: DRAWER_WIDTH, boxSizing: 'border-box', borderRight: 'none', backgroundColor: '#0A2B57', color: 'white' } as const;

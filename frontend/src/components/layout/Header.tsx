@@ -1,5 +1,8 @@
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
+import LanguageSwitcher from '@/i18n/LanguageSwitcher';
+
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { AppBar, Avatar, Box, Divider, IconButton, Menu, MenuItem, Toolbar, Tooltip, Typography } from '@mui/material';
@@ -12,6 +15,7 @@ import { DRAWER_WIDTH } from './Sidebar';
 const APPBAR_HEIGHT = 64;
 
 export default function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
+  const { t } = useI18n();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [profile, setProfile] = useState<{ display_name?: string; email?: string } | null>(null);
   const router = useRouter();
@@ -22,18 +26,19 @@ export default function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
     setAnchor(null);
     router.replace('/');
   };
-  const name = profile?.display_name || profile?.email || 'Tài khoản';
+  const name = profile?.display_name || profile?.email || t("Tài khoản");
   return (
     <AppBar position="fixed" sx={{ height: APPBAR_HEIGHT, width: { xs: '100%', md: `calc(100% - ${DRAWER_WIDTH}px)` },
       ml: { md: `${DRAWER_WIDTH}px` }, zIndex: theme => theme.zIndex.drawer + 1, backgroundColor: '#0A2B57', boxShadow: '0 1px 3px rgba(0,0,0,.1)' }}>
       <Toolbar sx={{ minHeight: `${APPBAR_HEIGHT}px !important`, gap: 1.5 }}>
-        <IconButton color="inherit" onClick={onOpenMenu} aria-label="Mở menu điều hướng" edge="start" sx={{ display: { xs: 'inline-flex', md: 'none' } }}><MenuIcon /></IconButton>
+        <IconButton color="inherit" onClick={onOpenMenu} aria-label={t("Mở menu điều hướng")} edge="start" sx={{ display: { xs: 'inline-flex', md: 'none' } }}><MenuIcon /></IconButton>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700 }}>Không gian tuyển dụng</Typography>
-          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,.7)', display: { xs: 'none', sm: 'block' } }}>AI hỗ trợ · Con người quyết định</Typography>
+          <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700 }}>{t("Không gian tuyển dụng")}</Typography>
+          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,.7)', display: { xs: 'none', sm: 'block' } }}>{t("AI hỗ trợ · Con người quyết định")}</Typography>
         </Box>
-        <Tooltip title="Tài khoản">
-          <IconButton onClick={event => setAnchor(event.currentTarget)} aria-label="Mở menu tài khoản" aria-haspopup="menu" aria-expanded={!!anchor}>
+        <LanguageSwitcher light />
+        <Tooltip title={t("Tài khoản")}>
+          <IconButton onClick={event => setAnchor(event.currentTarget)} aria-label={t("Mở menu tài khoản")} aria-haspopup="menu" aria-expanded={!!anchor}>
             <Avatar sx={{ width: 36, height: 36, backgroundColor: '#C72127', fontSize: 14, fontWeight: 700 }}>{name.charAt(0).toUpperCase()}</Avatar>
           </IconButton>
         </Tooltip>
@@ -44,7 +49,7 @@ export default function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
         <Box sx={{ px: 2, py: 1 }}><Typography variant="body2" fontWeight={700}>{name}</Typography>
           {profile?.email && <Typography variant="caption" color="text.secondary">{profile.email}</Typography>}</Box>
         <Divider />
-        <MenuItem onClick={handleLogout} sx={{ gap: 1, color: 'error.main' }}><LogoutIcon fontSize="small" />Đăng xuất</MenuItem>
+        <MenuItem onClick={handleLogout} sx={{ gap: 1, color: 'error.main' }}><LogoutIcon fontSize="small" />{t("Đăng xuất")}</MenuItem>
       </Menu>
     </AppBar>
   );

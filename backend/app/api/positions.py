@@ -4,7 +4,7 @@ from uuid import UUID
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError
 from app.core.permissions import check_position_access, can_update_application_status
-from app.schemas.positions import Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus
+from app.schemas.positions import Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus, JDVersionCreate
 from app.schemas.common import ErrorResponse
 from app.db.supabase import get_supabase_client
 from app.db.database import SessionLocal
@@ -28,7 +28,9 @@ _POSITION_WITH_STATS = """
     )
     SELECT p.*, latest.status AS criteria_status,
         EXISTS (SELECT 1 FROM app_private.criteria_versions approved
-                WHERE approved.position_id = p.position_id AND approved.status = 'APPROVED') AS criteria_approved,
+                WHERE approved.position_id = p.position_id AND approved.status = 'APPROVED'
+                  AND approved.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                      WHERE position_id = p.position_id ORDER BY version_number DESC LIMIT 1)) AS criteria_approved,
         stats.total_applications, stats.new_applications, stats.in_review, stats.shortlisted
     FROM app_private.positions p
     CROSS JOIN privileges priv
@@ -202,6 +204,64 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
         """), {"user_id": user_id, "id": str(position_id), "metadata": json.dumps({"fields": sorted(allowed)})})
         db.commit()
         return dict(updated)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@router.get("/{position_id}/jd-versions")
+async def list_jd_versions(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """All immutable JD versions for users assigned to the position."""
+    await check_position_access(position_id, current_user)
+    db = SessionLocal()
+    try:
+        return [dict(row) for row in db.execute(text("""
+            SELECT jd_version_id, position_id, version_number, content_text, language_code, created_by, created_at
+            FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC
+        """), {"id": str(position_id)}).mappings().all()]
+    finally:
+        db.close()
+
+
+@router.post("/{position_id}/jd-versions", status_code=status.HTTP_201_CREATED)
+async def create_jd_version(position_id: UUID, request: JDVersionCreate, current_user: dict = Depends(get_current_user)):
+    """Save an immutable version with optimistic concurrency and audit history."""
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
+    content = request.content_text.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Nội dung JD không được để trống")
+    db = SessionLocal()
+    try:
+        position = str(position_id)
+        if not db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": position}).first():
+            raise NotFoundError("Position")
+        latest = db.execute(text("""
+            SELECT jd_version_id, version_number, content_text FROM app_private.jd_versions
+            WHERE position_id = :id ORDER BY version_number DESC LIMIT 1
+        """), {"id": position}).mappings().first()
+        if not latest or str(latest["jd_version_id"]) != str(request.expected_jd_version_id):
+            raise HTTPException(status_code=409, detail="JD đã thay đổi. Vui lòng tải lại trước khi lưu phiên bản mới.")
+        if latest["content_text"] == content:
+            raise HTTPException(status_code=400, detail="Nội dung JD không có thay đổi")
+        if db.execute(text("""
+            SELECT 1 FROM app_private.operations WHERE position_id = :id
+              AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING')
+              AND status IN ('PENDING', 'PROCESSING') LIMIT 1
+        """), {"id": position}).first():
+            raise HTTPException(status_code=409, detail="Vị trí đang xử lý hồ sơ. Vui lòng đợi tác vụ hoàn tất trước khi sửa JD.")
+        row = db.execute(text("""
+            INSERT INTO app_private.jd_versions (position_id, version_number, content_text, language_code, created_by)
+            VALUES (:position, :version, :content, :language, :user_id) RETURNING *
+        """), {"position": position, "version": latest["version_number"] + 1, "content": content,
+                "language": request.language_code, "user_id": current_user["user_id"]}).mappings().one()
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'CREATE_JD_VERSION', 'JD_VERSION', :id, :position, 'SUCCESS')
+        """), {"user_id": current_user["user_id"], "id": row["jd_version_id"], "position": position})
+        db.commit()
+        return dict(row)
     except Exception:
         db.rollback()
         raise

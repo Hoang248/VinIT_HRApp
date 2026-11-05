@@ -25,6 +25,7 @@ def seed():
     with engine.begin() as conn:
         # Only positions (and dependent data) are truncated; the default scoring policy remains intact.
         conn.execute(text("TRUNCATE app_private.positions CASCADE"))
+        conn.execute(text("UPDATE app_private.ai_configuration_versions SET status='DISABLED' WHERE status='ACTIVE'"))
         for key in ("hr", "hm", "other", "hr2"):
             conn.execute(text("INSERT INTO auth.users(id) VALUES (:id)"), {"id": ids[key]})
             conn.execute(text("INSERT INTO app_private.user_profiles(user_id, display_name) VALUES (:id, :name)"), {"id": ids[key], "name": key.upper()})
@@ -106,6 +107,24 @@ def test_dual_approval_changes_and_immutable_approved_rubric(client, seed):
     assert history.json()[1]["comment"] == "Thêm yêu cầu dự án"
 
 
+
+def test_dual_approval_requires_distinct_accounts_even_with_both_roles(client, seed):
+    with engine.begin() as conn:
+        conn.execute(text("""INSERT INTO app_private.position_assignments
+            (position_id, user_id, position_role) VALUES (:position, :user, 'HIRING_MANAGER')"""),
+            {"position": seed["pos"], "user": seed["hr"]})
+    url = f"/v1/criteria/{seed['cv']}/approve"
+    assert client.post(url, headers=headers(seed["hr"]), json={"action": "APPROVE"}).status_code == 200
+    self_review = client.post(url, headers=headers(seed["hr"]), json={"action": "APPROVE"})
+    assert self_review.status_code == 409
+    with engine.connect() as conn:
+        row = conn.execute(text("""SELECT status, approved_by_hr, approved_by_hm
+            FROM app_private.criteria_versions WHERE criteria_version_id = :id"""), {"id": seed["cv"]}).mappings().one()
+        events = conn.execute(text("SELECT count(*) FROM app_private.criteria_approval_events WHERE criteria_version_id = :id"), {"id": seed["cv"]}).scalar_one()
+    assert row["status"] == "PENDING_HM_APPROVAL" and row["approved_by_hm"] is None and events == 1
+    final = client.post(url, headers=headers(seed["hm"]), json={"action": "APPROVE"})
+    assert final.status_code == 200 and final.json()["status"] == "APPROVED"
+
 def test_status_shortlist_permissions_feedback_and_revocation(client, seed):
     base = f"/v1/applications/{seed['app']}"
     change = lambda user, status, reason=None: client.patch(base + "/status", headers=headers(seed[user]), json={"new_status": status, "reason": reason})
@@ -115,6 +134,10 @@ def test_status_shortlist_permissions_feedback_and_revocation(client, seed):
     assert change("hr", "IN_REVIEW").status_code == 200
     assert change("hr", "SHORTLIST").status_code == 200
     assert client.get(base, headers=headers(seed["hm"])).status_code == 403
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.application_identities SET email='private@example.test', phone='0123456789' WHERE application_id=:id"), {"id": seed["app"]})
+        conn.execute(text("""INSERT INTO app_private.application_documents(application_id,bucket,storage_path,original_filename,mime_type,size_bytes,file_processing_status,processing_error)
+            VALUES (:id,'cv-originals','synthetic','synthetic.pdf','application/pdf',100,'NEEDS_HR_REVIEW','Synthetic internal diagnostic')"""), {"id": seed["app"]})
     payload = {"position_id": seed["pos"], "shared_with_user_id": seed["hm"], "application_ids": [seed["app"]], "allow_cv_view": False}
     assert client.post("/v1/shortlist/share", headers=headers(seed["other"]), json=payload).status_code == 403
     invalid = dict(payload, application_ids=[seed["app2"]])
@@ -127,6 +150,8 @@ def test_status_shortlist_permissions_feedback_and_revocation(client, seed):
         assert inbox.status_code == 200 and inbox.json()[0]["direction"] == direction
     detail = client.get(base, headers=headers(seed["hm"]))
     assert detail.status_code == 200 and detail.json()["can_view_cv"] is False
+    assert detail.json()["identity"]["email"] is None and detail.json()["identity"]["phone"] is None
+    assert detail.json()["documents"] == [] and detail.json()["file_processing_status"] == "UNKNOWN"
     assert client.get(base + "/cv-download-url", headers=headers(seed["hm"])).status_code == 403
     feedback = client.post(f"/v1/shortlist/{share}/feedback", headers=headers(seed["hm"]), json={"content": "Phù hợp", "application_id": seed["app"]})
     assert feedback.status_code == 201, feedback.text
@@ -314,19 +339,35 @@ def test_revoked_roles_and_grants_do_not_bypass_application_permissions(client, 
     assert client.patch(f"/v1/applications/{seed['app']}/status", headers=headers(seed["hr"]), json={"new_status": "IN_REVIEW"}).status_code == 403
 
 
-def test_admin_endpoints_require_active_admin_and_do_not_pretend_to_apply_config(client, seed):
+def test_admin_ai_config_is_runtime_backed_allowlisted_and_never_accepts_secrets(client, seed, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr(settings, "LLM_ALLOWED_API_BASES", ["http://127.0.0.1:11435/v1"])
+    monkeypatch.setattr(settings, "LLM_ALLOWED_MODELS", ["approved-model"])
+    monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", False)
     assert client.get("/v1/admin/ai/active-config", headers=headers(seed["hr"])).status_code == 403
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {"id": seed["other"]})
-    response = client.get("/v1/admin/ai/active-config", headers=headers(seed["other"]))
+    admin = headers(seed["other"])
+    response = client.get("/v1/admin/ai/active-config", headers=admin)
     assert response.status_code == 200 and response.json()["source"] == "environment"
     assert "api_key" not in response.json()["config"]
-    assert client.post("/v1/admin/ai/config", headers=headers(seed["other"]), json={"provider": "local", "model_name": "x"}).status_code == 501
-    assert client.post(f"/v1/admin/ai/config/{uid()}/enable", headers=headers(seed["other"])).status_code == 501
+    payload = {"provider": "local", "model_name": "approved-model", "api_base": "http://127.0.0.1:11435/v1", "temperature_default": .3}
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_key": "must-not-be-stored"}).status_code == 422
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_base": "http://169.254.169.254/v1"}).status_code == 400
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_base": "https://user:password@example.test/v1"}).status_code == 400
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "model_name": "unapproved"}).status_code == 400
+    created = client.post("/v1/admin/ai/config", headers=admin, json=payload)
+    assert created.status_code == 201, created.text
+    config_id = created.json()["config_id"]
+    assert client.post(f"/v1/admin/ai/config/{config_id}/enable", headers=admin).status_code == 200
+    active = client.get("/v1/admin/ai/active-config", headers=admin).json()
+    assert active["source"] == "database" and active["allowed_by_this_process"]
+    assert active["config"]["config_id"] == config_id and active["config"]["model_name"] == "approved-model"
     with engine.begin() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.audit_events WHERE object_id=:id AND object_type='AI_CONFIG'"), {"id": config_id}).scalar_one() == 2
         conn.execute(text("UPDATE app_private.user_role_assignments SET revoked_at=NOW() WHERE user_id=:id AND role_code='ADMIN'"), {"id": seed["other"]})
-    assert client.get("/v1/admin/ai/active-config", headers=headers(seed["other"])).status_code == 403
-
+    assert client.get("/v1/admin/ai/active-config", headers=admin).status_code == 403
 
 def test_jwt_and_account_status_are_enforced(seed, monkeypatch):
     import jwt
@@ -607,8 +648,14 @@ def test_latest_ranking_excludes_candidates_outside_screening_and_old_rubrics(cl
         ranking = uid()
         conn.execute(text("INSERT INTO app_private.ranking_runs(ranking_run_id,position_id,criteria_version_id,status) VALUES (:id,:pos,:cv,'COMPLETED')"),
                      {"id": ranking, "pos": seed["pos"], "cv": seed["cv"]})
-        conn.execute(text("INSERT INTO app_private.ranking_items(ranking_run_id,position_id,application_id,rank_number,ranking_status,evidence_coverage) VALUES (:run,:pos,:app,1,'MEETS_MANDATORY',1)"),
-                     {"run": ranking, "pos": seed["pos"], "app": seed["app"]})
+        document, profile, assessment = uid(), uid(), uid()
+        conn.execute(text("""INSERT INTO app_private.application_documents(document_id,application_id,bucket,storage_path,original_filename,mime_type,size_bytes,file_processing_status)
+            VALUES (:doc,:app,'cv-originals','synthetic','synthetic.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document',100,'COMPLETED')"""), {'doc': document, 'app': seed['app']})
+        conn.execute(text("INSERT INTO app_private.profile_versions(profile_version_id,application_id,source_document_id,version_number,status) VALUES (:id,:app,:doc,1,'COMPLETED')"), {'id': profile, 'app': seed['app'], 'doc': document})
+        conn.execute(text("""INSERT INTO app_private.assessment_runs(assessment_id,position_id,application_id,jd_version_id,criteria_version_id,profile_version_id,status,matching_status,evidence_coverage)
+            VALUES (:id,:pos,:app,:jd,:cv,:profile,'COMPLETED','MEETS_MANDATORY',1)"""), {'id': assessment, 'pos': seed['pos'], 'app': seed['app'], 'jd': seed['jd'], 'cv': seed['cv'], 'profile': profile})
+        conn.execute(text("INSERT INTO app_private.ranking_items(ranking_run_id,position_id,application_id,assessment_id,rank_number,ranking_status,evidence_coverage) VALUES (:run,:pos,:app,:assessment,1,'MEETS_MANDATORY',1)"),
+                     {"run": ranking, "pos": seed["pos"], "app": seed["app"], "assessment": assessment})
     endpoint = f"/v1/assessments/ranking/latest/{seed['pos']}"
     assert len(client.get(endpoint, headers=headers(seed["hr"])).json()) == 1
     with engine.begin() as conn:
@@ -619,3 +666,438 @@ def test_latest_ranking_excludes_candidates_outside_screening_and_old_rubrics(cl
         conn.execute(text("UPDATE app_private.applications SET application_status='NEW' WHERE application_id=:id"), {"id": seed["app"]})
         conn.execute(text("INSERT INTO app_private.criteria_versions(position_id,jd_version_id,version_number,status) VALUES (:pos,:jd,2,'APPROVED')"), {"pos": seed["pos"], "jd": seed["jd"]})
     assert client.get(endpoint, headers=headers(seed["hr"])).json() == []
+
+
+def test_live_worker_advisory_lock_prevents_concurrent_takeover(seed):
+    import threading
+    from app.workers.processor import ProcessingWorker
+    op = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.operations(operation_id,position_id,capability,requested_by,status) VALUES (:id,:pos,'RANKING',:user,'PENDING')"),
+                     {"id": op, "pos": seed["pos"], "user": seed["hr"]})
+    started, release = threading.Event(), threading.Event()
+    first, second = ProcessingWorker(), ProcessingWorker()
+    calls = []
+    def hold(operation_id, db, **kwargs):
+        calls.append("first")
+        started.set()
+        assert release.wait(10)
+    first._generate_ranking = hold
+    second._generate_ranking = lambda *args, **kwargs: calls.append("second")
+    thread = threading.Thread(target=first._process_pending_operations)
+    thread.start()
+    try:
+        assert started.wait(10)
+        second._process_pending_operations()
+        assert calls == ["first"]
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT status, attempt_count FROM app_private.operations WHERE operation_id=:id"), {"id": op}).mappings().one()
+            assert row["status"] == "PROCESSING" and row["attempt_count"] == 1
+    finally:
+        release.set(); thread.join(10)
+    assert not thread.is_alive()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT status FROM app_private.operations WHERE operation_id=:id"), {"id": op}).scalar_one() == "COMPLETED"
+
+
+def test_process_crash_releases_lock_and_another_worker_recovers(seed):
+    import subprocess, sys
+    from pathlib import Path
+    from app.workers.processor import ProcessingWorker
+    op = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.operations(operation_id,position_id,capability,requested_by,status) VALUES (:id,:pos,'RANKING',:user,'PENDING')"),
+                     {"id": op, "pos": seed["pos"], "user": seed["hr"]})
+    script = """
+import os
+from app.workers.processor import ProcessingWorker
+worker = ProcessingWorker()
+def crash(*args, **kwargs):
+    os._exit(71)
+worker._generate_ranking = crash
+worker._process_pending_operations()
+"""
+    env = {**os.environ, "DATABASE_URL": os.environ["TEST_DATABASE_URL"], "APP_ENV": "testing",
+           "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    child = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=15)
+    assert child.returncode == 71, child.stderr
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT status FROM app_private.operations WHERE operation_id=:id"), {"id": op}).scalar_one() == "PROCESSING"
+    recovered = []
+    worker = ProcessingWorker()
+    worker._generate_ranking = lambda operation_id, db, **kwargs: recovered.append(str(operation_id))
+    worker._process_pending_operations()
+    assert recovered == [op]
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT status, attempt_count, recovery_count, heartbeat_at FROM app_private.operations WHERE operation_id=:id"), {"id": op}).mappings().one()
+    assert row["status"] == "COMPLETED" and row["attempt_count"] == 2 and row["recovery_count"] == 1 and row["heartbeat_at"]
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.operation_recovery_events WHERE operation_id=:id"), {"id": op}).scalar_one() == 1
+
+
+def test_superseded_worker_cannot_commit_after_database_connection_loss(seed):
+    import threading
+    from app.workers.processor import ProcessingWorker
+    op = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.operations(operation_id,position_id,capability,requested_by,status) VALUES (:id,:pos,'RANKING',:user,'PENDING')"),
+                     {"id": op, "pos": seed["pos"], "user": seed["hr"]})
+    old_ready, old_resume, new_ready, new_resume = (threading.Event() for _ in range(4))
+    pids, errors = [], []
+    first, second = ProcessingWorker(), ProcessingWorker()
+    def stale(operation_id, db, **kwargs):
+        pids.append(db.execute(text("SELECT pg_backend_pid()")).scalar_one())
+        old_ready.set(); assert old_resume.wait(10)
+        db.execute(text("UPDATE app_private.operations SET error_message='STALE WRITE' WHERE operation_id=:id"), {"id": op})
+        db.commit()
+    def recovered(operation_id, db, **kwargs):
+        new_ready.set(); assert new_resume.wait(10)
+    first._generate_ranking, second._generate_ranking = stale, recovered
+    def invoke(worker):
+        try: worker._process_pending_operations()
+        except Exception as exc: errors.append(exc)
+    old_thread = threading.Thread(target=invoke, args=(first,)); old_thread.start()
+    new_thread = None
+    try:
+        assert old_ready.wait(10)
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pids[0]}).scalar_one()
+        new_thread = threading.Thread(target=invoke, args=(second,)); new_thread.start()
+        assert new_ready.wait(10)
+        old_resume.set(); old_thread.join(10)
+        assert not old_thread.is_alive() and not errors
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT status,error_message,recovery_count FROM app_private.operations WHERE operation_id=:id"), {"id": op}).mappings().one()
+            assert row["status"] == "PROCESSING" and row["error_message"] is None and row["recovery_count"] == 1
+    finally:
+        old_resume.set(); new_resume.set(); old_thread.join(10)
+        if new_thread: new_thread.join(10)
+    assert not errors
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT status FROM app_private.operations WHERE operation_id=:id"), {"id": op}).scalar_one() == "COMPLETED"
+
+
+def test_recovery_resumes_processing_document_and_reconciles_batch(client, seed, tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.workers.processor import ProcessingWorker, llm_client
+    monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path))
+    async def extract(cv_text, candidate_identifier):
+        return {"candidate_identifier": candidate_identifier, "total_years_experience": 2,
+                "education": [], "work_history": [], "skills": ["Python"], "certifications": [],
+                "languages": [{"name": "English", "level": "Professional"}],
+                "projects": [{"name": "Synthetic Search", "description": "Python services"}]}
+    async def match(cv_text, candidate_profile, rubric, candidate_identifier, rubric_version):
+        return {"findings": [{"criterion_id": rubric[0]["criterion_id"], "outcome": "MATCH", "confidence": .9,
+                              "confidence_band": "HIGH", "reasoning": "Evidence provided",
+                              "evidence": {"verbatim_quote": "Built Python services for two years", "page_number": None}}]}
+    monkeypatch.setattr(llm_client, "extract_candidate_profile", extract)
+    monkeypatch.setattr(llm_client, "match_criterion_evidence", match)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.criteria_versions SET status='APPROVED' WHERE criteria_version_id=:id"), {"id": seed["cv"]})
+    doc = Document(); doc.add_paragraph("Built Python services for two years and developed several reliable applications.")
+    content = io.BytesIO(); doc.save(content)
+    response = client.post(f"/v1/applications/upload-batch/{seed['pos']}", headers=headers(seed["hr"]),
+                           files=[("files", ("synthetic.docx", content.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))])
+    assert response.status_code == 202, response.text
+    op = response.json()["operation_id"]
+    worker = ProcessingWorker(); original = worker._read_file_content
+    worker._read_file_content = lambda doc: (_ for _ in ()).throw(SystemExit("simulated hard interruption"))
+    with pytest.raises(SystemExit):
+        worker._process_pending_operations()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT file_processing_status FROM app_private.application_documents")).scalar_one() == "PROCESSING"
+    worker._read_file_content = original
+    worker._process_pending_operations()
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT status,attempt_count,recovery_count FROM app_private.operations WHERE operation_id=:id"), {"id": op}).mappings().one()
+        batch = conn.execute(text("SELECT processed_files,failed_files FROM app_private.cv_batches WHERE operation_id=:id"), {"id": op}).mappings().one()
+        assert row["status"] == "COMPLETED" and row["attempt_count"] == 2 and row["recovery_count"] == 1
+        assert batch["processed_files"] == 1 and batch["failed_files"] == 0
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE operation_id=:id AND status='COMPLETED'"), {"id": op}).scalar_one() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.ranking_runs WHERE operation_id=:id"), {"id": op}).scalar_one() == 1
+        assert set(conn.execute(text("SELECT fact_type FROM app_private.profile_facts WHERE fact_type IN ('LANGUAGE','PROJECT')")).scalars()) == {'LANGUAGE', 'PROJECT'}
+
+
+def test_worker_health_is_admin_only_and_reports_stale_work(client, seed):
+    op = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {"id": seed["other"]})
+        conn.execute(text("""INSERT INTO app_private.operations(operation_id,position_id,capability,requested_by,status,attempt_started_at,heartbeat_at)
+            VALUES (:id,:pos,'RANKING',:hr,'PROCESSING',NOW()-INTERVAL '31 minutes',NOW()-INTERVAL '3 minutes')"""),
+                     {"id": op, "pos": seed["pos"], "hr": seed["hr"]})
+    assert client.get('/v1/admin/worker/health', headers=headers(seed['hr'])).status_code == 403
+    response = client.get('/v1/admin/worker/health', headers=headers(seed['other']))
+    assert response.status_code == 200, response.text
+    assert response.json()['processing'] == 1 and response.json()['stale_heartbeat'] == 1 and response.json()['long_running'] == 1
+    with engine.begin() as conn:
+        # Counts reflect individual events, not the cumulative count on an
+        # operation or the timestamp of its most recent attempt.
+        conn.execute(text("UPDATE app_private.operations SET recovery_count=9 WHERE operation_id=:id"), {"id": op})
+        conn.execute(text("""INSERT INTO app_private.operation_recovery_events(operation_id,recovered_at)
+            VALUES (:id,NOW()-INTERVAL '25 hours'), (:id,NOW()-INTERVAL '2 hours'), (:id,NOW()-INTERVAL '1 hour')"""), {"id": op})
+    response = client.get('/v1/admin/worker/health', headers=headers(seed['other']))
+    assert response.status_code == 200 and response.json()['recoveries_24h'] == 2
+
+
+def test_ai_runtime_changes_actual_request_and_worker_recovery_keeps_pinned_config(client, seed, monkeypatch):
+    import asyncio
+    from app.core.config import settings
+    from app.services.llm_client import LLMClient
+    from app.services.ai_config import runtime_context
+    from app.workers.processor import ProcessingWorker
+    monkeypatch.setattr(settings, 'LLM_API_BASE', 'http://127.0.0.1:11434/v1')
+    monkeypatch.setattr(settings, 'LLM_ALLOWED_API_BASES', ['http://127.0.0.1:11435/v1'])
+    monkeypatch.setattr(settings, 'LLM_ALLOWED_MODELS', ['model-a', 'model-b'])
+    monkeypatch.setattr(settings, 'ALLOW_EXTERNAL_API', False)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {'id': seed['other']})
+    admin = headers(seed['other'])
+    def create_and_enable(model, base, temperature):
+        res = client.post('/v1/admin/ai/config', headers=admin, json={'provider': 'local', 'model_name': model, 'api_base': base, 'temperature_default': temperature})
+        assert res.status_code == 201, res.text
+        cid = res.json()['config_id']
+        assert client.post(f'/v1/admin/ai/config/{cid}/enable', headers=admin).status_code == 200
+        return cid
+    first = create_and_enable('model-a', settings.LLM_API_BASE, .2)
+    captured = []
+    class Reply:
+        def raise_for_status(self): pass
+        def json(self): return {'choices': [{'message': {'content': '{"ok":true}'}}]}
+    class Transport:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs): captured.append((url, kwargs['json'])); return Reply()
+    monkeypatch.setattr('app.services.llm_client.httpx.AsyncClient', Transport)
+    assert asyncio.run(LLMClient()._call_llm('system', 'synthetic')) == {'ok': True}
+    assert captured[-1][0] == 'http://127.0.0.1:11434/v1/chat/completions'
+    assert captured[-1][1]['model'] == 'model-a' and captured[-1][1]['temperature'] == .2
+    op = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.operations(operation_id,position_id,capability,requested_by,status) VALUES (:id,:pos,'RANKING',:user,'PENDING')"),
+                     {'id': op, 'pos': seed['pos'], 'user': seed['hr']})
+    worker = ProcessingWorker(); seen = []
+    def die(operation_id, db, **kwargs):
+        seen.append(runtime_context.get()['config_id'])
+        raise SystemExit('simulated interruption')
+    worker._generate_ranking = die
+    with pytest.raises(SystemExit): worker._process_pending_operations()
+    second = create_and_enable('model-b', 'http://127.0.0.1:11435/v1', .4)
+    assert asyncio.run(LLMClient()._call_llm('system', 'synthetic')) == {'ok': True}
+    assert captured[-1][1]['model'] == 'model-b' and captured[-1][1]['temperature'] == .4
+    worker._generate_ranking = lambda operation_id, db, **kwargs: seen.append(runtime_context.get()['config_id'])
+    worker._process_pending_operations()
+    assert seen == [first, first] and second != first
+    with engine.connect() as conn:
+        row = conn.execute(text('SELECT ai_config_id, ai_config_snapshot, recovery_count FROM app_private.operations WHERE operation_id=:id'), {'id': op}).mappings().one()
+    assert str(row['ai_config_id']) == first and row['ai_config_snapshot']['model_name'] == 'model-a' and row['recovery_count'] == 1
+
+
+def test_concurrent_ai_activation_leaves_exactly_one_active(client, seed, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'LLM_API_BASE', 'http://127.0.0.1:11434/v1')
+    monkeypatch.setattr(settings, 'LLM_ALLOWED_MODELS', ['model-a', 'model-b'])
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {'id': seed['other']})
+    admin = headers(seed['other'])
+    ids = []
+    for model in ('model-a', 'model-b'):
+        response = client.post('/v1/admin/ai/config', headers=admin, json={'provider': 'local', 'model_name': model, 'api_base': settings.LLM_API_BASE})
+        assert response.status_code == 201, response.text
+        ids.append(response.json()['config_id'])
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda cid: client.post(f'/v1/admin/ai/config/{cid}/enable', headers=admin), ids))
+    assert [result.status_code for result in results] == [200, 200]
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.ai_configuration_versions WHERE status='ACTIVE'")).scalar_one() == 1
+
+
+def test_jd_versioning_is_immutable_scoped_and_invalidates_stale_approval(client, seed):
+    base = f"/v1/positions/{seed['pos']}/jd-versions"
+    body = {'content_text': 'Synthetic updated role description with Python experience.', 'language_code': 'en', 'expected_jd_version_id': seed['jd']}
+    assert client.get(base, headers=headers(seed['other'])).status_code == 403
+    assert client.get(base, headers=headers(seed['hm'])).status_code == 200
+    assert client.post(base, headers=headers(seed['hm']), json=body).status_code == 403
+    assert client.post(f"/v1/criteria/{seed['cv']}/approve", headers=headers(seed['hr']), json={'action': 'APPROVE'}).status_code == 200
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.operations(position_id,capability,status,requested_by) VALUES (:pos,'RANKING','PENDING',:hr)"), {'pos': seed['pos'], 'hr': seed['hr']})
+    assert client.post(base, headers=headers(seed['hr']), json=body).status_code == 409
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.operations SET status='COMPLETED' WHERE position_id=:pos"), {'pos': seed['pos']})
+    created = client.post(base, headers=headers(seed['hr']), json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()['version_number'] == 2
+    assert client.post(base, headers=headers(seed['hr']), json=body).status_code == 409
+    assert client.post(f"/v1/criteria/{seed['cv']}/approve", headers=headers(seed['hm']), json={'action': 'APPROVE'}).status_code == 409
+    versions = client.get(base, headers=headers(seed['hr'])).json()
+    assert [item['version_number'] for item in versions] == [2, 1] and versions[1]['content_text'] == 'JD'
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.criteria_versions SET status='APPROVED' WHERE criteria_version_id=:id"), {'id': seed['cv']})
+    assert client.get(f"/v1/criteria/position/{seed['pos']}/approved", headers=headers(seed['hr'])).json() is None
+    assert client.get(f"/v1/positions/{seed['pos']}", headers=headers(seed['hr'])).json()['criteria_approved'] is False
+    assert client.post(f"/v1/assessments/run/{seed['pos']}", headers=headers(seed['hr'])).status_code == 400
+
+
+def test_jd_changed_during_ai_generation_does_not_save_stale_draft(client, seed, monkeypatch):
+    from app.api.criteria import llm_client
+    async def generate(**kwargs):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO app_private.jd_versions(position_id,version_number,content_text,created_by) VALUES (:pos,2,'new synthetic JD',:hr)"), {'pos': seed['pos'], 'hr': seed['hr']})
+        return {'criteria': [{'name': 'Python', 'description': 'Python skills', 'category': 'MUST_HAVE', 'weight': 100, 'expected_evidence_keywords': []}]}
+    monkeypatch.setattr(llm_client, 'extract_criteria_from_jd', generate)
+    response = client.post(f"/v1/criteria/generate/{seed['pos']}", headers=headers(seed['hr']))
+    assert response.status_code == 409
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT COUNT(*) FROM app_private.criteria_versions WHERE position_id=:pos'), {'pos': seed['pos']}).scalar_one() == 1
+
+
+def test_hr_private_notes_do_not_leak_to_hm_or_admin_without_hr_role(client, seed):
+    base = f"/v1/applications/{seed['app']}"
+    for state in ('IN_REVIEW', 'SHORTLIST'):
+        assert client.patch(base + '/status', headers=headers(seed['hr']), json={'new_status': state}).status_code == 200
+    share = client.post('/v1/shortlist/share', headers=headers(seed['hr']), json={
+        'position_id': seed['pos'], 'shared_with_user_id': seed['hm'], 'application_ids': [seed['app']], 'allow_cv_view': True})
+    assert share.status_code == 201
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {'id': seed['other']})
+    assert client.get(base, headers=headers(seed['hr'])).json()['can_manage_hr_notes'] is True
+    assert client.get(base, headers=headers(seed['hm'])).json()['can_manage_hr_notes'] is False
+    assert client.get(base, headers=headers(seed['other'])).json()['can_manage_hr_notes'] is False
+    note = client.post(base + '/private-notes', headers=headers(seed['hr']), json={'content': 'Synthetic HR-only internal note'})
+    assert note.status_code == 201, note.text
+    assert client.get(base + '/private-notes', headers=headers(seed['hr'])).json()[0]['content'] == 'Synthetic HR-only internal note'
+    for forbidden in ('hm', 'other', 'hr2'):
+        assert client.get(base + '/private-notes', headers=headers(seed[forbidden])).status_code == 403
+        assert client.post(base + '/private-notes', headers=headers(seed[forbidden]), json={'content': 'forbidden'}).status_code == 403
+    assert 'Synthetic HR-only internal note' not in str(client.get(f"/v1/shortlist/{share.json()['share_id']}", headers=headers(seed['hm'])).json())
+    assert 'Synthetic HR-only internal note' not in str(client.get(base, headers=headers(seed['hm'])).json())
+    with engine.begin() as conn:
+        assert not conn.execute(text("SELECT has_table_privilege('authenticated', 'app_private.application_private_notes', 'SELECT')")).scalar_one()
+        assert conn.execute(text("SELECT to_regclass('public.application_private_notes') IS NULL")).scalar_one()
+        conn.execute(text("UPDATE app_private.position_assignments SET revoked_at=NOW() WHERE position_id=:pos AND user_id=:id AND position_role='HR_RECRUITER'"), {'pos': seed['pos'], 'id': seed['hr']})
+    assert client.get(base + '/private-notes', headers=headers(seed['hr'])).status_code == 403
+
+
+def test_profile_versions_reject_races_and_hide_stale_results_until_reassessment(client, seed, tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.workers.processor import ProcessingWorker, llm_client
+    monkeypatch.setattr(settings, 'LOCAL_STORAGE_PATH', str(tmp_path))
+    async def extract(cv_text, candidate_identifier):
+        return {'candidate_identifier': candidate_identifier, 'total_years_experience': 2,
+                'education': [], 'work_history': [], 'skills': ['Python'], 'certifications': []}
+    captured_profiles = []
+    async def match(cv_text, candidate_profile, rubric, candidate_identifier, rubric_version):
+        captured_profiles.append(candidate_profile)
+        return {'findings': [{'criterion_id': rubric[0]['criterion_id'], 'outcome': 'MATCH', 'confidence': .9,
+                              'confidence_band': 'HIGH', 'reasoning': 'Evidence provided',
+                              'evidence': {'verbatim_quote': 'Built Python services for two years', 'page_number': None}}]}
+    monkeypatch.setattr(llm_client, 'extract_candidate_profile', extract)
+    monkeypatch.setattr(llm_client, 'match_criterion_evidence', match)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.criteria_versions SET status='APPROVED' WHERE criteria_version_id=:id"), {'id': seed['cv']})
+    doc = Document(); doc.add_paragraph('Built Python services for two years and developed several reliable applications.')
+    content = io.BytesIO(); doc.save(content)
+    uploaded = client.post(f"/v1/applications/upload-batch/{seed['pos']}", headers=headers(seed['hr']),
+                           files=[('files', ('synthetic.docx', content.getvalue(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))])
+    assert uploaded.status_code == 202
+    op = uploaded.json()['operation_id']; worker = ProcessingWorker(); worker._process_pending_operations()
+    with engine.connect() as conn:
+        app_id = str(conn.execute(text('SELECT application_id FROM app_private.cv_batch_items WHERE batch_id=(SELECT batch_id FROM app_private.cv_batches WHERE operation_id=:op)'), {'op': op}).scalar_one())
+    base = f'/v1/applications/{app_id}'
+    old_assessment = client.get(base, headers=headers(seed['hr'])).json()['latest_assessment']['assessment_id']
+    for state in ('IN_REVIEW', 'SHORTLIST'):
+        assert client.patch(base + '/status', headers=headers(seed['hr']), json={'new_status': state}).status_code == 200
+    share = client.post('/v1/shortlist/share', headers=headers(seed['hr']), json={'position_id': seed['pos'],
+        'shared_with_user_id': seed['hm'], 'application_ids': [app_id], 'allow_cv_view': True}).json()['share_id']
+    before = client.get(base + '/profile', headers=headers(seed['hr'])).json()
+    assert before['version_number'] == 1
+    note_text = 'Synthetic private note never in model profile'
+    assert client.post(base + '/private-notes', headers=headers(seed['hr']), json={'content': note_text}).status_code == 201
+    body = {'expected_profile_version_id': before['profile_version_id'], 'display_name': 'Synthetic Candidate',
+            'email': 'person@example.test', 'phone': None,
+            'facts': [{'fact_type': 'SKILL', 'fact_value': {'name': 'Python'}, 'source_page_number': None},
+                      {'fact_type': 'PROJECT', 'fact_value': {'description': 'Built Python services'}}]}
+    assert client.put(base + '/profile', headers=headers(seed['hm']), json=body).status_code == 403
+    changed = client.put(base + '/profile', headers=headers(seed['hr']), json=body)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()['version_number'] == 2 and changed.json()['identity']['display_name'] == 'Synthetic Candidate'
+    assert client.put(base + '/profile', headers=headers(seed['hr']), json=body).status_code == 409
+    assert client.get(base, headers=headers(seed['hr'])).json()['latest_assessment'] is None
+    assert client.get(f"/v1/assessments/ranking/latest/{seed['pos']}", headers=headers(seed['hr'])).json() == []
+    shared = client.get(f'/v1/shortlist/{share}', headers=headers(seed['hm'])).json()
+    assert shared['applications'][0]['matching_status'] is None
+    assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed['hr'])).json()['assessments_completed'] == 0
+    queued = client.post(f"/v1/assessments/run/{seed['pos']}", headers=headers(seed['hr']))
+    assert queued.status_code == 202
+    body['expected_profile_version_id'] = changed.json()['profile_version_id']
+    assert client.put(base + '/profile', headers=headers(seed['hr']), json=body).status_code == 409
+    worker._process_pending_operations()
+    latest = client.get(base, headers=headers(seed['hr'])).json()['latest_assessment']
+    assert latest and latest['assessment_id'] != old_assessment
+    assert client.get(f"/v1/assessments/ranking/latest/{seed['pos']}", headers=headers(seed['hr'])).json()[0]['application_id'] == app_id
+    assert note_text not in str(captured_profiles)
+    # An existing share is a historical snapshot, so HR must re-share it to
+    # include the newly computed assessment rather than silently changing it.
+    assert client.get(f'/v1/shortlist/{share}', headers=headers(seed['hm'])).json()['applications'][0]['matching_status'] is None
+    assert client.get(base, headers=headers(seed['hm'])).json()['latest_assessment'] is None
+    assert client.get(f"/v1/assessments/{latest['assessment_id']}", headers=headers(seed['hm'])).status_code == 403
+    assert client.get(f"/v1/assessments/{old_assessment}", headers=headers(seed['hm'])).status_code == 403
+    new_share = client.post('/v1/shortlist/share', headers=headers(seed['hr']), json={'position_id': seed['pos'],
+        'shared_with_user_id': seed['hm'], 'application_ids': [app_id], 'allow_cv_view': False})
+    assert new_share.status_code == 201
+    hm_detail = client.get(base, headers=headers(seed['hm'])).json()
+    assert hm_detail['latest_assessment']['assessment_id'] == latest['assessment_id']
+    assert hm_detail['can_view_cv'] is True  # original active share still permits the CV
+    assert hm_detail['can_view_assessment_evidence'] is False
+    assert hm_detail['latest_assessment']['criterion_results'] == []  # new snapshot is summary-only
+    assert client.get(f"/v1/assessments/{latest['assessment_id']}", headers=headers(seed['hm'])).status_code == 403
+    cv_share = client.post('/v1/shortlist/share', headers=headers(seed['hr']), json={'position_id': seed['pos'],
+        'shared_with_user_id': seed['hm'], 'application_ids': [app_id], 'allow_cv_view': True})
+    assert cv_share.status_code == 201
+    cv_detail = client.get(base, headers=headers(seed['hm'])).json()
+    assert cv_detail['can_view_assessment_evidence'] is True and cv_detail['latest_assessment']['criterion_results']
+    assert client.get(f"/v1/assessments/{latest['assessment_id']}", headers=headers(seed['hm'])).status_code == 200
+
+
+def test_worker_scans_past_a_full_page_of_live_locks(seed):
+    from app.workers.processor import ProcessingWorker
+    with engine.begin() as conn:
+        # Synthetic pre-existing jobs; the first 100 have live session locks.
+        conn.execute(text("""INSERT INTO app_private.operations(position_id, capability, requested_by, status, created_at)
+            SELECT :pos, 'RANKING', :user, 'PROCESSING', NOW() - INTERVAL '5 minutes' + n * INTERVAL '1 millisecond'
+            FROM generate_series(1, 100) n"""), {"pos": seed["pos"], "user": seed["hr"]})
+        pending = conn.execute(text("""INSERT INTO app_private.operations(position_id, capability, requested_by, status)
+            VALUES (:pos, 'RANKING', :user, 'PENDING') RETURNING operation_id"""),
+            {"pos": seed["pos"], "user": seed["hr"]}).scalar_one()
+    locked = engine.connect()
+    try:
+        ids = locked.execute(text("SELECT operation_id FROM app_private.operations WHERE status='PROCESSING' ORDER BY created_at, operation_id")).scalars().all()
+        for job_id in ids:
+            locked.execute(text("SELECT pg_advisory_lock(hashtextextended(:id, 418630021))"), {"id": str(job_id)})
+        locked.commit()
+        worker = ProcessingWorker()
+        done = []
+        worker._generate_ranking = lambda job_id, db, **kwargs: done.append(str(job_id))
+        worker._process_pending_operations()  # full page is held by another session
+        assert done == []
+        worker._process_pending_operations()  # continues after that page
+        assert done == [str(pending)]
+    finally:
+        locked.execute(text("SELECT pg_advisory_unlock_all()")); locked.commit(); locked.close()
+
+
+def test_ai_config_writes_recheck_active_admin_inside_transaction(client, seed, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'LLM_API_BASE', 'http://127.0.0.1:11434/v1')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:user,'ADMIN')"), {'user': seed['other']})
+    body = {'provider': 'local', 'model_name': settings.LLM_MODEL_NAME, 'api_base': settings.LLM_API_BASE}
+    created = client.post('/v1/admin/ai/config', headers=headers(seed['other']), json=body)
+    assert created.status_code == 201
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.user_profiles SET account_status='INACTIVE' WHERE user_id=:user"), {'user': seed['other']})
+    # The test identity override bypasses the normal auth dependency, so these
+    # assertions specifically exercise the transactional write recheck.
+    assert client.post('/v1/admin/ai/config', headers=headers(seed['other']), json=body).status_code == 403
+    assert client.post(f"/v1/admin/ai/config/{created.json()['config_id']}/enable", headers=headers(seed['other'])).status_code == 403

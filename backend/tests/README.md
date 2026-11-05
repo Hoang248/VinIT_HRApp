@@ -20,7 +20,8 @@ CREATE FUNCTION auth.uid() RETURNS UUID LANGUAGE sql STABLE AS $$ SELECT NULL::U
 SQL
 for f in supabase/migrations/00001_initial_schema.sql \
          supabase/migrations/00002_audit_fixes_indexes_rls.sql \
-         supabase/migrations/00003_phase1_operation_scope.sql; do
+         supabase/migrations/00003_phase1_operation_scope.sql \
+         supabase/migrations/00004_recovery_and_privacy.sql; do
   psql 'postgresql://postgres@127.0.0.1:55432/hra_phase1_test' -v ON_ERROR_STOP=1 -f "$f"
 done
 ```
@@ -38,3 +39,5 @@ TEST_DATABASE_URL='postgresql://postgres@127.0.0.1:55432/hra_phase1_test' \
 Có thể dùng Unix socket qua tham số `host=/đường/dẫn/socket`; host phải được chỉ rõ. Không đặt `PGSERVICE`, `PGSERVICEFILE` hoặc `PGOPTIONS` khi chạy test.
 
 Không đặt `TEST_DATABASE_URL` sẽ chỉ chạy unit test và bỏ qua integration test. Test không chứng minh việc triển khai Supabase Auth/Storage, OCR scan, mô hình AI thật, Docker hoặc chất lượng matching trên CV thật; các phần đó cần kiểm thử riêng trong môi trường được phê duyệt.
+
+Integration test gồm dual approval khác tài khoản, RBAC/ghi chú HR, version JD/profile, cấu hình AI/allowlist, che dữ liệu ở HTTP boundary giả lập, crash worker thật, tranh lock, mất kết nối DB, phục hồi lô và kiểm tra metrics 24 giờ. Đây là test trên PostgreSQL cục bộ với dữ liệu tổng hợp; không dùng CV thật.

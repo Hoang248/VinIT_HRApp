@@ -1,3 +1,13 @@
+export interface JDVersion {
+  jd_version_id: string;
+  position_id: string;
+  version_number: number;
+  content_text: string;
+  language_code: 'vi' | 'en';
+  created_by: string;
+  created_at: string;
+}
+
 export interface Position {
   position_id: string;
   position_code: string;
@@ -123,7 +133,9 @@ export interface ApplicationWithAssessment {
   file_error?: string | null;
   has_duplicate_warning?: boolean;
   can_view_cv?: boolean;
+  can_view_assessment_evidence?: boolean;
   can_update_status?: boolean;
+  can_manage_hr_notes?: boolean;
   documents?: Array<{
     document_id: string;
     document_type: string;

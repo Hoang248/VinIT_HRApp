@@ -1,0 +1,12 @@
+# VPS override: mount the provider's verified PostgreSQL CA read-only.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.vps.yml ...
+# HRA_DB_CA_PATH must be an existing absolute host file path in .env.
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: "${HRA_DB_CA_PATH:?Set HRA_DB_CA_PATH to the verified PostgreSQL CA file}"
+        target: /run/secrets/supabase-db-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false

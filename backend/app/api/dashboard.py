@@ -56,6 +56,13 @@ _APPLICATIONS_QUERY = _SCOPE_CTE + """
         SELECT ar.matching_status, ar.evidence_coverage
         FROM app_private.assessment_runs ar
         WHERE ar.application_id = a.application_id AND ar.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
         ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
     ) latest ON TRUE
     WHERE priv.global_access OR EXISTS (

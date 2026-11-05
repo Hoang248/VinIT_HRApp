@@ -1,6 +1,7 @@
 'use client';
 
 import axios, { AxiosInstance } from 'axios';
+import { localizeServerMessage } from '@/i18n/serverMessages';
 
 // The browser always uses the same origin. Next.js proxies /v1 to the backend,
 // which also works when the UI is viewed through a remote preview host.
@@ -26,6 +27,7 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.response?.data?.detail) error.response.data.detail = localizeServerMessage(error.response.data.detail);
     if (error.response?.status === 401 && typeof window !== 'undefined' && !error.config?.url?.includes('/auth/login')) {
       localStorage.removeItem('hra_access_token');
       window.location.href = '/';
@@ -57,6 +59,8 @@ export const positionsApi = {
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
+  getJdVersions: (id: string) => apiClient.get(`/positions/${id}/jd-versions`),
+  createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
 };
 
 export const criteriaApi = {
@@ -103,6 +107,10 @@ export const applicationsApi = {
     }
   },
   getById: (id: string) => apiClient.get(`/applications/${id}`),
+  getProfile: (id: string) => apiClient.get(`/applications/${id}/profile`),
+  updateProfile: (id: string, data: any) => apiClient.put(`/applications/${id}/profile`, data),
+  getPrivateNotes: (id: string) => apiClient.get(`/applications/${id}/private-notes`),
+  addPrivateNote: (id: string, content: string) => apiClient.post(`/applications/${id}/private-notes`, { content }),
   getStatusEvents: (id: string) => apiClient.get(`/applications/${id}/status-events`),
   updateStatus: (id: string, newStatus: string, reason?: string, note?: string) =>
     apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note }),
@@ -153,4 +161,6 @@ export const adminApi = {
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),
   enableAiConfig: (id: string) => apiClient.post(`/admin/ai/config/${id}/enable`),
   getActiveAiConfig: () => apiClient.get('/admin/ai/active-config'),
+  getWorkerHealth: () => apiClient.get('/admin/worker/health'),
+  getAiOptions: () => apiClient.get('/admin/ai/options'),
 };

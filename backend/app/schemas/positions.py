@@ -61,3 +61,9 @@ class PositionWithStats(Position):
     shortlisted: int = 0
     criteria_approved: bool = False
     criteria_status: Optional[str] = None  # Latest version, which can be newer than the approved version.
+
+
+class JDVersionCreate(BaseModel):
+    content_text: str = Field(min_length=1, max_length=100_000)
+    language_code: str = Field(default="vi", pattern="^(vi|en)$")
+    expected_jd_version_id: UUID

@@ -1,57 +1,73 @@
-# Triển khai VinUni HRApp với Supabase
+# Triển khai và vận hành VinUni HRApp
 
-> Bản hiện tại cần kiểm thử và phê duyệt trước khi dùng với hồ sơ thật. Các kiểm thử tự động đã chạy trên PostgreSQL cục bộ với dữ liệu giả và LLM giả lập; chưa chứng minh được Supabase Storage/Auth, OCR scan, LLM thật hay Docker trong môi trường đích.
+> Mã này **chưa sẵn sàng production**. Các test dùng PostgreSQL cục bộ dùng một lần, dữ liệu tổng hợp và AI HTTP mock; chưa chứng minh Supabase Auth/Storage, model thật, OCR scan hay Docker trong môi trường đích. Không dùng CV thật trong preview hoặc kiểm thử chưa được phê duyệt.
 
-## Tình trạng project đã kết nối
+## Lịch sử project đã kết nối
 
-Đã áp dụng `00003_phase1_operation_scope.sql` cho project `myrymlqdbyqmpynesiwk` **ngày 05/11/2026 sau khi được người dùng xác nhận**. Trước khi áp dụng, project khỏe và không có vị trí, hồ sơ hoặc tác vụ; các view cũ tương thích. Supabase ghi lịch sử:
+Trên project `myrymlqdbyqmpynesiwk`, sau xác nhận của người dùng, đã áp `00003_phase1_operation_scope.sql` và `00004_recovery_and_privacy.sql` ngày 05/11/2026. Lịch sử remote:
 
-- `20261105081853` — `initial_schema`
-- `20261105082127` — `audit_fixes_indexes_rls_grants`
-- `20261105131736` — `phase1_operation_scope`
+| File trong repository | Version/name trên Supabase |
+|---|---|
+| `00001_initial_schema.sql` | `20261105081853 initial_schema` |
+| `00002_audit_fixes_indexes_rls.sql` | `20261105082127 audit_fixes_indexes_rls_grants` |
+| `00003_phase1_operation_scope.sql` | `20261105131736 phase1_operation_scope` |
+| `00004_recovery_and_privacy.sql` | `20261105152817 recovery_and_privacy` |
 
-Kiểm tra chỉ đọc sau migration: cột `operations.position_id` có trong `app_private` và view `public`; `anon`/`authenticated` không có `USAGE` trên `app_private` và không có SELECT/INSERT/UPDATE/DELETE trên 37 view nghiệp vụ `public`; `service_role` vẫn có quyền SELECT cần thiết. Hai bucket `cv-originals` và `cv-extracted-text` private, không có policy trên `storage.objects`; DB/Auth/REST/Storage báo healthy. Chưa kiểm thử API/Storage/LLM thật với credential runtime. Trạng thái có thể thay đổi, hãy kiểm tra lại trước triển khai.
+Preflight trước 00004: DB/Auth/REST/Storage khỏe, không có vị trí, hồ sơ, tác vụ đang xử lý, auth user hoặc profile; một cấu hình AI ACTIVE. Sau áp: các cột worker/config, hai bảng private và unique index ACTIVE đã có; hai bảng bật RLS, anon/authenticated không đọc được, service role có SELECT/INSERT nhưng không UPDATE/DELETE; 37 public views không cấp SELECT cho anon/authenticated, service role có SELECT, hai bucket CV private và không có storage object policy tại lần kiểm tra trước áp. Endpoint của cấu hình AI ACTIVE hiện tại là **loopback**: `localhost` bên trong container backend không phải VPS/model bên ngoài; phải chọn và kích hoạt endpoint hợp lệ từ Admin trước khi dùng AI. Tại thời điểm kiểm tra chưa có ADMIN/auth user. Chưa xác minh backup/restore, rotate key hay E2E dịch vụ thật; không thể suy ra mọi worker bên ngoài đã dừng chỉ từ snapshot này.
 
-## Trước khi triển khai
+Mã hiện tại phụ thuộc 00004. Schema ban đầu trên project này có một số cột AI đã tồn tại trước 00004; không giả định nội dung mọi version remote byte-for-byte giống file local. Không chạy `supabase db push`/reset mù quáng: version remote là timestamp, khác tiền tố file local. Với project/môi trường khác, đối chiếu migration thực tế, xin phê duyệt và làm staging/drain riêng theo checklist dưới đây. Hướng dẫn dựng VPS Ubuntu với Docker Compose, Nginx, TLS và vận hành: [doc/VPS_DEPLOYMENT.md](doc/VPS_DEPLOYMENT.md).
 
-1. **Thu hồi/rotate service-role key đã từng xuất hiện trong lịch sử Git.** Thay giá trị mới trong secret manager và cấu hình backend; xóa khỏi file hiện tại không thu hồi được key cũ. Nếu đây là legacy service-role JWT, việc đổi JWT secret có thể ảnh hưởng anon key, phiên đăng nhập và các tích hợp; lập kế hoạch chuyển đổi/gián đoạn trước khi thực hiện. Xem xét phạm vi phơi lộ, logs và các client đang dùng key. Không đưa key hoặc JWT secret vào frontend hay Git.
-2. Với project khác hoặc môi trường đích mới, sao lưu database, rà soát client tích hợp và thử migration trên staging có schema giống môi trường đích. Migration 00003 thêm `operations.position_id`, backfill quan hệ, tạo/cập nhật public views, và **thu hồi quyền direct đối với `app_private` và các view khỏi `anon`/`authenticated`**. Các client/PostgREST gọi trực tiếp bảng/view cũ có thể ngừng hoạt động. Thống nhất phương án rollback và chỉ chạy migration bằng quy trình được phê duyệt.
-3. Đối chiếu lịch sử migration thực tế trước khi áp dụng; các version từ xa nêu trên khác tiền tố tên file local, vì vậy không chạy `supabase db push`/reset mù quáng trên project hiện hữu. **Không áp dụng lại 00003 cho project trên**; chỉ áp dụng cho môi trường khác sau phê duyệt và ghi lịch sử migration phù hợp.
-4. Trên từng môi trường đích, xác minh cùng lúc: `operations.position_id` tồn tại; `anon`/`authenticated` không có `USAGE` trên `app_private` và không có quyền đọc/ghi các view nghiệp vụ `public`; `service_role` vẫn có quyền cần thiết. Kiểm thử HR/HM, thu hồi phân công và thu hồi shortlist qua API với dữ liệu giả.
+## Checklist khi áp 00004 vào môi trường khác hoặc triển khai worker mới
 
-Ví dụ truy vấn kiểm tra quyền (chỉ đọc):
+1. **Thu hồi/rotate service-role key từng xuất hiện trong lịch sử Git.** Đổi secret trong secret manager, rà soát log/client/phạm vi phơi lộ. Xóa file không thu hồi key cũ. Với legacy service-role JWT, đổi JWT secret có thể ảnh hưởng anon key, phiên và tích hợp; lập kế hoạch trước. Không gửi key vào frontend, Git hay chat.
+2. Sao lưu, thử restore, thử migration và kịch bản crash/recovery trên staging có schema và storage tương đương; rà soát ứng dụng dùng view/grant trực tiếp. Kiểm tra lịch sử migration thực tế và lập phương án rollback đã phê duyệt. 00004 thêm cột operations/config/profile, view, bảng ghi chú HR và sự kiện recovery, RLS/grant cùng unique index cho cấu hình AI ACTIVE; dữ liệu cũ có nhiều ACTIVE cần được xử lý theo kế hoạch được duyệt **trước** khi tạo index.
+3. Tạm ngừng nhận job mới tại gateway/UI, cho công việc đang chạy hoàn thành nếu có thể, sau đó dừng/drain **tất cả** API/worker phiên bản cũ. Worker được nhúng trong mỗi process API; bản cũ không dùng advisory lock và có thể ghi đồng thời với worker mới. Không chạy mixed-version workers trong/ sau migration.
+4. Kết nối PostgreSQL có **session thực được giữ liên tục** trong suốt một attempt; khuyến nghị direct connection. Không dùng PgBouncer transaction/statement pooling: backend PID hoặc advisory session lock có thể đổi sau mỗi transaction. Nếu dùng pooler session mode, chỉ dùng sau khi đã xác minh độc lập khả năng pin cùng backend PID và lock trong suốt attempt, failover và timeout. Kiểm soát TLS và network ở môi trường cloud.
+5. Sau phê duyệt, áp migration qua quy trình versioning của môi trường. Xác nhận bảng/cột/index/grant, cấu hình AI hợp lệ, access riêng tư của notes, backend health và staging smoke HR/HM với dữ liệu tổng hợp. Chỉ sau đó khởi động đồng nhất API/worker phiên bản mới, theo dõi queue rồi mở nhận job. Nếu cần rollback, dừng/drain worker mới trước và làm theo kế hoạch đã thử; không để worker cũ chạy trên job đang do worker mới xử lý.
+
+Ví dụ preflight chỉ đọc (không tự sửa dữ liệu):
 
 ```sql
+SELECT status, count(*) FROM app_private.ai_configuration_versions GROUP BY status;
+SELECT capability, status, count(*) FROM app_private.operations GROUP BY capability, status;
 SELECT has_schema_privilege('authenticated', 'app_private', 'USAGE') AS authenticated_private_usage,
        has_table_privilege('authenticated', 'public.applications', 'SELECT') AS authenticated_applications_select,
        has_schema_privilege('service_role', 'app_private', 'USAGE') AS service_private_usage;
--- Kỳ vọng sau 00003: false, false, true.
+-- Sau 00003 kỳ vọng: false, false, true. Đối chiếu mọi bảng/view cần dùng, không chỉ ví dụ.
 ```
 
-## Storage: chỉ backend truy cập trực tiếp
+## Storage và privacy
 
-Giữ **cả hai bucket ở chế độ private**. CV upload/download đi qua API đã kiểm tra quyền theo vị trí và shortlist; worker dùng service role cho cả CV gốc lẫn văn bản trích xuất. **Không tạo policy cho `anon` hoặc `authenticated` đọc/ghi trực tiếp hai bucket**: policy cho HM dựa riêng trên quyền vị trí có thể bỏ qua `allow_cv_view=false`.
+- Giữ `cv-originals` và `cv-extracted-text` **private**; upload/download đi qua backend kiểm tra quyền. Không cấp policy trực tiếp cho HM chỉ dựa trên assignment: có thể bỏ qua `allow_cv_view=false`. Kiểm tra và xử lý policy cũ theo phạm vi được phê duyệt. Link CV đã ký có thể dùng đến 10 phút sau thu hồi.
+- CV gốc vẫn được lưu để người có quyền xem. Trước mỗi cuộc gọi AI, code che theo regex các identifier/thuộc tính nhạy cảm phổ biến, hạn chế profile có cấu trúc và thêm system guardrails; extracted text mới cũng lưu bản đã che. Đây là **best effort, không phải ẩn danh hoặc bảo đảm không rò rỉ**: tên không nhãn, địa chỉ, dữ liệu nhạy cảm viết tự do, OCR và biến thể ngôn ngữ có thể bị bỏ sót; che nhầm cũng có thể làm mất bằng chứng. Prompt không bảo đảm loại bỏ prompt injection hoặc bias.
+- Cần đánh giá DLP/NER, chính sách retention, hợp đồng xử lý dữ liệu, kiểm thử bảo mật/bias và kiểm soát mạng độc lập trước khi xử lý hồ sơ thật. Chỉ gửi dữ liệu tới dịch vụ/model đã được phê duyệt; ưu tiên local. Ghi chú riêng HR không được truyền vào profile/prompt, nhưng không thay thế chính sách truy cập/log của toàn hệ thống.
+- SQLAlchemy ẩn bound parameters, worker tránh ghi CV/prompt/exception raw, nhưng hệ điều hành, proxy, model provider, OCR và dịch vụ khác vẫn cần được rà soát logging, quyền, mã hóa và backup. Audit hiện chưa bất biến; workflow retention/xác nhận xóa chưa hoàn tất.
 
-Kiểm tra các policy hiện có trong Dashboard → Storage → Policies hoặc `pg_policies`; nếu từng áp dụng hướng dẫn policy cũ, rà soát và loại bỏ/sửa policy cho hai bucket sau khi đánh giá tác động tới ứng dụng khác. Không xóa mù quáng policy của bucket khác. Đường link ký được backend cấp có hiệu lực tối đa 10 phút; link đã cấp có thể vẫn dùng được tới khi hết hạn sau khi quyền bị thu hồi.
+## Cấu hình AI và egress
 
-## Cấu hình
+- Backend/worker đọc `LLM_PROVIDER`, `LLM_MODEL_NAME`, `LLM_API_BASE`, `LLM_API_KEY`, `LLM_TEMPERATURE_DEFAULT`, `LLM_ALLOWED_MODELS`, `LLM_ALLOWED_API_BASES`, `ALLOW_EXTERNAL_API` từ environment khi khởi động. Hai allowlist là **JSON arrays**; model/endpoint mặc định cũng được tự đưa vào allowlist. Cấu hình, secret và chính sách phải nhất quán giữa tất cả process API/worker; thay env/secret cần rollout/restart theo quy trình.
+- Admin có thể tạo và kích hoạt version không chứa credential trong DB; API kiểm tra role/account, allowlist và policy, kích hoạt atomic, ghi audit. Job ghim snapshot cấu hình ở attempt đầu và dùng lại khi phục hồi; tác vụ mới dùng version active. Assessment hiện bỏ qua profile/rubric đã có kết quả hoàn tất; đổi model không tự đánh giá lại hoặc thay kết quả trước đó. Cấu hình bị loại khỏi allowlist sẽ fail closed. Giao diện health chỉ cho biết policy của process trả lời, không chứng minh model hoạt động.
+- Tất cả nhãn `local`, `compatible`, `openai`, `azure` dùng **cùng** endpoint OpenAI-compatible `POST /chat/completions`, JSON và `Authorization: Bearer` nếu có `LLM_API_KEY`. Không hỗ trợ trực tiếp Azure API native `api-key`/`api-version`, deployment path hoặc xác thực riêng; chỉ dùng Azure qua gateway tương thích đã phê duyệt. Một API key environment được gửi tới mọi endpoint được phép: không trộn endpoint cần các credential khác nhau trong cùng deployment; dùng gateway/secret isolation riêng khi cần.
+- `ALLOW_EXTERNAL_API=false` mặc định chỉ cho endpoint phân giải thành địa chỉ private/loopback. Khi cho phép endpoint public, HTTP client yêu cầu HTTPS; URL không được chứa credential/query/fragment, client không dùng proxy từ environment. Kiểm tra DNS trước request **không pin DNS** và allowlist không thay thế firewall/egress proxy, TLS nội bộ, DLP, phê duyệt và giám sát. Không bật external chỉ để demo.
 
-- `DATABASE_URL`: kết nối PostgreSQL từ **backend**; dùng TLS cho cloud. Vai trò kết nối phải có các quyền SQL cần thiết để API/worker truy cập `app_private`; dữ liệu được phân quyền trong backend, nên không cấp credential này cho client. Hạn chế quyền và network theo nguyên tắc tối thiểu.
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`: dùng cho đăng nhập Supabase Auth ở backend. `SUPABASE_JWT_SECRET`: bí mật xác minh JWT, chỉ backend. Hiện API xác minh JWT **HS256**, audience `authenticated`, và yêu cầu `sub`/`aud`/`exp`; project dùng signing key bất đối xứng cần bổ sung JWKS/thuật toán tương ứng trước khi sử dụng.
-- `SUPABASE_SERVICE_ROLE_KEY`: chỉ backend/worker; bắt buộc khi `STORAGE_BACKEND=supabase`. `local` là tùy chọn thử nghiệm, Compose lưu trong volume `cv_storage` và cần bảo vệ dữ liệu/backup phù hợp.
-- `LLM_API_BASE`, `LLM_MODEL_NAME`, `LLM_API_KEY`, `ALLOW_EXTERNAL_API`: đọc từ **environment khi process khởi động**. Trang Admin chỉ đọc cấu hình của process API; bản ghi AI trong database không tự áp dụng, các endpoint đổi cấu hình trả 501. Khi đổi env phải khởi động lại API/worker và xác nhận cấu hình của mọi process.
-- `ALLOW_EXTERNAL_API=false` mặc định chặn endpoint không phân giải về địa chỉ private/loopback và client không dùng proxy từ biến môi trường. Đây **không phải** kiểm soát egress đầy đủ/DNS pinning: triển khai firewall/network allowlist, TLS, giám sát và quy trình phê duyệt riêng. CV text được gửi đến endpoint AI đã cấu hình; hiện chưa có bộ khử thông tin nhạy cảm/anti-bias đủ để cam kết loại bỏ hoàn toàn. Không gửi CV thật tới dịch vụ bên ngoài nếu chưa có phê duyệt và kiểm soát dữ liệu.
-- Frontend gọi `/v1` cùng origin; Next proxy tới `API_INTERNAL_URL` phía server. Không đặt URL backend localhost trong mã chạy ở trình duyệt. Trong Compose, giá trị là `http://backend:8000`; `localhost` bên trong một container không phải host máy.
+## Phục hồi worker và giám sát
 
-Mẫu cấu hình: `.env.example` cho Compose, `backend/.env.example` và `frontend/.env.local.example` khi chạy từng dịch vụ. Các giá trị mẫu là placeholder, không phải credential.
+Mỗi attempt giữ PostgreSQL session-level advisory lock, backend PID và token; worker xác minh fencing trước commit. Heartbeat chỉ là tín hiệu, **không phải lease** cho phép worker khác cướp job. Worker mới tự nhận job `PROCESSING` nếu lock cũ được giải phóng; cột `attempt_count`/`recovery_count`, heartbeat và event recovery được cập nhật. Hàng đợi quét theo trang để không bị kẹt sau 100 lock sống. Test cục bộ đã mô phỏng process crash, hai worker, mất DB connection, khôi phục lô và kiểm tra metric; vẫn cần diễn tập staging với topology thực.
 
-## Khởi chạy
+1. Theo dõi `/v1/admin/worker/health` (chỉ ADMIN): pending, processing, heartbeat quá 2 phút, chạy quá 30 phút, thất bại/khôi phục 24 giờ và pending lâu nhất. `recoveries_24h` đếm **sự kiện còn lưu** được ghi từ khi có 00004; không backfill được lịch sử cũ, và xóa operation cũng xóa event. Thiết lập cảnh báo và liveness/monitoring bên ngoài: endpoint này **không chứng minh worker còn sống**.
+2. Khi heartbeat cũ hoặc hàng đợi không tiến triển, xác minh log, process, DB connection và job với on-call; không tự reset `PROCESSING`, không dựa riêng vào thời gian. Session DB còn sống có thể giữ lock ngay cả khi worker treo hoặc mạng partition, do đó recovery có thể chậm đến khi PostgreSQL phát hiện session chết.
+3. Nếu cần can thiệp, dừng worker/process đã xác minh theo quy trình, đánh giá ảnh hưởng các job khác; DBA chỉ kết thúc session PostgreSQL đã xác minh chính xác sau phê duyệt, không kill hàng loạt. Khi lock được giải phóng, worker mới nhận lại job và cập nhật attempt/event. Theo dõi tới trạng thái cuối, đối chiếu batch, assessment/ranking và phản hồi HR. Không dùng công cụ SQL để chiếm thử advisory lock trên hệ thống đang chạy nếu không hiểu và giải phóng lock.
+4. Recovery là **at-least-once**, không exactly-once: cuộc gọi model có thể bị lặp và tính phí/lưu log nhiều lần. Kết quả DB được fencing/reconcile, nhưng storage có thể còn object orphan ở các attempt khác nhau. Với `cv-extracted-text`, `extracted.txt` và `pages.json` nằm trong thư mục token attempt; tham chiếu hiện hành nằm ở `document_processing_runs.extracted_text_storage_path`. Chỉ đối soát/thu gom sau thời gian chờ an toàn, backup, xác minh cả object cặp, mọi tham chiếu và job còn sống; dry-run, review thủ công, không xóa mù. CV gốc cũng cần đối soát `application_documents.storage_path` riêng.
+5. Với job thất bại thực sự, khảo sát nguyên nhân (storage, model, quyền, network), khôi phục dịch vụ và dùng quy trình nghiệp vụ được phê duyệt để chạy lại. Không sửa trực tiếp DB hoặc tự coi kết quả AI là quyết định tuyển dụng.
 
-### Từng dịch vụ
+## Khởi chạy phát triển
+
+- `DATABASE_URL` chỉ backend/worker, có quyền SQL cần thiết trên `app_private`; không cấp cho browser. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET` dùng cho Supabase Auth backend; API hiện kiểm tra HS256/audience `authenticated`, project dùng asymmetric signing cần hỗ trợ JWKS trước. `SUPABASE_SERVICE_ROLE_KEY` chỉ backend/worker và bắt buộc với Storage Supabase.
+- Frontend gọi `/v1` cùng origin và Next proxy tới `API_INTERNAL_URL` phía server; không đưa địa chỉ backend localhost vào mã browser. Compose dùng `http://backend:8000`. Local Storage chỉ cho phát triển, cần backup/bảo vệ volume.
 
 ```bash
+# Sau khi chuẩn bị DB, các migration được phê duyệt và backend/.env an toàn:
 cd backend
-cp .env.example .env             # điền cấu hình an toàn, không commit
 python -m venv .venv
 .venv/bin/python -m pip install --upgrade "pip>=26.2" "setuptools>=84.1.0"
 .venv/bin/pip install -e .
@@ -60,26 +76,13 @@ python -m venv .venv
 
 ```bash
 cd frontend
-cp .env.local.example .env.local # API_INTERNAL_URL trỏ tới backend
+cp .env.local.example .env.local # API_INTERNAL_URL đến backend
 npm ci
 npm run dev
 ```
 
-Đăng nhập cần user Supabase Auth có `app_private.user_profiles.account_status='ACTIVE'` và role/position assignment tương ứng. Provision user/role phải do quản trị viên thực hiện theo quy trình nội bộ. `/health` chỉ kiểm tra liveness; `/health/ready` kiểm tra kết nối database, không chứng minh Storage hoặc LLM hoạt động.
+`/health` là liveness, `/health/ready` chỉ kiểm tra database, không chứng minh Storage/AI. Đăng nhập cần user Supabase active và role/assignment. Compose (`cp .env.example .env`, điền secret an toàn, `docker compose up --build`) không tạo PostgreSQL/Supabase/LLM; worker chạy trong API. Docker/Compose chưa kiểm thử ở đây.
 
-### Docker Compose
+## Việc còn chặn production
 
-```bash
-cp .env.example .env  # điền URL/secret cho backend, APP_ENV=production và DEBUG=false khi cần
-# Đảm bảo Supabase/PostgreSQL và LLM riêng đã chạy, có thể truy cập từ container
-docker compose up --build
-```
-
-Compose chỉ tạo frontend và backend; worker chạy trong process backend, không có Celery/Redis/PostgreSQL/LLM tích hợp. Cần quản lý network, TLS, backup volume, bí mật, giám sát và số worker/process. Docker build/runtime chưa được kiểm chứng trong phiên này.
-
-## Giới hạn vận hành cần xử lý trước production
-
-- Queue poll PostgreSQL chưa có lease/heartbeat hoặc phục hồi an toàn tác vụ `PROCESSING` sau crash. Không tự đặt lại task đang chạy khi chưa xác minh worker đã dừng và tác động tới dữ liệu; cần runbook/khôi phục được thiết kế và kiểm thử trước vận hành.
-- Chưa có luồng quản lý retention/xác nhận xóa và chỉnh sửa hồ sơ ứng viên hoàn chỉnh; log audit chưa được bảo đảm bất biến. Giao diện hiện lưu access token ở `localStorage`; cần đánh giá XSS, chính sách session, log, quyền và an toàn dữ liệu trước pilot. SQLAlchemy không echo và ẩn bound parameters, nhưng vẫn cần rà soát log của toàn bộ hệ thống.
-- Python dependencies hiện khai báo theo khoảng phiên bản, chưa có lockfile; kiểm soát chuỗi cung ứng và chạy quét lỗ hổng định kỳ cho image/dependencies. Ngày 05/11/2026, `npm audit --omit=dev` báo 0, nhưng full audit còn 6 cảnh báo moderate trong chuỗi công cụ lint. `pip-audit` trên môi trường backend cục bộ không báo lỗ hổng đã biết ở các dependencies được quét (bỏ qua package nội bộ editable). Các kết quả tại một thời điểm không chứng minh image triển khai an toàn.
-- Thực hiện kiểm thử OCR scan (Tesseract tiếng Anh + Poppler), model thật, đánh giá chất lượng/bias và kiểm thử end-to-end Supabase với dữ liệu được phép. Kết quả AI chỉ là tham khảo; chỉ HR chuyển trạng thái tuyển dụng.
+Hoàn thành kiểm thử staging/e2e Auth/Storage/LLM/OCR với dữ liệu được phép; đánh giá chất lượng và bias, egress/DLP, retention/xóa, audit bất biến, bảo vệ session/XSS (`localStorage` đang chứa access token), DR/monitoring và phê duyệt pháp lý/bảo mật. Python dependencies chưa lock; cần quản lý chuỗi cung ứng và quét image định kỳ. Ngày 05/11/2026, `npm audit --omit=dev` báo 0 lỗ hổng; audit đầy đủ báo 6 moderate trong chuỗi dev-only `@typescript-eslint`/`minimatch`, cần theo dõi bản vá tương thích. Kết quả audit dependencies chỉ phản ánh thời điểm quét, không chứng minh image triển khai an toàn.

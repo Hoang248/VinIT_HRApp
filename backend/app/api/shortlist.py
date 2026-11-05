@@ -62,9 +62,16 @@ async def list_shortlisted_applications(position_id: UUID, current_user: dict = 
             FROM app_private.applications a
             LEFT JOIN app_private.application_identities i ON i.application_id = a.application_id
             LEFT JOIN LATERAL (
-                SELECT matching_status, matching_score, evidence_coverage FROM app_private.assessment_runs
-                WHERE application_id = a.application_id AND status = 'COMPLETED'
-                ORDER BY created_at DESC LIMIT 1
+                SELECT ar.matching_status, ar.matching_score, ar.evidence_coverage FROM app_private.assessment_runs ar
+                WHERE ar.application_id = a.application_id AND ar.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
+                ORDER BY ar.created_at DESC LIMIT 1
             ) ar ON TRUE
             WHERE a.position_id = :position_id AND a.application_status = 'SHORTLIST'
             ORDER BY a.created_at DESC
@@ -112,12 +119,29 @@ async def create_shortlist_share(request: CreateShortlistShareRequest, current_u
                 INSERT INTO app_private.shortlist_share_items
                     (share_id, position_id, application_id, assessment_id, ranking_item_id)
                 VALUES (:share_id, :position_id, :application_id,
-                    (SELECT assessment_id FROM app_private.assessment_runs
-                     WHERE application_id = :application_id AND status = 'COMPLETED'
-                     ORDER BY created_at DESC LIMIT 1),
+                    (SELECT ar.assessment_id FROM app_private.assessment_runs ar
+                     JOIN app_private.applications a ON a.application_id = ar.application_id
+                     WHERE ar.application_id = :application_id AND ar.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
+                     ORDER BY ar.created_at DESC LIMIT 1),
                     (SELECT ri.ranking_item_id FROM app_private.ranking_items ri
                      JOIN app_private.ranking_runs rr ON rr.ranking_run_id = ri.ranking_run_id
+                     JOIN app_private.assessment_runs ar ON ar.assessment_id = ri.assessment_id
+                     JOIN app_private.applications a ON a.application_id = ri.application_id
                      WHERE ri.application_id = :application_id AND rr.status = 'COMPLETED'
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
                      ORDER BY rr.created_at DESC LIMIT 1))
             """), {"share_id": share_id, "position_id": position_id, "application_id": app_id})
         db.execute(text("""
@@ -209,6 +233,13 @@ async def get_shortlist_detail(share_id: UUID, current_user: dict = Depends(get_
             JOIN app_private.applications a ON a.application_id = si.application_id
             LEFT JOIN app_private.application_identities i ON i.application_id = si.application_id
             LEFT JOIN app_private.assessment_runs ar ON ar.assessment_id = si.assessment_id
+                  AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+                      WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+                  AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+                      WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                        AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                            WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+                      ORDER BY c.version_number DESC LIMIT 1)
             WHERE si.share_id = :share_id ORDER BY si.created_at, si.share_item_id
         """), {"share_id": str(share_id)}).mappings().all()
         feedback = db.execute(text("""

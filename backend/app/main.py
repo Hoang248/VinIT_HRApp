@@ -55,8 +55,8 @@ def create_app() -> FastAPI:
         try:
             db.execute(text("SELECT 1"))
             db_status = "connected"
-        except Exception:
-            logger.exception("Database readiness check failed")
+        except Exception as exc:
+            logger.error("Database readiness check failed", error_type=type(exc).__name__)
             return JSONResponse(status_code=503, content={"status": "unhealthy", "database": "unavailable"})
         finally:
             db.close()

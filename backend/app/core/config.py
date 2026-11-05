@@ -33,10 +33,14 @@ class Settings(BaseSettings):
     MAX_BATCH_SIZE_BYTES: int = 250_000_000  # 250 MB
 
     # AI/LLM
-    LLM_PROVIDER: str = "local"  # local, openai, azure
+    LLM_PROVIDER: str = "local"  # local/openai/azure/compatible labels; same OpenAI-compatible transport
     LLM_MODEL_NAME: str = "vinuni/hra-llm-7b"
     LLM_API_BASE: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
+    # Optional JSON arrays. The environment default endpoint/model are always
+    # included. These are operator policy, never editable in the UI.
+    LLM_ALLOWED_API_BASES: list[str] = []
+    LLM_ALLOWED_MODELS: list[str] = []
     LLM_TEMPERATURE_DEFAULT: float = 0.1
     ALLOW_EXTERNAL_API: bool = False
 

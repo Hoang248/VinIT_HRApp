@@ -77,7 +77,7 @@ class DocumentProcessor:
                 return DocumentType.PDF_TEXT
             return DocumentType.PDF_SCANNED
         except Exception as e:
-            logger.warning("Error detecting PDF type, assuming scanned or unsupported", error=str(e))
+            logger.warning("Error detecting PDF type, assuming scanned or unsupported", error_type=type(e).__name__)
             return DocumentType.PDF_SCANNED
 
     async def extract_text_from_pdf_text(self, file_content: bytes) -> Tuple[str, list]:
@@ -107,7 +107,7 @@ class DocumentProcessor:
             try:
                 images = convert_from_path(temp_pdf.name, dpi=300)
             except Exception as e:
-                logger.error("Failed to convert PDF to images for OCR", error=str(e))
+                logger.error("Failed to convert PDF to images for OCR", error_type=type(e).__name__)
                 raise FileValidationError("Could not process scanned PDF file")
 
             for page_num, image in enumerate(images, start=1):

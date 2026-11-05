@@ -4,8 +4,9 @@ services:
   backend:
     build: ./backend
     env_file: .env
+    # Bind to loopback by default; publish externally only behind a reviewed proxy.
     ports:
-      - "8000:8000"
+      - "${HRA_BACKEND_BIND:-127.0.0.1}:8000:8000"
     volumes:
       - cv_storage:/app/storage
     environment:
@@ -15,7 +16,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "${HRA_FRONTEND_BIND:-127.0.0.1}:3000:3000"
     environment:
       API_INTERNAL_URL: http://backend:8000
       HOSTNAME: 0.0.0.0
