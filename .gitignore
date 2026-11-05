@@ -1,0 +1,29 @@
+# Ignore old directory as requested
+old/
+
+# Operating System files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary and log files
+*.log
+*.tmp
+*.bak
+*.backup
+
+# Python / Node files (if any)
+__pycache__/
+*.pyc
+node_modules/
+.env
+.env.local
