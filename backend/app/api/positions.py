@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from uuid import UUID
 from app.core.security import get_current_user
+from app.core.permissions import check_position_access
 from app.schemas.positions import Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus
 from app.schemas.common import ErrorResponse
 from app.db.supabase import get_supabase_client
@@ -73,14 +74,15 @@ async def get_position(
     current_user: dict = Depends(get_current_user)
 ):
     """Get position details by ID"""
+    # RBAC check
+    await check_position_access(position_id, current_user)
+
     supabase = get_supabase_client()
     result = supabase.table("positions").select("*").eq("position_id", str(position_id)).single().execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Position not found")
 
-    # TODO: Check if user has access to this position
-    # TODO: Add application statistics
     return result.data
 
 

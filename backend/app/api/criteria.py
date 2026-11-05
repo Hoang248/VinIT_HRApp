@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from uuid import UUID
 from app.core.security import get_current_user
+from app.core.permissions import check_position_access
 from app.core.logging import get_logger
 from app.core.exceptions import CriteriaNotApprovedError, NotFoundError
 from app.schemas.criteria import (
@@ -25,6 +26,7 @@ async def list_criteria_versions(
     current_user: dict = Depends(get_current_user)
 ):
     """List all criteria versions for a position"""
+    await check_position_access(position_id, current_user)
     supabase = get_supabase_client()
 
     result = supabase.table("criteria_versions")\
@@ -73,7 +75,8 @@ async def generate_criteria_from_jd(
 
     position = pos_result.data
 
-    # TODO: Check if user has HR_RECRUITER or HIRING_MANAGER assignment on this position
+    # RBAC: only HR_RECRUITER/HIRING_MANAGER on this position can generate criteria
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER", "HIRING_MANAGER"])
 
     # Get latest JD version
     jd_result = supabase.table("jd_versions")\
@@ -200,9 +203,8 @@ async def approve_criteria(
     cv = cv_result.data
     position_id = cv["position_id"]
 
-    # TODO: Check user role on this position (HR_RECRUITER or HIRING_MANAGER)
-    # For MVP: determine role based on action flow. If status is DRAFT/PENDING_HR_REVIEW → HR action
-    # If status is PENDING_HM_APPROVAL → HM action
+    # RBAC: user must be assigned to position (HR or HM) to approve criteria
+    await check_position_access(UUID(position_id), current_user, required_roles=["HR_RECRUITER", "HIRING_MANAGER"])
 
     current_status = cv["status"]
     action = request.action

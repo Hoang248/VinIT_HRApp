@@ -33,10 +33,35 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["Health Check"])
     async def health_check():
+        """Liveness probe - returns immediately without checking downstream dependencies."""
         return {
             "status": "healthy",
             "app": settings.APP_NAME,
             "environment": settings.APP_ENV
+        }
+
+    @app.get("/health/ready", tags=["Health Check"])
+    async def readiness_check():
+        """Readiness probe - verifies database connectivity."""
+        from sqlalchemy import text
+        from app.db.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            db_status = "connected"
+        except Exception as e:
+            db_status = f"error: {str(e)[:200]}"
+            return {
+                "status": "unhealthy",
+                "database": db_status,
+            }, 503
+        finally:
+            db.close()
+        return {
+            "status": "ready",
+            "database": db_status,
+            "app": settings.APP_NAME,
+            "environment": settings.APP_ENV,
         }
 
     @app.on_event("startup")

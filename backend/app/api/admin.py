@@ -112,8 +112,17 @@ async def create_ai_config(
             }
         )
 
-        # TODO: Store API base and key securely (in production, use encrypted column or secret manager)
-        # For MVP development, we store them in ai_policy_versions metadata
+        # Store API configuration metadata in policy version (MVP: plaintext; production: encrypted column / secret manager)
+        # Use json.dumps for safe JSON construction (prevents any injection via provider/api_base strings)
+        import json as _json
+        allowed_providers_json = _json.dumps([request.provider])
+        data_rules_json = _json.dumps({
+            "api_base": request.api_base or "",
+            "api_key_set": bool(request.api_key),
+            "temperature_default": request.temperature_default,
+            "model_name": request.model_name,
+        })
+
         db.execute(
             text("""
                 INSERT INTO app_private.ai_policy_versions
@@ -125,8 +134,8 @@ async def create_ai_config(
             """),
             {
                 "policy_version": f"custom-{config_id}",
-                "allowed_providers": '["' + request.provider + '"]',
-                "data_rules": '{"api_base": "' + (request.api_base or '') + '", "api_key_set": ' + ('true' if request.api_key else 'false') + '}',
+                "allowed_providers": allowed_providers_json,
+                "data_rules": data_rules_json,
                 "external_allowed": request.external_api_allowed,
                 "approved_by": user_id
             }

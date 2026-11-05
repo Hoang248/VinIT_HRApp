@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from typing import List, Optional
 from uuid import UUID, uuid4
 from app.core.security import get_current_user
+from app.core.permissions import check_position_access, can_update_application_status
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import (
@@ -52,6 +53,9 @@ async def create_cv_batch(
     supabase = get_supabase_client()
     user_id = current_user["user_id"]
     position_id_str = str(position_id)
+
+    # RBAC: only HR_RECRUITER on this position (or Admin/HR Lead) can upload CVs
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER", "HIRING_MANAGER"])
 
     # Verify position exists and is open
     pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
@@ -261,6 +265,9 @@ async def list_applications(
     current_user: dict = Depends(get_current_user)
 ):
     """List applications for a position with their latest assessment"""
+    # RBAC: user must have access to this position
+    await check_position_access(position_id, current_user)
+
     supabase = get_supabase_client()
 
     query = supabase.table("applications")\
@@ -306,6 +313,14 @@ async def get_application(
     """Get application details with documents, profile, and assessment results"""
     supabase = get_supabase_client()
     app_id_str = str(application_id)
+
+    # Fetch application first to derive position_id for RBAC check
+    app_check = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
+    if not app_check.data:
+        raise NotFoundError("Application")
+    await check_position_access(
+        UUID(app_check.data["position_id"]), current_user, application_id=application_id
+    )
 
     result = supabase.table("applications")\
         .select(
@@ -355,6 +370,13 @@ async def update_application_status(
         raise NotFoundError("Application")
 
     app = app_result.data
+
+    # RBAC: only HR_RECRUITER assigned to this position (or Admin/HR Lead) can change status
+    if not can_update_application_status(user_id, app["position_id"]):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be the assigned HR Recruiter to update application status"
+        )
     current_status = ApplicationStatus(app["application_status"])
     new_status = update.new_status
 
@@ -411,6 +433,13 @@ async def get_cv_download_url(
     supabase = get_supabase_client()
     app_id_str = str(application_id)
 
+    # Get application for position_id RBAC check
+    app_result = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
+    if not app_result.data:
+        raise NotFoundError("Application")
+    # RBAC: user must have access to the position this CV belongs to
+    await check_position_access(UUID(app_result.data["position_id"]), current_user)
+
     # Get application and its documents
     doc_result = supabase.table("application_documents")\
         .select("*")\
@@ -424,7 +453,6 @@ async def get_cv_download_url(
 
     doc = doc_result.data[0]
 
-    # TODO: Check user permission (must be HR assigned or on shortlist share with cv_view permission)
     # Generate access information
     try:
         if settings.STORAGE_BACKEND == "local":
@@ -457,14 +485,21 @@ async def serve_cv_file(
     if settings.STORAGE_BACKEND != "local":
         raise HTTPException(status_code=400, detail="Local file serving is only available with local storage backend")
 
-    # TODO: Check user permission to view this application's CV
     supabase = get_supabase_client()
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection not available")
 
+    app_id_str = str(application_id)
+
+    # Get application for RBAC check
+    app_result = supabase.table("applications").select("position_id").eq("application_id", app_id_str).single().execute()
+    if not app_result.data:
+        raise NotFoundError("Application")
+    await check_position_access(UUID(app_result.data["position_id"]), current_user)
+
     doc_result = supabase.table("application_documents")\
         .select("*")\
-        .eq("application_id", str(application_id))\
+        .eq("application_id", app_id_str)\
         .eq("document_type", "CV")\
         .limit(1)\
         .execute()
@@ -473,13 +508,24 @@ async def serve_cv_file(
         raise NotFoundError("CV Document")
 
     doc = doc_result.data[0]
-    file_path = os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"], doc["storage_path"])
 
-    if not os.path.exists(file_path):
+    # Build and validate path - prevent path traversal attacks
+    base_storage_dir = os.path.realpath(os.path.join(settings.LOCAL_STORAGE_PATH, doc["bucket"]))
+    file_path = os.path.realpath(os.path.join(base_storage_dir, doc["storage_path"]))
+
+    # Ensure the resolved file is still within the allowed base directory
+    if not file_path.startswith(base_storage_dir + os.sep) and file_path != base_storage_dir:
+        logger.warning("Path traversal attempt detected", application_id=app_id_str, requested_path=doc["storage_path"])
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not os.path.isfile(file_path):
         raise NotFoundError("CV file not found on disk")
+
+    # Sanitize filename for Content-Disposition header
+    safe_filename = os.path.basename(doc["original_filename"])
 
     return FileResponse(
         path=file_path,
-        filename=doc["original_filename"],
+        filename=safe_filename,
         media_type=doc["mime_type"]
     )

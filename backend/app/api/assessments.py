@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from uuid import UUID, uuid4
 from app.core.security import get_current_user
+from app.core.permissions import check_position_access
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import NotFoundError, CriteriaNotApprovedError
@@ -33,6 +34,9 @@ async def run_assessment_for_position(
     pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
     if not pos_result.data:
         raise NotFoundError("Position")
+
+    # RBAC: only HR_RECRUITER on this position can trigger assessment
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
 
     # Get latest approved criteria
     criteria_result = supabase.table("criteria_versions")\
@@ -119,6 +123,12 @@ async def get_assessment(
     supabase = get_supabase_client()
     assess_id_str = str(assessment_id)
 
+    # Look up position_id for RBAC check
+    assess_meta = supabase.table("assessment_runs").select("position_id").eq("assessment_id", assess_id_str).single().execute()
+    if not assess_meta.data:
+        raise NotFoundError("Assessment run")
+    await check_position_access(UUID(assess_meta.data["position_id"]), current_user)
+
     result = supabase.table("assessment_runs")\
         .select("*, criterion_results: criterion_assessment_results(*, evidence: evidence_items(*))")\
         .eq("assessment_id", assess_id_str)\
@@ -145,6 +155,9 @@ async def generate_ranking(
     pos_result = supabase.table("positions").select("*").eq("position_id", position_id_str).single().execute()
     if not pos_result.data:
         raise NotFoundError("Position")
+
+    # RBAC: only HR_RECRUITER on this position can generate ranking
+    await check_position_access(position_id, current_user, required_roles=["HR_RECRUITER"])
 
     criteria_result = supabase.table("criteria_versions")\
         .select("*, criteria: criteria_items(*)")\
@@ -291,6 +304,8 @@ async def get_latest_ranking(
     current_user: dict = Depends(get_current_user)
 ):
     """Get latest ranking for a position, sorted by rank order"""
+    # RBAC: user must have access to this position
+    await check_position_access(position_id, current_user)
     supabase = get_supabase_client()
     position_id_str = str(position_id)
 
