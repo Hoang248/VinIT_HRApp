@@ -1,0 +1,1756 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VinUni HRA — AI-Native CV Matching & Ranking (Phase 1 Demo)</title>
+  <link rel="shortcut icon" href="https://data-talent-v2.basecdn.net/careerportalvinuni/fav.png" type="image/x-icon" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --brand-primary: #0A2B57;
+      --brand-accent: #C72127;
+      --brand-active: #941616;
+      --brand-secondary: #134D8B;
+      --brand-interactive: #2599DC;
+      --surface-bg: #F8FAFC;
+      --surface-card: #FFFFFF;
+      --surface-subtle: #F3EEEE;
+      --surface-hover: #F1F5F9;
+      --border-default: #E2E8F0;
+      --border-subtle: #EEEEEE;
+      --text-primary: #112434;
+      --text-secondary: #475569;
+      --text-muted: #94A3B8;
+
+      /* Semantic status tokens */
+      --status-success-text: #067647;
+      --status-success-bg: #ECFDF3;
+      --status-warning-text: #B54708;
+      --status-warning-bg: #FFFAEB;
+      --status-danger-text: #B42318;
+      --status-danger-bg: #FEF3F2;
+      --status-info-text: #134D8B;
+      --status-info-bg: #EFF8FF;
+      --radius-btn: 8px;
+      --radius-pill: 30px;
+      --radius-card: 10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      background-color: var(--surface-bg);
+      color: var(--text-primary);
+      line-height: 1.5;
+      font-size: 14px;
+      overflow-x: hidden;
+    }
+
+    /* Top Banner / Demo Notice */
+    .demo-bar {
+      background: linear-gradient(90deg, #112434 0%, #0A2B57 100%);
+      color: #FFFFFF;
+      padding: 6px 20px;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .demo-badge {
+      background-color: var(--brand-accent);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 11px;
+      margin-right: 8px;
+    }
+
+    /* Main App Header */
+    header.app-header {
+      background-color: #FFFFFF;
+      border-bottom: 1px solid var(--border-default);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+    }
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand-logo img {
+      height: 38px;
+      display: block;
+    }
+    .system-title {
+      border-left: 2px solid var(--border-default);
+      padding-left: 14px;
+    }
+    .system-title h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      letter-spacing: -0.2px;
+    }
+    .system-title span {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    /* Requisition Selector */
+    .req-selector {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface-hover);
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border-default);
+    }
+    .req-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+    .req-select {
+      background: transparent;
+      border: none;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .user-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .badge-open {
+      background-color: #ECFDF3;
+      color: #067647;
+      border: 1px solid #A6F4C5;
+    }
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--brand-primary);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    /* Navigation Tabs */
+    .nav-tabs-bar {
+      background: var(--brand-primary);
+      padding: 0 24px;
+      display: flex;
+      gap: 4px;
+    }
+    .nav-tab-btn {
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.8);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+      border-bottom: 3px solid transparent;
+    }
+    .nav-tab-btn:hover {
+      color: #FFFFFF;
+      background: rgba(255,255,255,0.06);
+    }
+    .nav-tab-btn.active {
+      color: #FFFFFF;
+      background: var(--brand-active);
+      border-bottom-color: var(--brand-accent);
+      border-radius: 0 0 10px 10px;
+    }
+    .nav-tab-btn .tab-count {
+      background: rgba(255,255,255,0.2);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+
+    /* Container */
+    .app-container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* Tab Content Section */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; animation: fadeIn 0.25s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Card Box */
+    .card-box {
+      background: var(--surface-card);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-card);
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    .card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    /* Buttons */
+    .btn {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: var(--radius-btn);
+      padding: 8px 16px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background-color: var(--brand-accent);
+      color: #FFFFFF;
+    }
+    .btn-primary:hover {
+      background-color: var(--brand-primary);
+      box-shadow: 0 2px 6px rgba(10, 43, 87, 0.25);
+    }
+    .btn-secondary {
+      background-color: #FFFFFF;
+      color: var(--brand-primary);
+      border-color: var(--border-default);
+    }
+    .btn-secondary:hover {
+      background-color: var(--surface-hover);
+    }
+    .btn-success {
+      background-color: var(--status-success-text);
+      color: #FFFFFF;
+    }
+    .btn-success:hover {
+      background-color: #055a36;
+    }
+    .btn-outline-danger {
+      background-color: #FFFFFF;
+      color: var(--brand-accent);
+      border-color: var(--brand-accent);
+    }
+    .btn-outline-danger:hover {
+      background-color: var(--status-danger-bg);
+    }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ========================================================
+       TAB 1: CRITERIA MANAGEMENT STYLES
+       ======================================================== */
+    .criteria-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .criteria-column {
+      background: #FAFCFE;
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .column-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid;
+    }
+    .column-must { border-color: var(--brand-accent); }
+    .column-nice { border-color: var(--brand-interactive); }
+    .column-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .weight-tag {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .weight-must { background: #FDF2F2; color: var(--brand-accent); }
+    .weight-nice { background: #EFF8FF; color: var(--brand-interactive); }
+
+    .criterion-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-default);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+      transition: all 0.2s;
+    }
+    .criterion-card:hover {
+      border-color: var(--brand-interactive);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    }
+    .crit-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .crit-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .crit-keywords {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .keyword-pill {
+      background: var(--surface-subtle);
+      color: var(--text-secondary);
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .dual-approval-banner {
+      background: #F0FDF4;
+      border: 1px solid #BBF7D0;
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+    }
+
+    /* ========================================================
+       TAB 2: BATCH CV INGESTION STYLES
+       ======================================================== */
+    .dropzone-box {
+      border: 2px dashed var(--brand-interactive);
+      background: #F4F9FD;
+      border-radius: 12px;
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .dropzone-box:hover {
+      background: #EAF4FC;
+      border-color: var(--brand-primary);
+    }
+    .dropzone-icon {
+      font-size: 36px;
+      color: var(--brand-interactive);
+      margin-bottom: 8px;
+    }
+    .dropzone-text {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .dropzone-subtext {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .file-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 13px;
+    }
+    .file-table th {
+      background: var(--surface-hover);
+      text-align: left;
+      padding: 10px 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border-default);
+    }
+    .file-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+    .progress-bar-container {
+      width: 120px;
+      height: 6px;
+      background: #E2E8F0;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--brand-interactive);
+      border-radius: 3px;
+    }
+    .progress-bar-done { background: var(--status-success-text); }
+
+    /* ========================================================
+       TAB 3: RANKING & MATCHING MATRIX
+       ======================================================== */
+    .metric-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .metric-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+    }
+    .metric-card.accent-must { border-left: 4px solid #067647; }
+    .metric-card.accent-unclear { border-left: 4px solid #B54708; }
+    .metric-card.accent-miss { border-left: 4px solid var(--brand-accent); }
+    .metric-card.accent-total { border-left: 4px solid var(--brand-primary); }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-top: 4px;
+    }
+    .metric-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .table-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 12px;
+    }
+    .search-input-wrap {
+      position: relative;
+      flex: 1;
+      max-width: 360px;
+    }
+    .search-input-wrap input {
+      width: 100%;
+      background: var(--surface-subtle);
+      border: 1px solid transparent;
+      padding: 8px 14px 8px 34px;
+      border-radius: var(--radius-pill);
+      font-size: 13px;
+      color: var(--text-primary);
+      outline: none;
+      transition: all 0.2s;
+    }
+    .search-input-wrap input:focus {
+      background: #FFFFFF;
+      border-color: var(--brand-interactive);
+      box-shadow: 0 0 0 3px rgba(37, 153, 220, 0.15);
+    }
+    .search-input-wrap .search-icon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .ranking-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .ranking-table th {
+      background: #F8FAFC;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border-default);
+      border-bottom: 1px solid var(--border-default);
+    }
+    .ranking-table td {
+      padding: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+    .ranking-row {
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ranking-row:hover {
+      background-color: #F1F5F9;
+    }
+    .rank-number {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--brand-primary);
+      width: 36px;
+      text-align: center;
+    }
+    .candidate-name {
+      font-weight: 700;
+      color: var(--brand-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .candidate-sub {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .score-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #EFF8FF;
+      color: var(--brand-primary);
+      border: 1px solid #D1E9FF;
+    }
+    .coverage-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .coverage-good { background: #ECFDF3; color: #067647; }
+    .coverage-warn { background: #FFFAEB; color: #B54708; }
+
+    /* Tags for 4 Matching Levels */
+    .tag-level {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .tag-strong { background: #ECFDF3; color: #067647; border: 1px solid #A6F4C5; }
+    .tag-match { background: #EFF8FF; color: var(--brand-primary); border: 1px solid #B2DDFF; }
+    .tag-unclear { background: #FFFAEB; color: #B54708; border: 1px solid #FEDF89; }
+    .tag-nomatch { background: #FEF3F2; color: #B42318; border: 1px solid #FECDCA; }
+
+    /* ========================================================
+       MODAL 50:50 SPLIT-SCREEN (CORE EXPERIENCE)
+       ======================================================== */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(17, 36, 52, 0.65);
+      backdrop-filter: blur(2px);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-backdrop.open { display: flex; }
+
+    .split-modal {
+      background: #FFFFFF;
+      width: 95vw;
+      max-width: 1440px;
+      height: 90vh;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    .modal-top-bar {
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-candidate-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .modal-title-main {
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .close-btn {
+      background: transparent;
+      border: none;
+      color: #FFFFFF;
+      font-size: 22px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 4px 8px;
+    }
+
+    .split-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    
+    /* Left Pane: CV Viewer */
+    .pane-left {
+      width: 50%;
+      border-right: 1px solid var(--border-default);
+      display: flex;
+      flex-direction: column;
+      background: #525659; /* PDF viewer grey */
+    }
+    .pdf-toolbar {
+      background: #323639;
+      color: #FFFFFF;
+      padding: 6px 16px;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pdf-viewer-paper {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+    .cv-page {
+      background: #FFFFFF;
+      width: 100%;
+      max-width: 580px;
+      min-height: 800px;
+      padding: 40px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      font-size: 13px;
+      color: #222;
+      position: relative;
+    }
+    .cv-header-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #112434;
+      border-bottom: 2px solid #0A2B57;
+      padding-bottom: 6px;
+      margin-bottom: 12px;
+    }
+    .cv-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0A2B57;
+      text-transform: uppercase;
+      margin-top: 16px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #DDD;
+      padding-bottom: 2px;
+    }
+    .highlight-flash {
+      background: #FFF3C4 !important;
+      border: 1px dashed #E0A800 !important;
+      padding: 2px 4px;
+      border-radius: 3px;
+      transition: background 0.3s;
+    }
+
+    /* Right Pane: AI Evidence & Assessment */
+    .pane-right {
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+      background: #FAFCFE;
+    }
+    .pane-right-header {
+      padding: 14px 20px;
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border-default);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .pane-right-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    /* Evidence Finding Card */
+    .finding-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+      transition: all 0.2s;
+    }
+    .finding-card.strong { border-left: 5px solid #067647; }
+    .finding-card.match { border-left: 5px solid var(--brand-primary); }
+    .finding-card.unclear { border-left: 5px solid #B54708; }
+    .finding-card.nomatch { border-left: 5px solid var(--brand-accent); }
+
+    .finding-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .finding-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .finding-reason {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    /* Verbatim Quote Box */
+    .quote-box {
+      background: #F8FAFC;
+      border: 1px solid var(--border-default);
+      border-left: 3px solid var(--brand-interactive);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #112434;
+      font-style: italic;
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .quote-cite-btn {
+      background: #FFFFFF;
+      border: 1px solid var(--border-default);
+      color: var(--brand-interactive);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 7px;
+      border-radius: 3px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .quote-cite-btn:hover {
+      background: var(--brand-interactive);
+      color: #FFFFFF;
+    }
+
+    /* Human Decision Footer Bar */
+    .decision-bar {
+      background: #FFFFFF;
+      border-top: 2px solid var(--border-default);
+      padding: 14px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .decision-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-select-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--brand-primary);
+      color: #FFFFFF;
+      padding: 12px 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+      font-size: 13.5px;
+      font-weight: 500;
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      animation: slideUp 0.25s ease-out;
+    }
+    .toast.show { display: flex; }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  </style>
+</head>
+<body>
+
+  <!-- Top Demo Bar -->
+  <div class="demo-bar">
+    <div>
+      <span class="demo-badge">PHASE 1 PILOT DEMO</span>
+      <strong>VinUni AI-Native CV Matching & Ranking</strong> — Mô phỏng luồng nghiệp vụ thực tế cho Vị trí IT
+    </div>
+    <div>
+      <span>Quy tắc cốt lõi: <strong>Human-in-control</strong> • AI cố vấn có bằng chứng, HR ra quyết định</span>
+    </div>
+  </div>
+
+  <!-- Application Shell Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-section">
+        <a href="#" class="brand-logo">
+          <img src="https://data-talent-v2.basecdn.net/careerportalvinuni/logo.png" alt="VinUniversity">
+        </a>
+        <div class="system-title">
+          <h1>HRA Workspace</h1>
+          <span>AI-Native CV Matching & Ranking</span>
+        </div>
+      </div>
+
+      <!-- Current Requisition Scope -->
+      <div class="req-selector">
+        <span class="req-label">Vị trí đang chọn:</span>
+        <select class="req-select" id="reqSelect" onchange="changeRequisition()">
+          <option value="REQ-IT01">REQ-2026-IT01: Senior Backend Engineer (Python/FastAPI)</option>
+          <option value="REQ-IT02">REQ-2026-IT02: DevOps / Cloud Infrastructure Specialist</option>
+          <option value="REQ-IT03">REQ-2026-IT03: QA Automation Engineer</option>
+        </select>
+        <span class="badge-status badge-open">● ĐANG MỞ</span>
+      </div>
+
+      <!-- User Profile -->
+      <div class="user-actions">
+        <div class="user-profile">
+          <div class="user-avatar">CT</div>
+          <div>
+            <div style="font-weight: 700; color: var(--brand-primary); line-height: 1.2;">CuongTV</div>
+            <div style="font-size: 11px; color: var(--text-secondary);">HR Recruiter (Lead)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs-bar">
+      <button class="nav-tab-btn active" onclick="switchTab('tab-criteria')">
+        📋 1. Quản lý Tiêu chí & JD
+      </button>
+      <button class="nav-tab-btn" onclick="switchTab('tab-intake')">
+        📥 2. Tiếp nhận Lô CV & OCR
+        <span class="tab-count" id="badge-file-count">5 file</span>
+      </button>
+      <button class="nav-tab-btn" onclick="switchTab('tab-ranking')">
+        📊 3. Bảng Xếp hạng & Ưu tiên
+        <span class="tab-count" style="background: var(--brand-accent);">Top 5</span>
+      </button>
+      <button class="nav-tab-btn" onclick="switchTab('tab-collab')">
+        🤝 4. Phối hợp với Hiring Manager
+      </button>
+    </nav>
+  </header>
+
+  <!-- Main Container -->
+  <main class="app-container">
+
+    <!-- ========================================================
+         TAB 1: CRITERIA MANAGEMENT & DUAL APPROVAL
+         ======================================================== -->
+    <section id="tab-criteria" class="tab-content active">
+      <div class="card-box">
+        <div class="card-header-row">
+          <div>
+            <h2 class="card-title">Bộ Tiêu chí Sàng lọc Vị trí (Rubric Specification)</h2>
+            <p class="card-subtitle">AI đề xuất bản nháp từ JD tiếng Anh • Yêu cầu Dual-Approval (HR duyệt quy trình, Hiring Manager duyệt chuyên môn)</p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary btn-sm" onclick="showToast('Đang đồng bộ lại với bản JD gốc...')">
+              🔄 Tải lại từ JD
+            </button>
+            <button class="btn btn-primary btn-sm" id="btn-approve-rubric" onclick="approveRubric()">
+              ✓ Xác nhận Phê duyệt Rubric v1.0
+            </button>
+          </div>
+        </div>
+
+        <div class="criteria-grid">
+          <!-- MUST-HAVE Column (70%) -->
+          <div class="criteria-column">
+            <div class="column-header column-must">
+              <span class="column-title">TIÊU CHÍ BẮT BUỘC (MUST-HAVE)</span>
+              <span class="weight-tag weight-must">Tổng trọng số: 70%</span>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>1. Kinh nghiệm Lập trình Python Backend</span>
+                <span style="color: var(--brand-accent);">35%</span>
+              </div>
+              <div class="crit-desc">Tối thiểu 3 năm kinh nghiệm phát triển hệ thống với Python, thành thạo FastAPI hoặc Django.</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">Python</span>
+                <span class="keyword-pill">FastAPI</span>
+                <span class="keyword-pill">Django</span>
+                <span class="keyword-pill">REST API</span>
+              </div>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>2. Cơ sở dữ liệu & Tối ưu truy vấn</span>
+                <span style="color: var(--brand-accent);">20%</span>
+              </div>
+              <div class="crit-desc">Kinh nghiệm thiết kế và tối ưu cơ sở dữ liệu quan hệ (PostgreSQL / MySQL) cho hệ thống tải cao.</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">PostgreSQL</span>
+                <span class="keyword-pill">SQL Optimization</span>
+                <span class="keyword-pill">Indexing</span>
+              </div>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>3. Trình độ Học vấn Chuyên ngành</span>
+                <span style="color: var(--brand-accent);">15%</span>
+              </div>
+              <div class="crit-desc">Tốt nghiệp Đại học trở lên chuyên ngành CNTT, Khoa học Máy tính hoặc các ngành kỹ thuật liên quan.</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">Bachelor's Degree</span>
+                <span class="keyword-pill">Computer Science</span>
+                <span class="keyword-pill">IT</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- NICE-TO-HAVE Column (30%) -->
+          <div class="criteria-column">
+            <div class="column-header column-nice">
+              <span class="column-title">TIÊU CHÍ ƯU TIÊN (NICE-TO-HAVE)</span>
+              <span class="weight-tag weight-nice">Tổng trọng số: 30%</span>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>4. Kiến thức Docker & Containerization</span>
+                <span style="color: var(--brand-interactive);">15%</span>
+              </div>
+              <div class="crit-desc">Có kinh nghiệm đóng gói ứng dụng bằng Docker, hiểu cơ bản về triển khai CI/CD pipeline.</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">Docker</span>
+                <span class="keyword-pill">Docker Compose</span>
+                <span class="keyword-pill">CI/CD</span>
+              </div>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>5. Chứng chỉ Cloud / AWS</span>
+                <span style="color: var(--brand-interactive);">10%</span>
+              </div>
+              <div class="crit-desc">Ưu tiên ứng viên có chứng chỉ AWS (Solutions Architect hoặc Developer Associate).</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">AWS Certified</span>
+                <span class="keyword-pill">Cloud Solutions</span>
+              </div>
+            </div>
+
+            <div class="criterion-card">
+              <div class="crit-title">
+                <span>6. Năng lực Tiếng Anh Chuyên môn</span>
+                <span style="color: var(--brand-interactive);">5%</span>
+              </div>
+              <div class="crit-desc">Khả năng đọc hiểu tài liệu kỹ thuật và giao tiếp cơ bản trong môi trường quốc tế.</div>
+              <div class="crit-keywords">
+                <span class="keyword-pill">English</span>
+                <span class="keyword-pill">Documentation</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Approval Status Bar -->
+        <div class="dual-approval-banner" id="approval-banner">
+          <div>
+            <div style="font-weight: 700; color: #067647; font-size: 14px;">
+              ✓ Trạng thái: Rubric v1.0 đã được phê duyệt chính thức
+            </div>
+            <div style="font-size: 12px; color: #475569; margin-top: 2px;">
+              • Hiring Manager: <strong>Dr. David Tran</strong> (Đã duyệt chuyên môn lúc 09:15 04/11/2026)<br/>
+              • HR Recruiter: <strong>CuongTV</strong> (Đã duyệt quy trình lúc 09:30 04/11/2026)
+            </div>
+          </div>
+          <div>
+            <span class="tag-level tag-strong" style="font-size: 12px; padding: 6px 12px;">ĐÃ SẴN SÀNG MATCHING</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         TAB 2: BATCH CV INTAKE & OCR PROCESSING
+         ======================================================== -->
+    <section id="tab-intake" class="tab-content">
+      <div class="card-box">
+        <div class="card-header-row">
+          <div>
+            <h2 class="card-title">Tiếp nhận Hồ sơ theo Lô (Batch Upload) & Tiền xử lý OCR</h2>
+            <p class="card-subtitle">Hỗ trợ PDF văn bản, PDF scan (OCR tự động), Word DOCX • Tối đa 50 file / 250 MB</p>
+          </div>
+          <button class="btn btn-primary" onclick="simulateUpload()">
+            + Tải lên thêm Tệp CV
+          </button>
+        </div>
+
+        <!-- Drag & Drop Zone -->
+        <div class="dropzone-box" onclick="simulateUpload()">
+          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-text">Kéo thả tệp CV tiếng Anh (PDF, DOCX) vào đây, hoặc nhấp để chọn tệp</div>
+          <div class="dropzone-subtext">Giới hạn tối đa 50 file/lô • Dung lượng tối đa 10 MB/tệp</div>
+        </div>
+
+        <!-- File List Table -->
+        <table class="file-table">
+          <thead>
+            <tr>
+              <th>Tên Tệp CV</th>
+              <th>Định dạng</th>
+              <th>Kích thước</th>
+              <th>Trạng thái Kỹ thuật</th>
+              <th>Tiến trình Bóc tách</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>CV_NguyenVanAn_Backend.pdf</strong></td>
+              <td>PDF (Text)</td>
+              <td>1.8 MB</td>
+              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
+              <td>
+                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
+              </td>
+              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(0)">Đối soát</button></td>
+            </tr>
+            <tr>
+              <td><strong>Tran_Thi_Bich_Resume.pdf</strong></td>
+              <td>PDF (Text)</td>
+              <td>2.2 MB</td>
+              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
+              <td>
+                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
+              </td>
+              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(1)">Đối soát</button></td>
+            </tr>
+            <tr>
+              <td><strong>Le_Hoang_Nam_CV.docx</strong></td>
+              <td>DOCX (Word)</td>
+              <td>950 KB</td>
+              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
+              <td>
+                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
+              </td>
+              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(2)">Đối soát</button></td>
+            </tr>
+            <tr>
+              <td><strong>PhamMinhTuan_PythonDev.pdf</strong></td>
+              <td>PDF (Text)</td>
+              <td>1.4 MB</td>
+              <td><span class="badge-status badge-open">✓ ĐỌC THÀNH CÔNG</span></td>
+              <td>
+                <div class="progress-bar-container"><div class="progress-bar-fill progress-bar-done" style="width: 100%;"></div></div>
+              </td>
+              <td><button class="btn btn-secondary btn-sm" onclick="openCandidateModal(3)">Đối soát</button></td>
+            </tr>
+            <tr style="background: #FFFDF5;">
+              <td><strong>Do_Mai_Linh_ScanResume.pdf</strong></td>
+              <td>PDF (Scanned)</td>
+              <td>4.1 MB</td>
+              <td><span class="tag-level tag-unclear">⚠️ CẦN HR KIỂM TRA (Scan mờ)</span></td>
+              <td>
+                <div class="progress-bar-container"><div class="progress-bar-fill" style="width: 65%; background: #B54708;"></div></div>
+              </td>
+              <td><button class="btn btn-outline-danger btn-sm" onclick="showToast('Mở công cụ hỗ trợ đọc scan thủ công...')">Rà soát thủ công</button></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+          <button class="btn btn-primary" onclick="switchTab('tab-ranking')">
+            Chuyển sang Bảng Xếp hạng AI →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         TAB 3: RANKING & EVIDENCE MATRIX (CORE SCREEN)
+         ======================================================== -->
+    <section id="tab-ranking" class="tab-content">
+      <!-- Metric Summary Cards -->
+      <div class="metric-summary-grid">
+        <div class="metric-card accent-total">
+          <span class="metric-label">TỔNG HỒ SƠ ĐÃ XỬ LÝ</span>
+          <span class="metric-value">5</span>
+        </div>
+        <div class="metric-card accent-must">
+          <span class="metric-label">ĐẠT TIÊU CHÍ BẮT BUỘC</span>
+          <span class="metric-value" style="color: #067647;">2</span>
+        </div>
+        <div class="metric-card accent-unclear">
+          <span class="metric-label">CẦN HR XÁC MINH</span>
+          <span class="metric-value" style="color: #B54708;">2</span>
+        </div>
+        <div class="metric-card accent-miss">
+          <span class="metric-label">DẤU HIỆU MISS-MATCH</span>
+          <span class="metric-value" style="color: var(--brand-accent);">1</span>
+        </div>
+      </div>
+
+      <!-- Main Ranking Table -->
+      <div class="card-box">
+        <div class="table-toolbar">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" placeholder="Tìm theo tên ứng viên, kỹ năng (Python, Docker...)..." onkeyup="filterCandidates(this.value)">
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <select class="btn btn-secondary btn-sm" onchange="filterByGroup(this.value)">
+              <option value="ALL">Tất cả Nhóm Matching</option>
+              <option value="MUST_PASS">Đạt tiêu chí bắt buộc</option>
+              <option value="NEEDS_VERIFY">Cần HR xác minh</option>
+              <option value="MISMATCH">Có dấu hiệu miss-match</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="showToast('Đang xuất danh sách ra file Excel...')">
+              📥 Xuất Excel
+            </button>
+          </div>
+        </div>
+
+        <table class="ranking-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">Hạng</th>
+              <th>Ứng viên & Học vấn</th>
+              <th>Nhóm Đánh giá (AI Advisory)</th>
+              <th style="text-align: center;">Tiêu chí Bắt buộc</th>
+              <th style="text-align: center;">Độ phủ Bằng chứng</th>
+              <th style="text-align: center;">Điểm Matching</th>
+              <th>Trạng thái Tuyển dụng (HR)</th>
+              <th style="text-align: right;">Hành động</th>
+            </tr>
+          </thead>
+          <tbody id="candidate-rows">
+            <!-- Row 1 -->
+            <tr class="ranking-row" onclick="openCandidateModal(0)">
+              <td class="rank-number">#1</td>
+              <td>
+                <div class="candidate-name">
+                  Nguyễn Văn An
+                  <span class="tag-level tag-strong" style="font-size: 9px; padding: 1px 4px;">Top Pick</span>
+                </div>
+                <div class="candidate-sub">5 năm KN • ĐH Bách Khoa Hà Nội (CNTT)</div>
+              </td>
+              <td><span class="tag-level tag-strong">Đạt Tiêu chí Bắt buộc</span></td>
+              <td style="text-align: center;"><span style="color: #067647; font-weight: 700;">3/3 ĐẠT</span></td>
+              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
+              <td style="text-align: center;"><span class="score-badge">90.0 / 100</span></td>
+              <td><span class="badge-status badge-open">SHORTLIST</span></td>
+              <td style="text-align: right;">
+                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
+              </td>
+            </tr>
+
+            <!-- Row 2 -->
+            <tr class="ranking-row" onclick="openCandidateModal(1)">
+              <td class="rank-number">#2</td>
+              <td>
+                <div class="candidate-name">Trần Thị Bích</div>
+                <div class="candidate-sub">4 năm KN • ĐH Công nghệ - ĐHQGHN</div>
+              </td>
+              <td><span class="tag-level tag-strong">Đạt Tiêu chí Bắt buộc</span></td>
+              <td style="text-align: center;"><span style="color: #067647; font-weight: 700;">3/3 ĐẠT</span></td>
+              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
+              <td style="text-align: center;"><span class="score-badge">85.0 / 100</span></td>
+              <td><span class="badge-status" style="background: #EFF8FF; color: #175CD3;">ĐANG XEM</span></td>
+              <td style="text-align: right;">
+                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
+              </td>
+            </tr>
+
+            <!-- Row 3 -->
+            <tr class="ranking-row" onclick="openCandidateModal(2)">
+              <td class="rank-number">#3</td>
+              <td>
+                <div class="candidate-name">
+                  Lê Hoàng Nam
+                  <span class="tag-level tag-unclear" style="font-size: 9px; padding: 1px 4px;">Độ phủ thấp</span>
+                </div>
+                <div class="candidate-sub">3 năm KN • Học viện Bưu chính Viễn thông</div>
+              </td>
+              <td><span class="tag-level tag-unclear">Cần HR xác minh</span></td>
+              <td style="text-align: center;"><span style="color: #B54708; font-weight: 700;">2 Đạt / 1 Chưa rõ</span></td>
+              <td style="text-align: center;"><span class="coverage-pill coverage-warn">66% (Chưa ổn định)</span></td>
+              <td style="text-align: center;"><span class="score-badge" style="color: #B54708;">70.0 / 100</span></td>
+              <td><span class="badge-status" style="background: #F2F4F7; color: #475467;">MỚI</span></td>
+              <td style="text-align: right;">
+                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
+              </td>
+            </tr>
+
+            <!-- Row 4 -->
+            <tr class="ranking-row" onclick="openCandidateModal(3)">
+              <td class="rank-number">#4</td>
+              <td>
+                <div class="candidate-name">Phạm Minh Tuấn</div>
+                <div class="candidate-sub">1.5 năm KN (Fresher/Junior) • ĐH Giao thông Vận tải</div>
+              </td>
+              <td><span class="tag-level tag-nomatch">Có dấu hiệu Miss-match</span></td>
+              <td style="text-align: center;"><span style="color: #B42318; font-weight: 700;">1 Chưa đáp ứng</span></td>
+              <td style="text-align: center;"><span class="coverage-pill coverage-good">100% Phủ</span></td>
+              <td style="text-align: center;"><span class="score-badge" style="color: #B42318;">45.0 / 100</span></td>
+              <td><span class="badge-status" style="background: #FEF3F2; color: #B42318;">BỊ LOẠI SƠ BỘ</span></td>
+              <td style="text-align: right;">
+                <button class="btn btn-secondary btn-sm">Xem đối soát →</button>
+              </td>
+            </tr>
+
+            <!-- Row 5 -->
+            <tr class="ranking-row" style="background: #FFFDF8;">
+              <td class="rank-number" style="color: var(--text-muted);">-</td>
+              <td>
+                <div class="candidate-name">Đỗ Mai Linh</div>
+                <div class="candidate-sub">File PDF scan độ tương phản kém • Chưa trích xuất xong</div>
+              </td>
+              <td><span class="tag-level tag-unclear">File cần kiểm tra kỹ thuật</span></td>
+              <td style="text-align: center;">-</td>
+              <td style="text-align: center;">-</td>
+              <td style="text-align: center;">-</td>
+              <td><span class="badge-status" style="background: #FEF3F2; color: #B42318;">CHỜ XỬ LÝ LỖI</span></td>
+              <td style="text-align: right;">
+                <button class="btn btn-outline-danger btn-sm" onclick="showToast('Chuyển qua giao diện OCR nâng cao...')">Rà soát thủ công</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         TAB 4: COLLABORATION WITH HIRING MANAGER
+         ======================================================== -->
+    <section id="tab-collab" class="tab-content">
+      <div class="card-box">
+        <div class="card-header-row">
+          <div>
+            <h2 class="card-title">Phối hợp với Hiring Manager (Shortlist Review)</h2>
+            <p class="card-subtitle">Chia sẻ danh sách Shortlist, trao đổi phản hồi chuyên môn và bảo vệ ghi chú nội bộ của HR</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="showToast('Đã gửi email thông báo nhắc Hiring Manager thẩm định Shortlist')">
+            ✉️ Gửi thông báo cho Hiring Manager
+          </button>
+        </div>
+
+        <div style="background: #F8FAFC; border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+          <h3 style="font-size: 14px; font-weight: 700; color: var(--brand-primary); margin-bottom: 8px;">
+            Hồ sơ Shortlist Đã Chia sẻ: 02 Ứng viên (Nguyễn Văn An, Trần Thị Bích)
+          </h3>
+          <p style="font-size: 13px; color: var(--text-secondary);">
+            Hiring Manager (<strong>Dr. David Tran</strong>) có quyền xem tóm tắt bằng chứng, đánh giá chuyên môn qua Scorecard và để lại nhận xét. Ghi chú nội bộ về mức lương/thái độ của HR không bị chia sẻ.
+          </p>
+        </div>
+
+        <!-- Feedback thread -->
+        <div style="border: 1px solid var(--border-default); border-radius: 8px; padding: 16px;">
+          <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+            <div class="user-avatar" style="background: #134D8B;">DT</div>
+            <div style="flex: 1;">
+              <div style="display: flex; justify-content: space-between;">
+                <strong>Dr. David Tran (Hiring Manager)</strong>
+                <span style="font-size: 11px; color: var(--text-muted);">10:45 AM - Hôm nay</span>
+              </div>
+              <p style="font-size: 13px; color: var(--text-primary); margin-top: 4px;">
+                "Ứng viên <strong>Nguyễn Văn An</strong> có nền tảng rất vững về kiến trúc FastAPI và PostgreSQL. Tôi đồng ý đưa vào phỏng vấn vòng 1. Với ứng viên <strong>Lê Hoàng Nam</strong>, phần bằng cấp CNTT chưa rõ, HR vui lòng gọi điện xác minh xem có bằng tương đương không nhé."
+              </p>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-top: 16px;">
+            <input type="text" placeholder="Nhập phản hồi trao đổi với Hiring Manager..." style="flex: 1; padding: 8px 14px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 13px;">
+            <button class="btn btn-primary btn-sm" onclick="showToast('Đã lưu phản hồi trao đổi')">Gửi nhận xét</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========================================================
+       MODAL: 50:50 SPLIT-SCREEN VERIFICATION (CORE DEMO VIEW)
+       ======================================================== -->
+  <div class="modal-backdrop" id="candidateModal">
+    <div class="split-modal">
+      <!-- Modal Top Bar -->
+      <div class="modal-top-bar">
+        <div class="modal-candidate-info">
+          <div>
+            <div class="modal-title-main" id="modal-candidate-name">Nguyễn Văn An — Hồ sơ Ứng viên #1</div>
+            <div style="font-size: 12px; color: rgba(255,255,255,0.8);" id="modal-candidate-meta">
+              Vị trí: REQ-2026-IT01 (Senior Backend Engineer) • File: CV_NguyenVanAn_Backend.pdf
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span class="tag-level tag-strong" id="modal-score-badge">ĐIỂM MATCHING: 90.0</span>
+          <button class="close-btn" onclick="closeCandidateModal()">&times;</button>
+        </div>
+      </div>
+
+      <!-- Split Screen Body -->
+      <div class="split-body">
+        
+        <!-- LEFT PANE: CV VIEWER (50%) -->
+        <div class="pane-left">
+          <div class="pdf-toolbar">
+            <span>📄 BẢN XEM TRƯỚC CV GỐC (Trang 1 / 2)</span>
+            <div>
+              <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Zoom +</button>
+              <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Zoom -</button>
+            </div>
+          </div>
+
+          <div class="pdf-viewer-paper">
+            <div class="cv-page" id="cv-paper-view">
+              <!-- Rendered CV Content will be populated by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT PANE: AI ADVISORY & CITATIONS (50%) -->
+        <div class="pane-right">
+          <div class="pane-right-header">
+            <div>
+              <strong style="color: var(--brand-primary); font-size: 14px;">KẾT QUẢ ĐỐI SOÁT THEO RUBRIC v1.0</strong>
+              <div style="font-size: 11px; color: var(--text-secondary);">Mọi nhận định đều có trích dẫn kiểm chứng từ CV gốc</div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #067647;">
+              Độ phủ bằng chứng: 100%
+            </div>
+          </div>
+
+          <div class="pane-right-scroll" id="findings-container">
+            <!-- Findings populated by JS -->
+          </div>
+
+          <!-- Bottom Decision Bar -->
+          <div class="decision-bar">
+            <div>
+              <span class="status-select-label">QUYẾT ĐỊNH CỦA HR:</span>
+              <select id="hr-decision-select" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-default); font-weight: 700; font-size: 13px; margin-left: 6px;">
+                <option value="SHORTLIST">✓ Đưa vào Shortlist</option>
+                <option value="REVIEWING">👁️ Đang xem xét / Phỏng vấn</option>
+                <option value="REJECTED">✗ Bị loại ở vòng sàng lọc</option>
+              </select>
+            </div>
+
+            <div class="decision-actions">
+              <button class="btn btn-secondary" onclick="closeCandidateModal()">Đóng</button>
+              <button class="btn btn-primary" onclick="saveCandidateDecision()">
+                Lưu Quyết Định Chính Thức
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast" id="toastBox">
+    <span id="toastMsg">Thông báo hệ thống</span>
+  </div>
+
+  <script>
+    // Mock Candidate Database for Phase 1 Demo
+    const candidatesData = [
+      {
+        id: "CAND-01",
+        name: "Nguyễn Văn An",
+        meta: "5 năm KN Backend • ĐH Bách Khoa Hà Nội • Điểm: 90.0 / 100",
+        score: "90.0",
+        cvText: `
+          <div class="cv-header-name">NGUYEN VAN AN</div>
+          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
+            Email: an.nguyen.tech@gmail.com | Phone: 0912.345.678 | Hanoi, Vietnam
+          </div>
+
+          <div class="cv-section-title">PROFESSIONAL SUMMARY</div>
+          <p style="margin-bottom: 12px; line-height: 1.6;">
+            Senior Python Developer with 5+ years of experience in designing, building, and deploying scalable microservices and RESTful APIs using Python, FastAPI, and Django. Proven track record in PostgreSQL database optimization and Dockerized deployments.
+          </p>
+
+          <div class="cv-section-title">WORK EXPERIENCE</div>
+          <div style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; font-weight: 700;">
+              <span>Senior Backend Developer — VinAI Tech</span>
+              <span>2022 - Present</span>
+            </div>
+            <p id="cite-p1" style="margin-top: 4px; line-height: 1.6;">
+              • Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute with sub-100ms latency.<br/>
+              • Designed caching layers using Redis and automated deployment pipelines with Docker and GitLab CI/CD.
+            </p>
+          </div>
+
+          <div style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; font-weight: 700;">
+              <span>Python Backend Engineer — FPT Software</span>
+              <span>2019 - 2022</span>
+            </div>
+            <p id="cite-p2" style="margin-top: 4px; line-height: 1.6;">
+              • Built scalable web services utilizing Python, Django REST Framework, and MySQL.<br/>
+              • Optimized complex SQL database queries and indexes, reducing reporting latency by 45%.
+            </p>
+          </div>
+
+          <div class="cv-section-title">EDUCATION</div>
+          <div id="cite-edu">
+            <div style="font-weight: 700;">Bachelor of Computer Science (Honors)</div>
+            <div>Hanoi University of Science and Technology (HUST) | 2015 - 2019 | GPA: 3.6 / 4.0</div>
+          </div>
+
+          <div class="cv-section-title">SKILLS & CERTIFICATIONS</div>
+          <p id="cite-skills" style="line-height: 1.6;">
+            • Programming: Python (Expert), SQL, Bash.<br/>
+            • Frameworks: FastAPI, Django, Flask.<br/>
+            • Databases: PostgreSQL, MySQL, Redis.<br/>
+            • DevOps & Tools: Docker, Git, CI/CD, Linux.
+          </p>
+        `,
+        findings: [
+          {
+            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+            status: "strong",
+            badge: "STRONG_MATCH (VƯỢT TRỘI)",
+            reason: "Ứng viên có hơn 5 năm kinh nghiệm thực tế (vượt yêu cầu 3 năm), chuyên sâu cả FastAPI và Django.",
+            quote: "Architected and developed high-throughput backend services using FastAPI and PostgreSQL handling 20,000 requests per minute...",
+            citeTarget: "cite-p1",
+            page: 1
+          },
+          {
+            title: "2. Cơ sở dữ liệu & Tối ưu hóa (Trọng số 20% - Bắt buộc)",
+            status: "strong",
+            badge: "STRONG_MATCH",
+            reason: "Kinh nghiệm thực chứng tối ưu chỉ mục và truy vấn SQL tại cả FPT và VinAI, giảm 45% độ trễ.",
+            quote: "Optimized complex SQL database queries and indexes, reducing reporting latency by 45%.",
+            citeTarget: "cite-p2",
+            page: 1
+          },
+          {
+            title: "3. Học vấn CNTT (Trọng số 15% - Bắt buộc)",
+            status: "match",
+            badge: "MATCH (ĐẠT)",
+            reason: "Tốt nghiệp Cử nhân Khoa học Máy tính loại Giỏi tại ĐH Bách Khoa Hà Nội (HUST).",
+            quote: "Bachelor of Computer Science (Honors) — Hanoi University of Science and Technology (HUST)",
+            citeTarget: "cite-edu",
+            page: 1
+          },
+          {
+            title: "4. Docker & CI/CD (Trọng số 15% - Ưu tiên)",
+            status: "match",
+            badge: "MATCH (ĐẠT)",
+            reason: "Có kỹ năng sử dụng Docker và xây dựng luồng triển khai tự động CI/CD.",
+            quote: "DevOps & Tools: Docker, Git, CI/CD, Linux...",
+            citeTarget: "cite-skills",
+            page: 1
+          },
+          {
+            title: "5. Chứng chỉ Cloud / AWS (Trọng số 10% - Ưu tiên)",
+            status: "unclear",
+            badge: "UNCLEAR (CHƯA RÕ)",
+            reason: "Hồ sơ có nhắc tới kiến trúc dịch vụ nhưng không ghi nhận chứng chỉ AWS chính thức nào.",
+            quote: null,
+            citeTarget: null,
+            page: null
+          }
+        ]
+      },
+      {
+        id: "CAND-02",
+        name: "Trần Thị Bích",
+        meta: "4 năm KN Backend • ĐH Công nghệ - ĐHQGHN • Điểm: 85.0 / 100",
+        score: "85.0",
+        cvText: `
+          <div class="cv-header-name">TRAN THI BICH</div>
+          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
+            Email: bich.tran@vnu.edu.vn | Phone: 0988.765.432 | Hanoi
+          </div>
+          <div class="cv-section-title">SUMMARY</div>
+          <p>4 years of software development in Python and cloud systems.</p>
+          <div class="cv-section-title">EXPERIENCE</div>
+          <div id="cite-p1">
+            <strong>Backend Engineer — Viettel Telecom (2020 - Present)</strong>
+            <p>Developed core API microservices using Python Django, PostgreSQL.</p>
+          </div>
+          <div class="cv-section-title">EDUCATION</div>
+          <div id="cite-edu">
+            <p>Bachelor of Information Technology — VNU University of Engineering and Technology (UET).</p>
+          </div>
+        `,
+        findings: [
+          {
+            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+            status: "match",
+            badge: "MATCH (ĐẠT)",
+            reason: "4 năm kinh nghiệm phát triển Python và Django tại Viettel Telecom.",
+            quote: "Developed core API microservices using Python Django, PostgreSQL.",
+            citeTarget: "cite-p1",
+            page: 1
+          },
+          {
+            title: "2. Học vấn CNTT (Trọng số 15% - Bắt buộc)",
+            status: "match",
+            badge: "MATCH (ĐẠT)",
+            reason: "Cử nhân CNTT ĐH Công nghệ (UET) - ĐHQGHN.",
+            quote: "Bachelor of Information Technology — VNU University of Engineering and Technology (UET).",
+            citeTarget: "cite-edu",
+            page: 1
+          }
+        ]
+      },
+      {
+        id: "CAND-03",
+        name: "Lê Hoàng Nam",
+        meta: "3 năm KN • Học viện Bưu chính Viễn thông • Điểm: 70.0 (Coverage: 66%)",
+        score: "70.0",
+        cvText: `
+          <div class="cv-header-name">LE HOANG NAM</div>
+          <div style="font-size: 12px; color: #555; margin-bottom: 16px;">
+            Email: nam.le@gmail.com | Phone: 0977.112.233
+          </div>
+          <div class="cv-section-title">WORK HISTORY</div>
+          <p id="cite-p1">Backend Developer at CMC Global working on Python API automation.</p>
+          <div class="cv-section-title">EDUCATION</div>
+          <p id="cite-edu">Studied Telecommunications Engineering at PTIT.</p>
+        `,
+        findings: [
+          {
+            title: "1. Học vấn Chuyên ngành CNTT (Trọng số 15% - Bắt buộc)",
+            status: "unclear",
+            badge: "UNCLEAR (CẦN XÁC MINH)",
+            reason: "CV ghi học ngành Kỹ thuật Điện tử Viễn thông, chưa rõ số tín chỉ CNTT có đạt tương đương hay không.",
+            quote: "Studied Telecommunications Engineering at PTIT.",
+            citeTarget: "cite-edu",
+            page: 1
+          }
+        ]
+      },
+      {
+        id: "CAND-04",
+        name: "Phạm Minh Tuấn",
+        meta: "1.5 năm KN • ĐH GTVT • Điểm: 45.0 / 100",
+        score: "45.0",
+        cvText: `
+          <div class="cv-header-name">PHAM MINH TUAN</div>
+          <p>Junior Developer with 1.5 years experience in Python scripting.</p>
+        `,
+        findings: [
+          {
+            title: "1. Kinh nghiệm Python Backend (Trọng số 35% - Bắt buộc)",
+            status: "nomatch",
+            badge: "NO_MATCH (CHƯA ĐẠT)",
+            reason: "Yêu cầu tối thiểu 3 năm kinh nghiệm, ứng viên mới tích lũy được 1.5 năm (Junior).",
+            quote: "Junior Developer with 1.5 years experience in Python scripting.",
+            citeTarget: null,
+            page: 1
+          }
+        ]
+      }
+    ];
+
+    // Navigation Tab Switching
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-tab-btn').forEach(el => el.classList.remove('active'));
+      
+      document.getElementById(tabId).classList.add('active');
+      event.currentTarget.classList.add('active');
+    }
+
+    // Toast Notification
+    function showToast(message) {
+      const toast = document.getElementById('toastBox');
+      document.getElementById('toastMsg').innerText = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // Modal Control
+    function openCandidateModal(index) {
+      const candidate = candidatesData[index];
+      if (!candidate) return;
+
+      document.getElementById('modal-candidate-name').innerText = candidate.name + " — Thẩm định Bằng chứng AI";
+      document.getElementById('modal-candidate-meta').innerText = candidate.meta;
+      document.getElementById('modal-score-badge').innerText = "ĐIỂM MATCHING: " + candidate.score;
+      document.getElementById('cv-paper-view').innerHTML = candidate.cvText;
+
+      // Populate findings
+      let html = "";
+      candidate.findings.forEach(f => {
+        let tagClass = "tag-match";
+        if (f.status === "strong") tagClass = "tag-strong";
+        if (f.status === "unclear") tagClass = "tag-unclear";
+        if (f.status === "nomatch") tagClass = "tag-nomatch";
+
+        html += `
+          <div class="finding-card ${f.status}">
+            <div class="finding-head">
+              <span class="finding-title">${f.title}</span>
+              <span class="tag-level ${tagClass}">${f.badge}</span>
+            </div>
+            <div class="finding-reason">${f.reason}</div>
+            ${f.quote ? `
+              <div class="quote-box">
+                <span>"${f.quote}"</span>
+                ${f.citeTarget ? `<button class="quote-cite-btn" onclick="highlightQuote('${f.citeTarget}')">📍 Xem trang ${f.page}</button>` : ''}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      });
+
+      document.getElementById('findings-container').innerHTML = html;
+      document.getElementById('candidateModal').classList.add('open');
+    }
+
+    function closeCandidateModal() {
+      document.getElementById('candidateModal').classList.remove('open');
+    }
+
+    // Click citation to highlight text in left pane
+    function highlightQuote(elementId) {
+      const el = document.getElementById(elementId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('highlight-flash');
+        setTimeout(() => el.classList.remove('highlight-flash'), 2000);
+        showToast("Đã định vị dẫn chứng nguyên văn trên tệp CV gốc!");
+      }
+    }
+
+    // Human Decision Save
+    function saveCandidateDecision() {
+      const decision = document.getElementById('hr-decision-select').value;
+      let text = "Đã cập nhật trạng thái hồ sơ sang: " + decision;
+      showToast(text);
+      closeCandidateModal();
+    }
+
+    // Approve Rubric Simulation
+    function approveRubric() {
+      document.getElementById('btn-approve-rubric').innerText = "✓ Đã Phê Duyệt v1.0";
+      document.getElementById('btn-approve-rubric').classList.remove('btn-primary');
+      document.getElementById('btn-approve-rubric').classList.add('btn-success');
+      showToast("Bộ tiêu chí Rubric v1.0 đã được xác nhận chính thức bởi HR!");
+    }
+
+    // Simulate Batch Upload
+    function simulateUpload() {
+      showToast("Đang tải lên và chạy OCR giải mã tệp CV mới...");
+    }
+
+    function changeRequisition() {
+      showToast("Đã chuyển đổi phạm vi Requisition! Đang nạp Rubric và danh sách ứng viên tương ứng.");
+    }
+
+    function filterCandidates(keyword) {
+      const rows = document.querySelectorAll('#candidate-rows tr');
+      rows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        row.style.display = text.includes(keyword.toLowerCase()) ? '' : 'none';
+      });
+    }
+
+    function filterByGroup(group) {
+      showToast("Đã lọc theo nhóm: " + group);
+    }
+  </script>
+</body>
+</html>
