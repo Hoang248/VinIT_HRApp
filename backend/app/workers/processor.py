@@ -20,7 +20,9 @@ from app.services.document_processor import document_processor, DocumentType
 from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
 from app.services.redaction import redact_text
-from app.services.ai_config import get_active_runtime, runtime_context
+from app.services.ai_config import (
+    get_active_runtime, hydrate_runtime_secret, runtime_context, runtime_snapshot,
+)
 from datetime import datetime
 
 logger = get_logger(__name__)
@@ -170,6 +172,12 @@ class ProcessingWorker:
             token = str(uuid4())
             backend_pid = db.execute(text("SELECT pg_backend_pid()")).scalar_one()
             runtime = chosen["ai_config_snapshot"] or get_active_runtime(db)
+            if chosen["ai_config_snapshot"]:
+                # Snapshots are public (no provider secret). Rehydrate the
+                # pinned version's key in memory only; it is never written
+                # back into ai_config_snapshot below.
+                runtime = hydrate_runtime_secret(db, runtime)
+            snapshot = runtime_snapshot(runtime)
             db.execute(text("""
                 UPDATE app_private.operations
                 SET status = 'PROCESSING', started_at = COALESCE(started_at, NOW()),
@@ -180,7 +188,7 @@ class ProcessingWorker:
                     error_code = NULL, error_message = NULL
                 WHERE operation_id = :operation_id
             """), {"operation_id": operation_id, "token": token, "recovered": was_processing,
-                    "config_id": runtime.get("config_id"), "snapshot": json.dumps(runtime)})
+                    "config_id": runtime.get("config_id"), "snapshot": json.dumps(snapshot)})
             if was_processing:
                 db.execute(text("""
                     INSERT INTO app_private.operation_recovery_events(operation_id) VALUES (:operation_id)

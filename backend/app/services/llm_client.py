@@ -9,7 +9,10 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from pydantic import BaseModel, Field, ValidationError
 from app.services.redaction import redact_payload, redact_professional_profile, redact_text
-from app.services.ai_config import AIConfigError, get_active_runtime, runtime_context, validate_runtime
+from app.services.ai_config import (
+    AIConfigError, canonical_endpoint, get_active_runtime, hydrate_runtime_secret,
+    runtime_context, validate_runtime,
+)
 from app.db.database import SessionLocal
 
 logger = get_logger(__name__)
@@ -83,6 +86,25 @@ class LLMClient:
             raise LLMError("External AI endpoints require HTTPS")
         raise LLMError("External AI endpoints are disabled by configuration")
 
+    @staticmethod
+    def _resolve_api_key(runtime: Dict[str, Any]) -> Optional[str]:
+        """Use the config's own key; only fall back to the deployment key for
+        the environment runtime or a database config on the same endpoint."""
+        stored_key = (runtime.get("api_key") or "").strip()
+        if stored_key:
+            return stored_key
+        if not settings.LLM_API_KEY:
+            return None
+        if runtime.get("source") == "environment":
+            return settings.LLM_API_KEY
+        if settings.LLM_API_BASE and runtime.get("api_base"):
+            try:
+                if canonical_endpoint(runtime["api_base"]) == canonical_endpoint(settings.LLM_API_BASE):
+                    return settings.LLM_API_KEY
+            except AIConfigError:
+                pass
+        return None
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -106,8 +128,19 @@ class LLMClient:
                 raise LLMError("AI configuration is unavailable") from None
             finally:
                 db.close()
+        elif runtime.get("config_id") and runtime.get("api_key_configured") and not runtime.get("api_key"):
+            # A pinned public snapshot deliberately has no secret. Rehydrate
+            # it in memory from the pinned config version before calling out.
+            db = SessionLocal()
+            try:
+                runtime = hydrate_runtime_secret(db, runtime)
+            except Exception as exc:
+                logger.error("AI runtime secret unavailable", error_type=type(exc).__name__)
+                raise LLMError("AI configuration is unavailable") from None
+            finally:
+                db.close()
         try:
-            validate_runtime(runtime)
+            runtime = validate_runtime(runtime)
         except AIConfigError as exc:
             raise LLMError(str(exc)) from None
         base_url = runtime["api_base"]
@@ -132,8 +165,9 @@ class LLMClient:
         headers = {
             "Content-Type": "application/json"
         }
-        if settings.LLM_API_KEY:
-            headers["Authorization"] = f"Bearer {settings.LLM_API_KEY}"
+        api_key = self._resolve_api_key(runtime)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
         try:
             # Environment proxy variables must not silently reroute CV text to

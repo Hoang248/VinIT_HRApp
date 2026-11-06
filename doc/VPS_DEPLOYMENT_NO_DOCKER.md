@@ -62,7 +62,7 @@ Không tạo `.env` ở thư mục gốc trong hướng dẫn này, trừ khi sa
 - DNS của domain, ví dụ `hr.example.com`, đã trỏ tới IP VPS. Nếu có bản ghi AAAA thì IPv6 của VPS cũng phải hoạt động.
 - Ước lượng ban đầu: 2 vCPU, 4 GB RAM, 30 GB ổ đĩa cho app/OCR thử nghiệm. LLM chạy local thường cần thêm RAM/VRAM đáng kể; build frontend cũng có thể tốn RAM.
 - Project Supabase đã chuẩn bị PostgreSQL, Auth và hai bucket private `cv-originals`, `cv-extracted-text`.
-- Backend hiện tại phụ thuộc migration `00005_account_administration.sql`. Project `myrymlqdbyqmpynesiwk` đã áp migration này ở version remote `20261105163626` ngày 05/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
+- Backend hiện tại phụ thuộc migration `00005_account_administration.sql` và `00006_openai_compatible_provider_secrets.sql`. Project `myrymlqdbyqmpynesiwk` đã áp 00005 ở version remote `20261105163626` ngày 05/11/2026 và 00006 ở version remote `20261106042158` ngày 06/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
 - Một LLM endpoint tương thích OpenAI đã được phê duyệt. Nếu chưa có model reachable từ backend thì có thể deploy web/API, nhưng không chạy được xử lý AI.
 - Backend xác minh access token theo `alg` trong JWT: token bất đối xứng (ví dụ `ES256`) được kiểm tra bằng JWKS tại `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` kèm `iss`/`aud`; token `HS256` legacy tiếp tục được kiểm tra bằng `SUPABASE_JWT_SECRET` trong thời gian chuyển đổi.
 - Service-role key từng lộ trong lịch sử Git vẫn là việc bảo mật riêng phải thu hồi theo kế hoạch trong `DEPLOYMENT.md`; tạo key mới không tự thu hồi key legacy.
@@ -205,10 +205,13 @@ SUPABASE_STORAGE_BUCKET_CV=cv-originals
 SUPABASE_STORAGE_BUCKET_EXTRACTED=cv-extracted-text
 
 LLM_PROVIDER=local
+LLM_PROVIDER_NAME=
 LLM_MODEL_NAME=llama3.1:8b
 LLM_API_BASE=http://127.0.0.1:11434/v1
 LLM_API_KEY=
 LLM_TEMPERATURE_DEFAULT=0.1
+# Điền khóa Fernet đã tạo ở bước chuẩn bị secret bên dưới; chỉ nằm trong backend/.env.
+AI_CONFIG_ENCRYPTION_KEY=
 LLM_ALLOWED_MODELS=[]
 LLM_ALLOWED_API_BASES=[]
 ALLOW_EXTERNAL_API=false
@@ -221,9 +224,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 Lưu ý quan trọng:
 
 - `LLM_API_BASE=http://127.0.0.1:11434/v1` chỉ đúng nếu Ollama/LLM server chạy **trên cùng VPS**. Nếu model ở máy khác, thay bằng địa chỉ private mà tiến trình backend truy cập được. Khi không dùng Docker, `localhost` nghĩa là chính VPS, không phải container backend.
-- Cấu hình AI `ACTIVE` trong database có thể được ưu tiên hơn env. Sau khi có Admin, dùng **Admin → Cấu hình AI** để tạo/kích hoạt endpoint và model nằm trong allowlist; không sửa trực tiếp bản ghi ACTIVE bằng SQL.
-- Model/endpoint mặc định từ env tự được đưa vào allowlist. Các giá trị bổ sung trong `LLM_ALLOWED_MODELS` và `LLM_ALLOWED_API_BASES` phải là JSON array.
-- Không bật `ALLOW_EXTERNAL_API=true` chỉ để thử nhanh. Endpoint public phải được phê duyệt, dùng HTTPS và có kiểm soát egress/DLP phù hợp.
+- Cấu hình AI `ACTIVE` trong database có thể được ưu tiên hơn env. Sau khi có Admin, dùng **Admin → Cấu hình AI** để tạo/kích hoạt cấu hình; không sửa trực tiếp bản ghi ACTIVE bằng SQL. Với `local`/`openai`/`azure`, Admin vẫn chọn endpoint và model nằm trong allowlist. Riêng **OpenAI Compatible**, Admin nhập **tên nhà cung cấp, Base URL, API Key và Model**; API key được mã hóa phía server và không hiển thị lại.
+- Sau bước cài backend ở mục 8.1 và trước khi khởi động PM2, tạo khóa mã hóa API key bằng lệnh sau trên VPS, rồi điền giá trị vào `AI_CONFIG_ENCRYPTION_KEY` trong `backend/.env` bằng editor/secret manager. Không đưa giá trị này vào Git, chat hoặc log; nếu để trống, Admin không lưu được API key mới:
+  ```bash
+  cd /home/ubuntu/hra/backend
+  .venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+- Model/endpoint mặc định từ env tự được đưa vào allowlist. Các giá trị bổ sung trong `LLM_ALLOWED_MODELS` và `LLM_ALLOWED_API_BASES` phải là JSON array. Allowlist không khóa model/Base URL của OpenAI Compatible tùy chỉnh, nhưng chính sách mạng vẫn áp dụng.
+- Không bật `ALLOW_EXTERNAL_API=true` chỉ để thử nhanh. Nếu Base URL OpenAI Compatible là endpoint public như `https://api.openai.com/v1`, phải đặt `ALLOW_EXTERNAL_API=true` sau phê duyệt, dùng HTTPS và có kiểm soát egress/DLP phù hợp; nếu giữ `false`, chỉ endpoint private/loopback reachable mới chạy được.
 - Tài khoản trong `DATABASE_URL` phải có quyền nghiệp vụ cần thiết trên `app_private`, đồng thời có quyền `SELECT` trên hai cột `id`, `email` của `auth.users` để quản lý tài khoản. Đây là quyền mạnh, chỉ cấp cho backend theo phê duyệt DBA; service-role API key không tự thay thế tài khoản đăng nhập PostgreSQL.
 - Không dùng PgBouncer transaction/statement pooling cho worker. Worker giữ session PostgreSQL và advisory lock trong suốt một attempt; ưu tiên direct connection hoặc session pooler đã được kiểm chứng giữ cùng backend process/session.
 
@@ -528,7 +536,7 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    cp -a public .next/standalone/public
    ```
 
-5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout.
+5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout. Đối với bản OpenAI Compatible dùng migration `00006`, project Supabase đã kết nối đã được áp version remote `20261106042158`; trên VPS vẫn phải bảo đảm `AI_CONFIG_ENCRYPTION_KEY` đã có trong `backend/.env` trước khi khởi động lại backend, nếu không Admin sẽ không lưu được API key mới.
 6. Khởi động và kiểm tra:
 
    ```bash
@@ -579,7 +587,7 @@ ss -ltnp | grep -E ':(80|443|3005|8005) '
 - Theo dõi dung lượng đĩa vì OCR/libreoffice và file tạm có thể phát sinh dữ liệu lớn.
 - Theo dõi `/v1/admin/worker/health` bằng tài khoản Admin và thiết lập giám sát ngoài ứng dụng; endpoint này không tự chứng minh worker còn sống.
 - Định kỳ cập nhật Ubuntu, Node.js, Python package và kiểm tra `certbot renew`.
-- Nếu đổi env, model allowlist hoặc secret, restart backend bằng PM2 và bảo đảm chỉ có một tiến trình backend dùng cấu hình đó. Nếu sửa ecosystem, dùng `pm2 startOrReload /home/ubuntu/hra/ecosystem.config.cjs --update-env` rồi `pm2 save`. Job đã bắt đầu có thể giữ snapshot cấu hình AI cũ.
+- Nếu đổi env, model allowlist, `ALLOW_EXTERNAL_API`, `AI_CONFIG_ENCRYPTION_KEY` hoặc secret, restart backend bằng PM2 và bảo đảm chỉ có một tiến trình backend dùng cấu hình đó. Nếu sửa ecosystem, dùng `pm2 startOrReload /home/ubuntu/hra/ecosystem.config.cjs --update-env` rồi `pm2 save`. Job đã bắt đầu có thể giữ snapshot cấu hình AI cũ. Không rotate `AI_CONFIG_ENCRYPTION_KEY` nếu chưa có kế hoạch nhập lại API key cho các cấu hình OpenAI Compatible đã lưu.
 
 ## 14. Xử lý sự cố thường gặp
 
@@ -591,7 +599,7 @@ ss -ltnp | grep -E ':(80|443|3005|8005) '
 | Đăng nhập xong quay lại trang login, `/auth/me` trả 401 | Token ES256/RS256 nhưng backend chưa lấy được JWKS, sai `SUPABASE_URL`/issuer, hoặc bản backend đang chạy chưa có hỗ trợ JWKS | Kiểm tra `alg`/`kid` của token, `GET {SUPABASE_URL}/auth/v1/.well-known/jwks.json` từ VPS, log `hra-backend`; restart backend sau khi cập nhật code/env |
 | Upload lớn bị Nginx chặn | `client_max_body_size` nhỏ hơn lô CV | Đặt khoảng `260m` và kiểm tra giới hạn app trong backend env |
 | OCR/DOCX lỗi | Thiếu gói hệ thống | Kiểm tra `tesseract`, `pdftotext`, LibreOffice và log backend |
-| AI không chạy | Model endpoint không reachable hoặc config ACTIVE trỏ loopback/endpoint cũ | Kiểm tra `LLM_API_BASE` từ chính VPS và cấu hình AI ACTIVE trong Admin |
+| AI không chạy | Model endpoint không reachable, config ACTIVE trỏ loopback/endpoint cũ, dùng OpenAI Compatible public nhưng `ALLOW_EXTERNAL_API=false`, hoặc API key đã lưu không giải mã được | Kiểm tra Base URL/model/API key status trong Admin, `LLM_API_BASE` từ chính VPS, `ALLOW_EXTERNAL_API` và `AI_CONFIG_ENCRYPTION_KEY` trong `backend/.env`; restart `hra-backend` sau khi đổi env |
 | Worker không tiến triển | DB session/lock, model/storage lỗi hoặc backend đã dừng | Kiểm tra `/v1/admin/worker/health`, journal backend và kết nối DB; không tự reset job `PROCESSING` |
 
 ## 15. Khác biệt cần nhớ so với bản Docker

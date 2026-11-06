@@ -43,9 +43,15 @@ class Settings(BaseSettings):
 
     # AI/LLM
     LLM_PROVIDER: str = "local"  # local/openai/azure/compatible labels; same OpenAI-compatible transport
+    LLM_PROVIDER_NAME: Optional[str] = None
     LLM_MODEL_NAME: str = "vinuni/hra-llm-7b"
     LLM_API_BASE: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
+    # Server-only Fernet key used to encrypt API keys entered by an Admin for
+    # an OpenAI-compatible provider. Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Rotating it makes previously stored provider keys undecryptable.
+    AI_CONFIG_ENCRYPTION_KEY: str = ""
     # Optional JSON arrays. The environment default endpoint/model are always
     # included. These are operator policy, never editable in the UI.
     LLM_ALLOWED_API_BASES: list[str] = []

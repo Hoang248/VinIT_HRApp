@@ -340,12 +340,14 @@ def test_revoked_roles_and_grants_do_not_bypass_application_permissions(client, 
     assert client.patch(f"/v1/applications/{seed['app']}/status", headers=headers(seed["hr"]), json={"new_status": "IN_REVIEW"}).status_code == 403
 
 
-def test_admin_ai_config_is_runtime_backed_allowlisted_and_never_accepts_secrets(client, seed, monkeypatch):
+def test_admin_ai_config_is_runtime_backed_allowlisted_and_stores_only_encrypted_compatible_secrets(client, seed, monkeypatch):
+    from cryptography.fernet import Fernet
     from app.core.config import settings
     monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
     monkeypatch.setattr(settings, "LLM_ALLOWED_API_BASES", ["http://127.0.0.1:11435/v1"])
     monkeypatch.setattr(settings, "LLM_ALLOWED_MODELS", ["approved-model"])
     monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", False)
+    monkeypatch.setattr(settings, "AI_CONFIG_ENCRYPTION_KEY", Fernet.generate_key().decode())
     assert client.get("/v1/admin/ai/active-config", headers=headers(seed["hr"])).status_code == 403
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"), {"id": seed["other"]})
@@ -354,7 +356,8 @@ def test_admin_ai_config_is_runtime_backed_allowlisted_and_never_accepts_secrets
     assert response.status_code == 200 and response.json()["source"] == "environment"
     assert "api_key" not in response.json()["config"]
     payload = {"provider": "local", "model_name": "approved-model", "api_base": "http://127.0.0.1:11435/v1", "temperature_default": .3}
-    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_key": "must-not-be-stored"}).status_code == 422
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_key": "must-not-be-stored-here"}).status_code == 400
+    assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "unexpected": "value"}).status_code == 422
     assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_base": "http://169.254.169.254/v1"}).status_code == 400
     assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "api_base": "https://user:password@example.test/v1"}).status_code == 400
     assert client.post("/v1/admin/ai/config", headers=admin, json={**payload, "model_name": "unapproved"}).status_code == 400
@@ -365,6 +368,31 @@ def test_admin_ai_config_is_runtime_backed_allowlisted_and_never_accepts_secrets
     active = client.get("/v1/admin/ai/active-config", headers=admin).json()
     assert active["source"] == "database" and active["allowed_by_this_process"]
     assert active["config"]["config_id"] == config_id and active["config"]["model_name"] == "approved-model"
+    compatible_payload = {"provider": "compatible", "provider_name": "Synthetic Compatible",
+                          "model_name": "vendor/custom-model", "api_base": "http://127.0.0.1:11435/v1",
+                          "api_key": "provider-key-1234567890", "temperature_default": .2}
+    compatible = client.post("/v1/admin/ai/config", headers=admin, json=compatible_payload)
+    assert compatible.status_code == 201, compatible.text
+    compatible_body = compatible.json()
+    compatible_id = compatible_body["config_id"]
+    assert compatible_body["provider_name"] == "Synthetic Compatible"
+    assert compatible_body["api_key_configured"] is True and compatible_body["api_key_hint"].endswith("7890")
+    assert "api_key" not in compatible_body and "api_key_ciphertext" not in compatible_body
+    listed = client.get("/v1/admin/ai/config", headers=admin).json()
+    listed_compatible = next(item for item in listed if item["config_id"] == compatible_id)
+    assert "api_key" not in listed_compatible and "api_key_ciphertext" not in listed_compatible
+    assert listed_compatible["api_key_configured"] is True
+    assert client.post(f"/v1/admin/ai/config/{compatible_id}/enable", headers=admin).status_code == 200
+    active = client.get("/v1/admin/ai/active-config", headers=admin).json()
+    assert active["config"]["config_id"] == compatible_id
+    assert active["config"]["provider_name"] == "Synthetic Compatible"
+    assert active["config"]["model_name"] == "vendor/custom-model"
+    assert active["config"]["api_key_configured"] is True
+    assert "api_key" not in active["config"] and "api_key_ciphertext" not in active["config"]
+    with engine.connect() as conn:
+        stored = conn.execute(text("SELECT provider_name, api_key_ciphertext FROM app_private.ai_configuration_versions WHERE config_id=:id"), {"id": compatible_id}).mappings().one()
+    assert stored["provider_name"] == "Synthetic Compatible"
+    assert stored["api_key_ciphertext"] and "provider-key-1234567890" not in stored["api_key_ciphertext"]
     with engine.begin() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.audit_events WHERE object_id=:id AND object_type='AI_CONFIG'"), {"id": config_id}).scalar_one() == 2
         conn.execute(text("UPDATE app_private.user_role_assignments SET revoked_at=NOW() WHERE user_id=:id AND role_code='ADMIN'"), {"id": seed["other"]})
