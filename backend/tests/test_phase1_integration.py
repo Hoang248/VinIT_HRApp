@@ -25,6 +25,7 @@ def seed():
     with engine.begin() as conn:
         # Only positions (and dependent data) are truncated; the default scoring policy remains intact.
         conn.execute(text("TRUNCATE app_private.positions CASCADE"))
+        conn.execute(text("TRUNCATE app_private.departments CASCADE"))
         conn.execute(text("UPDATE app_private.ai_configuration_versions SET status='DISABLED' WHERE status='ACTIVE'"))
         for key in ("hr", "hm", "other", "hr2"):
             conn.execute(text("INSERT INTO auth.users(id) VALUES (:id)"), {"id": ids[key]})
@@ -68,6 +69,15 @@ def client():
 
 def headers(user):
     return {"x-test-user": user}
+
+
+def create_test_department():
+    with engine.begin() as conn:
+        return str(conn.execute(text("""
+            INSERT INTO app_private.departments (name, code_format)
+            VALUES ('Phòng Công nghệ thông tin', 'REQ-IT-{SEQ:000}')
+            RETURNING department_id
+        """)).scalar_one())
 
 
 def test_position_scope_and_dashboard_counts(client, seed):
@@ -261,16 +271,49 @@ def test_upload_worker_runs_scoped_pipeline_with_stubbed_ai(client, seed, tmp_pa
 
 
 def test_create_position_requires_hr_and_assigned_hm(client, seed):
-    payload = {"position_code": "NEW-001", "title": "Engineer", "jd_content": "Job description", "hiring_manager_user_id": seed["hm"]}
+    department_id = create_test_department()
+    payload = {"department_id": department_id, "title": "Engineer", "jd_content": "Job description", "hiring_manager_user_id": seed["hm"]}
     assert client.post("/v1/positions", headers=headers(seed["hm"]), json=payload).status_code == 403
     assert client.post("/v1/positions", headers=headers(seed["hr"]), json={**payload, "hiring_manager_user_id": None}).status_code == 400
     result = client.post("/v1/positions", headers=headers(seed["hr"]), json=payload)
     assert result.status_code == 201, result.text
+    assert result.json()["position_code"] == "REQ-IT-001"
+    assert result.json()["department_id"] == department_id
     created = result.json()["position_id"]
+    second = client.post("/v1/positions", headers=headers(seed["hr"]), json={**payload, "title": "Engineer 2"})
+    assert second.status_code == 201, second.text
+    assert second.json()["position_code"] == "REQ-IT-002"
     with engine.connect() as conn:
         roles = conn.execute(text("SELECT position_role FROM app_private.position_assignments WHERE position_id=:id ORDER BY position_role"), {"id": created}).scalars().all()
         assert roles == ["HIRING_MANAGER", "HR_RECRUITER"]
         assert conn.execute(text("SELECT content_text FROM app_private.jd_versions WHERE position_id=:id"), {"id": created}).scalar_one() == "Job description"
+        assert conn.execute(text("SELECT org_unit FROM app_private.positions WHERE position_id=:id"), {"id": created}).scalar_one() == "Phòng Công nghệ thông tin"
+
+
+def test_departments_are_admin_managed_and_used_by_positions(client, seed):
+    admin = uid()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO auth.users(id) VALUES (:id)"), {"id": admin})
+        conn.execute(text("INSERT INTO app_private.user_profiles(user_id, display_name) VALUES (:id, 'ADMIN')"), {"id": admin})
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id, role_code) VALUES (:id, 'ADMIN')"), {"id": admin})
+    payload = {"name": "Phòng Nhân sự", "code_format": "REQ-HR-{SEQ:000}", "is_active": True}
+    assert client.post("/v1/departments", headers=headers(seed["hr"]), json=payload).status_code == 403
+    created = client.post("/v1/departments", headers=headers(admin), json=payload)
+    assert created.status_code == 201, created.text
+    department_id = created.json()["department_id"]
+    assert client.post("/v1/departments", headers=headers(admin), json=payload).status_code == 409
+    listed = client.get("/v1/departments", headers=headers(seed["hr"]))
+    assert listed.status_code == 200 and listed.json()[0]["department_id"] == department_id
+    position = client.post("/v1/positions", headers=headers(seed["hr"]), json={
+        "department_id": department_id, "title": "HR Specialist", "jd_content": "Job description",
+        "hiring_manager_user_id": seed["hm"],
+    })
+    assert position.status_code == 201, position.text
+    assert position.json()["position_code"] == "REQ-HR-001"
+    assert client.delete(f"/v1/departments/{department_id}", headers=headers(admin)).status_code == 409
+    updated = client.patch(f"/v1/departments/{department_id}", headers=headers(admin), json={"is_active": False})
+    assert updated.status_code == 200 and updated.json()["is_active"] is False
+    assert client.get("/v1/departments", headers=headers(seed["hr"])).json() == []
 
 
 def test_status_to_acceptance_is_explicit_and_audited(client, seed):

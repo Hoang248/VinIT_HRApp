@@ -8,6 +8,7 @@ from app.schemas.positions import Position, PositionCreate, PositionUpdate, Posi
 from app.schemas.common import ErrorResponse
 from app.db.supabase import get_supabase_client
 from app.db.database import SessionLocal
+from app.services.departments import DepartmentError, next_position_code
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import json
@@ -26,7 +27,7 @@ _POSITION_WITH_STATS = """
               AND role_code IN ('ADMIN', 'HR_LEAD')
         ) AS global_access
     )
-    SELECT p.*, latest.status AS criteria_status,
+    SELECT p.*, d.name AS department_name, d.code_format AS department_code_format, latest.status AS criteria_status,
         EXISTS (SELECT 1 FROM app_private.criteria_versions approved
                 WHERE approved.position_id = p.position_id AND approved.status = 'APPROVED'
                   AND approved.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
@@ -34,6 +35,7 @@ _POSITION_WITH_STATS = """
         stats.total_applications, stats.new_applications, stats.in_review, stats.shortlisted
     FROM app_private.positions p
     CROSS JOIN privileges priv
+    LEFT JOIN app_private.departments d ON d.department_id = p.department_id
     LEFT JOIN LATERAL (
         SELECT status FROM app_private.criteria_versions
         WHERE position_id = p.position_id ORDER BY version_number DESC LIMIT 1
@@ -94,10 +96,10 @@ async def create_position(
 ):
     """Create the position, JD and assignments atomically."""
     user_id = current_user["user_id"]
-    for field in ("position_code", "title", "jd_content"):
+    for field in ("title", "jd_content"):
         value = getattr(position_data, field).strip()
         if not value or (field != "jd_content" and len(value) > 200):
-            raise HTTPException(status_code=400, detail="Mã vị trí, tên vị trí và nội dung JD không được để trống")
+            raise HTTPException(status_code=400, detail="Tên vị trí và nội dung JD không được để trống")
         setattr(position_data, field, value)
     if not position_data.hiring_manager_user_id:
         raise HTTPException(status_code=400, detail="Vui lòng chọn Hiring Manager phụ trách vị trí")
@@ -128,15 +130,35 @@ async def create_position(
         """), {"user_id": hm_id}).scalars().all()
         if hm_status != 'ACTIVE' or not hm_roles:
             raise HTTPException(status_code=400, detail="Hiring Manager phải có tài khoản hoạt động và vai trò HM.")
+        department = db.execute(text("""
+            SELECT * FROM app_private.departments
+            WHERE department_id = :department_id FOR UPDATE
+        """), {"department_id": str(position_data.department_id)}).mappings().first()
+        if not department:
+            raise HTTPException(status_code=400, detail="Không tìm thấy đơn vị/phòng ban")
+        if not department["is_active"]:
+            raise HTTPException(status_code=400, detail="Đơn vị/phòng ban đã ngừng hoạt động")
+        position_code, department_sequence = next_position_code(db, dict(department))
         params = position_data.model_dump(exclude={"jd_content", "hiring_manager_user_id"})
-        params["created_by"] = user_id
+        params.update({
+            "position_code": position_code,
+            "org_unit": department["name"],
+            "department_id": str(position_data.department_id),
+            "department_sequence": department_sequence,
+            "created_by": user_id,
+        })
         new_position = db.execute(text("""
             INSERT INTO app_private.positions (position_code, title, job_family, org_unit, level, work_location,
-                work_mode, employment_type, headcount, created_by)
+                work_mode, employment_type, headcount, created_by, department_id, department_sequence)
             VALUES (:position_code, :title, :job_family, :org_unit, :level, :work_location,
-                :work_mode, :employment_type, :headcount, :created_by) RETURNING *
+                :work_mode, :employment_type, :headcount, :created_by, :department_id, :department_sequence) RETURNING *
         """), params).mappings().one()
         position_id = new_position["position_id"]
+        db.execute(text("""
+            UPDATE app_private.departments
+            SET next_sequence = :next_sequence, updated_at = NOW()
+            WHERE department_id = :department_id
+        """), {"next_sequence": department_sequence + 1, "department_id": str(position_data.department_id)})
         db.execute(text("""
             INSERT INTO app_private.jd_versions (position_id, version_number, content_text, language_code, created_by)
             VALUES (:position_id, 1, :content, 'en', :user_id)
@@ -147,10 +169,16 @@ async def create_position(
                 VALUES (:position_id, :assigned_user, :role, :user_id)
             """), {"position_id": position_id, "assigned_user": assigned_user, "role": role, "user_id": user_id})
         db.commit()
-        return dict(new_position)
+        created = dict(new_position)
+        created["department_name"] = department["name"]
+        created["department_code_format"] = department["code_format"]
+        return created
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mã vị trí đã tồn tại hoặc dữ liệu vị trí không hợp lệ")
+    except DepartmentError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     except Exception:
         db.rollback()
         raise

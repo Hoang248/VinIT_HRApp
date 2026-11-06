@@ -4,7 +4,7 @@
 
 ## Luồng đã triển khai trong mã
 
-1. ADMIN tạo tài khoản và phân vai trò; tài khoản mới phải đổi mật khẩu tạm thời ở lần đăng nhập đầu. HR tạo vị trí, JD và chọn Hiring Manager đang hoạt động, khác tài khoản HR; cập nhật tên, mở/tạm dừng/đóng vị trí.
+1. ADMIN tạo tài khoản, phân vai trò và quản lý đơn vị/phòng ban (tên phòng ban, mã định dạng như `REQ-IT-{SEQ:000}`, trạng thái hoạt động); tài khoản mới phải đổi mật khẩu tạm thời ở lần đăng nhập đầu. HR tạo vị trí bằng cách chọn phòng ban ở đầu biểu mẫu—mã vị trí tự sinh theo phòng ban, ví dụ `REQ-IT-001`—nhập JD và chọn Hiring Manager từ danh sách đang hoạt động đã tải sẵn, khác tài khoản HR; cập nhật tên, mở/tạm dừng/đóng vị trí.
 2. AI đề xuất bộ tiêu chí nháp; HR chỉnh tiêu chí/trọng số (mặc định 70/30, tổng 100%), duyệt quy trình; Hiring Manager được gán duyệt chuyên môn hoặc yêu cầu sửa. Hai bước duyệt bắt buộc do **hai tài khoản khác nhau**; phiên bản đã duyệt được khóa.
 3. HR tải lô PDF/DOCX (tối đa 50 file, 10 MB/file, 250 MB/lô); worker xử lý, đánh giá và tạo ranking trong cùng vị trí. Giao diện tự theo dõi tiến trình, kể cả sau khi quay lại trang.
 4. HR xem cảnh báo lỗi/trùng, điểm và độ phủ, đối chiếu bằng chứng, cập nhật trạng thái và lý do; lịch sử quyết định chỉ hiển thị cho HR có quyền.
@@ -20,7 +20,7 @@
 - **Worker:** thread trong process API, poll PostgreSQL; có advisory session lock, fencing, heartbeat và tự thử phục hồi job sau crash. Cuộc gọi AI là at-least-once, không bảo đảm chạy đúng một lần; xem [runbook](DEPLOYMENT.md#phục-hồi-worker-và-giám-sát).
 - **Lưu trữ:** Supabase Storage bucket private qua service role backend hoặc filesystem cục bộ dùng thử.
 
-Các migration trong `supabase/migrations/` yêu cầu Supabase Auth và các role tương ứng. Project Supabase đã kết nối đã áp tới `00006_openai_compatible_provider_secrets.sql` (remote `20261106042158 openai_compatible_provider_secrets`). **Không triển khai backend mới vào database chưa có 00005 và 00006.** Không reset/push migration mù quáng; cần phê duyệt riêng, staging, backup và drain worker cũ theo [DEPLOYMENT.md](DEPLOYMENT.md).
+Các migration trong `supabase/migrations/` yêu cầu Supabase Auth và các role tương ứng. Project Supabase đã kết nối đã áp tới `00007_departments_and_position_codes.sql` (remote `20261106050756 departments_and_position_codes`). **Không triển khai backend mới vào database chưa có 00005, 00006 và 00007.** Không reset/push migration mù quáng; cần phê duyệt riêng, staging, backup và drain worker cũ theo [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Chạy phát triển
 

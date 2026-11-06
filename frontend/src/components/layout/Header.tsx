@@ -33,8 +33,7 @@ export default function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
       <Toolbar sx={{ minHeight: `${APPBAR_HEIGHT}px !important`, gap: 1.5 }}>
         <IconButton color="inherit" onClick={onOpenMenu} aria-label={t("Mở menu điều hướng")} edge="start" sx={{ display: { xs: 'inline-flex', md: 'none' } }}><MenuIcon /></IconButton>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700 }}>{t("Không gian tuyển dụng")}</Typography>
-          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,.7)', display: { xs: 'none', sm: 'block' } }}>{t("AI hỗ trợ · Con người quyết định")}</Typography>
+          <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700 }}>HR Resource Workspace</Typography>
         </Box>
         <LanguageSwitcher light />
         <Tooltip title={t("Tài khoản")}>

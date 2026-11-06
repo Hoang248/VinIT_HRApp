@@ -1,10 +1,11 @@
 from fastapi import APIRouter
-from . import auth, users, positions, criteria, applications, assessments, shortlist, dashboard, admin, account_admin, operations, candidate_details
+from . import auth, users, positions, criteria, applications, assessments, shortlist, dashboard, admin, account_admin, operations, candidate_details, departments
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(operations.router, prefix="/operations", tags=["Async Operations"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
+api_router.include_router(departments.router, prefix="/departments", tags=["Departments"])
 api_router.include_router(positions.router, prefix="/positions", tags=["Positions"])
 api_router.include_router(criteria.router, prefix="/criteria", tags=["Criteria & Rubric"])
 api_router.include_router(applications.router, prefix="/applications", tags=["Applications & CVs"])

@@ -8,12 +8,28 @@ export interface JDVersion {
   created_at: string;
 }
 
+export interface Department {
+  department_id: string;
+  name: string;
+  code_format: string;
+  next_sequence: number;
+  is_active: boolean;
+  position_count?: number;
+  created_by?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface Position {
   position_id: string;
   position_code: string;
   title: string;
   job_family?: string;
   org_unit?: string;
+  department_id?: string;
+  department_name?: string;
+  department_code_format?: string;
+  department_sequence?: number;
   level?: string;
   work_location?: string;
   work_mode?: string;

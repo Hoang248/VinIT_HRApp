@@ -9,6 +9,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import ApartmentIcon from '@mui/icons-material/Apartment';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
@@ -19,6 +20,7 @@ const menuItems = [
   { text: 'Bảng điều khiển', icon: <BarChartIcon />, href: '/dashboard' },
   { text: 'Quản trị AI', icon: <SettingsIcon />, href: '/admin', adminOnly: true },
   { text: 'Quản lý tài khoản', icon: <ManageAccountsIcon />, href: '/admin/users', adminOnly: true },
+  { text: 'Quản lý phòng ban', icon: <ApartmentIcon />, href: '/admin/departments', adminOnly: true },
 ];
 
 export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean }) {
@@ -30,7 +32,7 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: 
         <Box sx={{ backgroundColor: '#fff', borderRadius: 1.5, px: 2, py: 1.5, mb: 1.5, display: 'flex', justifyContent: 'center' }}>
           <Box component="img" src="/vinuni-logo.png" alt="VinUniversity" sx={{ height: 32, width: 'auto', maxWidth: '100%' }} />
         </Box>
-        <Typography variant="overline" sx={{ color: 'rgba(255,255,255,.75)', display: 'block', textAlign: 'center' }}>{t("Sàng lọc CV với AI")}</Typography>
+        <Typography variant="overline" sx={{ color: 'rgba(255,255,255,.75)', display: 'block', textAlign: 'center' }}>CV Screening Application</Typography>
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.12)' }} />
       <List sx={{ pt: 2 }} component="nav" aria-label={t("Điều hướng chính")}>

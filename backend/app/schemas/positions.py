@@ -32,6 +32,11 @@ class PositionBase(BaseSchema):
 
 
 class PositionCreate(PositionBase):
+    # New positions choose a department; the backend generates position_code
+    # from that department's code_format (for example REQ-IT-001).
+    department_id: UUID
+    position_code: Optional[str] = Field(default=None, max_length=100)  # Deprecated: ignored, generated server-side
+    org_unit: Optional[str] = Field(default=None, max_length=255)  # Deprecated: snapshot comes from the department
     jd_content: str = Field(..., description="Job Description text content in English")
     hiring_manager_user_id: Optional[UUID] = Field(
         None,
@@ -48,6 +53,10 @@ class PositionUpdate(BaseSchema):
 
 class Position(PositionBase, TimestampMixin):
     position_id: UUID
+    department_id: Optional[UUID] = None
+    department_name: Optional[str] = None
+    department_code_format: Optional[str] = None
+    department_sequence: Optional[int] = None
     status: PositionStatus
     created_by: UUID
     opened_at: Optional[datetime] = None

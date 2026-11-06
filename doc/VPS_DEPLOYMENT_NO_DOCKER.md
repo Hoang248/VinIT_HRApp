@@ -62,7 +62,7 @@ Không tạo `.env` ở thư mục gốc trong hướng dẫn này, trừ khi sa
 - DNS của domain, ví dụ `hr.example.com`, đã trỏ tới IP VPS. Nếu có bản ghi AAAA thì IPv6 của VPS cũng phải hoạt động.
 - Ước lượng ban đầu: 2 vCPU, 4 GB RAM, 30 GB ổ đĩa cho app/OCR thử nghiệm. LLM chạy local thường cần thêm RAM/VRAM đáng kể; build frontend cũng có thể tốn RAM.
 - Project Supabase đã chuẩn bị PostgreSQL, Auth và hai bucket private `cv-originals`, `cv-extracted-text`.
-- Backend hiện tại phụ thuộc migration `00005_account_administration.sql` và `00006_openai_compatible_provider_secrets.sql`. Project `myrymlqdbyqmpynesiwk` đã áp 00005 ở version remote `20261105163626` ngày 05/11/2026 và 00006 ở version remote `20261106042158` ngày 06/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
+- Backend hiện tại phụ thuộc migration `00005_account_administration.sql`, `00006_openai_compatible_provider_secrets.sql` và `00007_departments_and_position_codes.sql`. Project `myrymlqdbyqmpynesiwk` đã áp 00005 ở version remote `20261105163626` ngày 05/11/2026, 00006 ở version remote `20261106042158` ngày 06/11/2026 và 00007 ở version remote `20261106050756` ngày 06/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
 - Một LLM endpoint tương thích OpenAI đã được phê duyệt. Nếu chưa có model reachable từ backend thì có thể deploy web/API, nhưng không chạy được xử lý AI.
 - Backend xác minh access token theo `alg` trong JWT: token bất đối xứng (ví dụ `ES256`) được kiểm tra bằng JWKS tại `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` kèm `iss`/`aud`; token `HS256` legacy tiếp tục được kiểm tra bằng `SUPABASE_JWT_SECRET` trong thời gian chuyển đổi.
 - Service-role key từng lộ trong lịch sử Git vẫn là việc bảo mật riêng phải thu hồi theo kế hoạch trong `DEPLOYMENT.md`; tạo key mới không tự thu hồi key legacy.
@@ -498,7 +498,7 @@ Smoke test tối thiểu bằng dữ liệu tổng hợp:
 
 1. Admin tạo một tài khoản HR với role `HR_RECRUITER` và một tài khoản HM với role `HIRING_MANAGER`. HR và HM phải là hai người/tài khoản khác nhau cho hai bước duyệt.
 2. Đăng nhập bằng tài khoản mới và xác nhận ứng dụng bắt đổi mật khẩu tạm trước khi vào nghiệp vụ.
-3. HR tạo một vị trí tổng hợp và gán đúng HM.
+3. Admin vào **Quản lý phòng ban**, tạo một phòng ban tổng hợp (ví dụ tên `Phòng Công nghệ thông tin`, mã định dạng `REQ-IT-{SEQ:000}`). Sau đó HR tạo vị trí, chọn phòng ban ở đầu biểu mẫu—mã vị trí phải tự hiện `REQ-IT-001`—và chọn HM từ danh sách đã tải sẵn.
 4. Kiểm tra luồng duyệt hai bước HR/HM theo quyền của từng tài khoản.
 5. Admin kiểm tra `/v1/admin/worker/health`; xác nhận hàng đợi không có job bị treo bất thường.
 6. Upload CV tổng hợp, chờ worker xử lý và kiểm tra trích xuất/chấm điểm bằng model thật đã được kích hoạt.
@@ -536,7 +536,7 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    cp -a public .next/standalone/public
    ```
 
-5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout. Đối với bản OpenAI Compatible dùng migration `00006`, project Supabase đã kết nối đã được áp version remote `20261106042158`; trên VPS vẫn phải bảo đảm `AI_CONFIG_ENCRYPTION_KEY` đã có trong `backend/.env` trước khi khởi động lại backend, nếu không Admin sẽ không lưu được API key mới.
+5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout. Đối với bản OpenAI Compatible dùng migration `00006`, project Supabase đã kết nối đã được áp version remote `20261106042158`; trên VPS vẫn phải bảo đảm `AI_CONFIG_ENCRYPTION_KEY` đã có trong `backend/.env` trước khi khởi động lại backend, nếu không Admin sẽ không lưu được API key mới. Bản quản lý phòng ban/mã vị trí tự sinh dùng migration `00007`, project đã kết nối đã được áp version remote `20261106050756`; không cần chạy lại migration trên VPS.
 6. Khởi động và kiểm tra:
 
    ```bash

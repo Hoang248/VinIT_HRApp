@@ -201,7 +201,8 @@ Email tài khoản nội bộ thuộc Supabase Auth; không cần sao chép vào
 
 | Bảng | Trường chính |
 |---|---|
-| `app_private.positions` | `position_id`; `position_code`; `title`; `job_family`; `org_unit`; `level`; `work_location`; `work_mode`; `employment_type`; `headcount` tùy chọn; `status`; `created_by`; `opened_at`; `closed_at`. |
+| `app_private.departments` | `department_id`; `name`; `code_format` (mẫu mã vị trí, đúng một `{SEQ}`/`{SEQ:000}`, ví dụ `REQ-IT-{SEQ:000}`); `next_sequence`; `is_active`; `created_by`; thời điểm tạo/cập nhật. Admin thêm/sửa/xóa; phòng ban đã có vị trí không được xóa, chỉ ngừng hoạt động. |
+| `app_private.positions` | `position_id`; `position_code` tự sinh từ `code_format` của phòng ban đối với vị trí mới; `department_id`; `department_sequence`; `title`; `job_family`; `org_unit` (snapshot tên phòng ban; text tự do ở vị trí cũ); `level`; `work_location`; `work_mode`; `employment_type`; `headcount` tùy chọn; `status`; `created_by`; `opened_at`; `closed_at`. |
 | `app_private.position_status_events` | `position_id`; trạng thái trước/sau; người thao tác; thời điểm; lý do nếu có. |
 | `app_private.jd_versions` | `jd_version_id`; `position_id`; số phiên bản; nội dung JD dạng text; `language_code`; `content_hash`; người tạo; thời điểm tạo. |
 | `app_private.criteria_versions` | `criteria_version_id`; `position_id`; `jd_version_id`; số phiên bản; nguồn tạo như `AI_DRAFT` hoặc `HR_CREATED`; trạng thái phê duyệt; tỷ trọng Bắt buộc/Ưu tiên; policy đánh giá được áp dụng. |

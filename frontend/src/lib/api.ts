@@ -68,6 +68,13 @@ export const positionsApi = {
   createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
 };
 
+export const departmentsApi = {
+  list: (includeInactive = false) => apiClient.get('/departments', { params: { include_inactive: includeInactive } }),
+  create: (data: { name: string; code_format: string; is_active: boolean }) => apiClient.post('/departments', data),
+  update: (id: string, data: { name?: string; code_format?: string; is_active?: boolean }) => apiClient.patch(`/departments/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/departments/${id}`),
+};
+
 export const criteriaApi = {
   listVersions: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/versions`),

@@ -172,6 +172,14 @@ def update(name, status, roles):
     return {"display_name": name, "account_status": status, "roles": roles}
 
 
+def make_department(name="Engineering", code_format="REQ-ENG-{SEQ:000}"):
+    with engine.begin() as conn:
+        return str(conn.execute(text("""
+            INSERT INTO app_private.departments (name, code_format)
+            VALUES (:name, :code_format) RETURNING department_id
+        """), {"name": name, "code_format": code_format}).scalar_one())
+
+
 def test_bootstrap_disabled_wrong_secret_and_validation_redacts_credentials(client, fake_auth, monkeypatch):
     assert client.get('/v1/auth/bootstrap-status').json() == {"available": True}
     monkeypatch.setattr(settings, 'ADMIN_BOOTSTRAP_TOKEN', '')
@@ -291,11 +299,12 @@ def test_hm_directory_position_creation_and_role_removal(client, fake_auth):
     response = client.get('/v1/users?role=HIRING_MANAGER', headers=hr_headers)
     assert response.status_code == 200, response.text
     assert [u['user_id'] for u in response.json()] == [hm]
-    payload = {"position_code": "ACCOUNT-POS", "title": "Engineer", "jd_content": "Synthetic JD", "hiring_manager_user_id": hm}
+    payload = {"department_id": make_department(), "title": "Engineer", "jd_content": "Synthetic JD", "hiring_manager_user_id": hm}
     for bad in [hr, not_hm, disabled_hm]:
         assert client.post('/v1/positions', headers=hr_headers, json={**payload, "hiring_manager_user_id": bad}).status_code == 400
     result = client.post('/v1/positions', headers=hr_headers, json=payload)
     assert result.status_code == 201, result.text
+    assert result.json()['position_code'] == 'REQ-ENG-001'
     position = result.json()['position_id']
     hm_headers = bearer(fake_auth.token(hm, 'hm@example.org'))
     assert client.get('/v1/positions', headers=hm_headers).json()[0]['position_id'] == position
@@ -316,7 +325,7 @@ def test_removing_last_hr_capable_role_revokes_recruiter_assignments(client, fak
     creator = fake_auth.seed('creator@example.org', [creator_role], name='Creator')
     hm = fake_auth.seed('hm@example.org', ['HIRING_MANAGER'], name='HM')
     headers = bearer(fake_auth.token(creator, 'creator@example.org'))
-    payload = {'position_code': 'CREATOR-POS', 'title': 'Engineer', 'jd_content': 'Synthetic JD',
+    payload = {'department_id': make_department('Creator', 'REQ-CREATOR-{SEQ:000}'), 'title': 'Engineer', 'jd_content': 'Synthetic JD',
                'hiring_manager_user_id': hm}
     created = client.post('/v1/positions', headers=headers, json=payload)
     assert created.status_code == 201, created.text
@@ -328,7 +337,7 @@ def test_removing_last_hr_capable_role_revokes_recruiter_assignments(client, fak
             WHERE position_id=:p AND user_id=:u AND position_role='HR_RECRUITER'"""), {'p': position, 'u': creator}).scalar_one()
     assert assignment is not None
     assert client.get('/v1/positions', headers=headers).json() == []
-    assert client.post('/v1/positions', headers=headers, json={**payload, 'position_code': 'MUST-FAIL'}).status_code == 403
+    assert client.post('/v1/positions', headers=headers, json={**payload, 'title': 'Must fail'}).status_code == 403
 
 
 def test_suspended_then_reactivated_account_cannot_reuse_old_access_token(client, fake_auth):
