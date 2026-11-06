@@ -20,6 +20,6 @@
 
 ## Kiểm thử và công việc còn lại
 
-Automated backend tests dùng PostgreSQL cục bộ dùng một lần, CV/tài khoản tổng hợp và AI HTTP mock; frontend có type-check, lint, build, kiểm thử i18n và smoke trình duyệt dữ liệu giả. Chưa kiểm thử Supabase Auth/Storage, model thật, OCR scan hay Docker end-to-end; không tuyên bố chất lượng AI hoặc ẩn danh hoàn toàn. Xem [backend/tests/README.md](backend/tests/README.md) và [DEPLOYMENT.md](DEPLOYMENT.md).
+Automated backend tests dùng PostgreSQL cục bộ dùng một lần, CV/tài khoản tổng hợp và AI HTTP mock; frontend có type-check, lint, build, kiểm thử i18n và smoke trình duyệt dữ liệu giả. Chưa kiểm thử Supabase Auth/Storage, model thật, OCR scan hay Docker end-to-end; không tuyên bố chất lượng AI hoặc ẩn danh hoàn toàn. Xem [backend/tests/README.md](../backend/tests/README.md) và [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 Trước pilot cần rotate service-role key từng xuất hiện trong Git history, kiểm thử staging/restore và migration riêng ở các môi trường khác, kiểm soát egress, đánh giá privacy/bias và hoàn thành retention/session/audit. Không dùng dữ liệu ứng viên thật trong preview hoặc kiểm thử này.
