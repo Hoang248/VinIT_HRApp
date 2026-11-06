@@ -78,6 +78,22 @@ def _validate_choice(runtime: dict, *, require_provider_name: bool = False) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
+def _stored_key_config_id_for_endpoint(db, runtime: dict) -> str | None:
+    """Return the ACTIVE config whose stored key may be reused for this URL."""
+    active = db.execute(text("""
+        SELECT config_id, api_base, api_key_ciphertext
+        FROM app_private.ai_configuration_versions
+        WHERE status = 'ACTIVE' LIMIT 1
+    """)).mappings().first()
+    if not active or not active["api_key_ciphertext"] or not active["api_base"]:
+        return None
+    try:
+        same_endpoint = canonical_endpoint(active["api_base"]) == runtime["api_base"]
+    except AIConfigError:
+        return None
+    return str(active["config_id"]) if same_endpoint else None
+
+
 @router.get("/ai/options")
 async def get_ai_options(current_user: dict = Depends(require_admin_role)):
     try:
@@ -174,6 +190,45 @@ async def create_ai_config(request: AIConfigUpdateRequest, current_user: dict = 
         raise
     finally:
         db.close()
+
+
+@router.post("/ai/test-connection")
+async def test_ai_connection(request: AIConfigUpdateRequest, current_user: dict = Depends(require_admin_role)):
+    """Test the entered provider values without creating a config version."""
+    submitted = request.model_dump()
+    api_key = submitted.pop("api_key")
+    runtime = _validate_choice(
+        submitted,
+        require_provider_name=submitted["provider"] == "compatible",
+    )
+    if api_key is not None and runtime["provider"] != "compatible":
+        raise HTTPException(
+            status_code=400,
+            detail="API key chỉ áp dụng cho nhà cung cấp OpenAI Compatible.",
+        )
+    runtime["source"] = "connection_test"
+
+    db = SessionLocal()
+    try:
+        _lock_active_admin(db, current_user["user_id"])
+        if api_key is not None:
+            try:
+                runtime["api_key"] = normalize_api_key(api_key)
+                runtime["api_key_configured"] = True
+            except AISecretError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+        elif runtime["provider"] == "compatible":
+            reusable_config_id = _stored_key_config_id_for_endpoint(db, runtime)
+            if reusable_config_id:
+                runtime["config_id"] = reusable_config_id
+                runtime["api_key_configured"] = True
+    finally:
+        db.close()
+
+    try:
+        return await llm_client.test_provider_connection(runtime)
+    except LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.post("/ai/config/{config_id}/enable")

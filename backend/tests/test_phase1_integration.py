@@ -393,6 +393,22 @@ def test_admin_ai_config_is_runtime_backed_allowlisted_and_stores_only_encrypted
         stored = conn.execute(text("SELECT provider_name, api_key_ciphertext FROM app_private.ai_configuration_versions WHERE config_id=:id"), {"id": compatible_id}).mappings().one()
     assert stored["provider_name"] == "Synthetic Compatible"
     assert stored["api_key_ciphertext"] and "provider-key-1234567890" not in stored["api_key_ciphertext"]
+    from app.api import admin as admin_module
+    seen_runtime = {}
+    async def fake_connection_test(runtime):
+        seen_runtime.update(runtime)
+        return {"ok": True, "status_code": 200, "latency_ms": 3,
+                "provider_name": runtime.get("provider_name"), "model": runtime.get("model_name"),
+                "provider_returned_model": "vendor/custom-model",
+                "message": "Kết nối thành công tới nhà cung cấp."}
+    monkeypatch.setattr(admin_module.llm_client, "test_provider_connection", fake_connection_test)
+    tested = client.post("/v1/admin/ai/test-connection", headers=admin, json=compatible_payload)
+    assert tested.status_code == 200, tested.text
+    assert tested.json()["ok"] is True and tested.json()["provider_returned_model"] == "vendor/custom-model"
+    assert seen_runtime["provider_name"] == "Synthetic Compatible"
+    assert seen_runtime["api_key"] == "provider-key-1234567890"
+    assert "provider-key-1234567890" not in tested.text
+    assert client.post("/v1/admin/ai/test-connection", headers=headers(seed["hr"]), json=compatible_payload).status_code == 403
     with engine.begin() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.audit_events WHERE object_id=:id AND object_type='AI_CONFIG'"), {"id": config_id}).scalar_one() == 2
         conn.execute(text("UPDATE app_private.user_role_assignments SET revoked_at=NOW() WHERE user_id=:id AND role_code='ADMIN'"), {"id": seed["other"]})

@@ -201,3 +201,113 @@ async def test_llm_client_uses_config_key_and_does_not_leak_environment_key(monk
 
     assert await LLMClient()._call_llm("system", "synthetic") == {"ok": True}
     assert "Authorization" not in captured[-1][1]["headers"]
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_test_uses_entered_key_and_reports_status(monkeypatch):
+    from app.core.config import settings
+    from app.services.llm_client import LLMClient
+
+    captured = []
+
+    class Reply:
+        status_code = 200
+
+        @property
+        def is_success(self):
+            return True
+
+        def json(self):
+            return {"model": "returned-model", "choices": [{"message": {"content": "OK"}}]}
+
+    class Transport:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, **kwargs):
+            captured.append((url, kwargs))
+            return Reply()
+
+    monkeypatch.setattr("app.services.llm_client.httpx.AsyncClient", Transport)
+    monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", False)
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "environment-key-1234567890")
+
+    runtime = {
+        "source": "connection_test",
+        "provider": "compatible",
+        "provider_name": "Local Compatible",
+        "model_name": "custom-model",
+        "api_base": "http://127.0.0.1:11435/v1",
+        "temperature_default": 0.1,
+        "api_key_configured": True,
+        "api_key": "provider-key-1234567890",
+    }
+
+    result = await LLMClient().test_provider_connection(runtime)
+
+    assert result["ok"] is True
+    assert result["status_code"] == 200
+    assert result["provider_returned_model"] == "returned-model"
+    assert result["latency_ms"] >= 0
+    assert captured[-1][0] == "http://127.0.0.1:11435/v1/chat/completions"
+    assert captured[-1][1]["headers"]["Authorization"] == "Bearer provider-key-1234567890"
+    assert captured[-1][1]["json"]["model"] == "custom-model"
+    assert "response_format" not in captured[-1][1]["json"]
+    assert "candidate" not in str(captured[-1][1]["json"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_test_reports_auth_failure_without_raising(monkeypatch):
+    from app.core.config import settings
+    from app.services.llm_client import LLMClient
+
+    class Reply:
+        status_code = 401
+
+        @property
+        def is_success(self):
+            return False
+
+        def json(self):
+            return {"error": {"message": "invalid api key"}}
+
+    class Transport:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, **kwargs):
+            return Reply()
+
+    monkeypatch.setattr("app.services.llm_client.httpx.AsyncClient", Transport)
+    monkeypatch.setattr(settings, "ALLOW_EXTERNAL_API", False)
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr(settings, "LLM_API_KEY", None)
+
+    result = await LLMClient().test_provider_connection({
+        "source": "connection_test",
+        "provider": "compatible",
+        "provider_name": "Local Compatible",
+        "model_name": "custom-model",
+        "api_base": "http://127.0.0.1:11435/v1",
+        "temperature_default": 0.1,
+        "api_key_configured": True,
+        "api_key": "provider-key-1234567890",
+    })
+
+    assert result["ok"] is False
+    assert result["status_code"] == 401
+    assert result["error_code"] == "AUTH_FAILED"
+    assert "provider-key-1234567890" not in str(result)

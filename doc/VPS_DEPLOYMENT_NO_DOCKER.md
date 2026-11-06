@@ -224,7 +224,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 Lưu ý quan trọng:
 
 - `LLM_API_BASE=http://127.0.0.1:11434/v1` chỉ đúng nếu Ollama/LLM server chạy **trên cùng VPS**. Nếu model ở máy khác, thay bằng địa chỉ private mà tiến trình backend truy cập được. Khi không dùng Docker, `localhost` nghĩa là chính VPS, không phải container backend.
-- Cấu hình AI `ACTIVE` trong database có thể được ưu tiên hơn env. Sau khi có Admin, dùng **Admin → Cấu hình AI** để tạo/kích hoạt cấu hình; không sửa trực tiếp bản ghi ACTIVE bằng SQL. Với `local`/`openai`/`azure`, Admin vẫn chọn endpoint và model nằm trong allowlist. Riêng **OpenAI Compatible**, Admin nhập **tên nhà cung cấp, Base URL, API Key và Model**; API key được mã hóa phía server và không hiển thị lại.
+- Cấu hình AI `ACTIVE` trong database có thể được ưu tiên hơn env. Sau khi có Admin, dùng **Admin → Cấu hình AI** để tạo/kích hoạt cấu hình; không sửa trực tiếp bản ghi ACTIVE bằng SQL. Với `local`/`openai`/`azure`, Admin vẫn chọn endpoint và model nằm trong allowlist. Riêng **OpenAI Compatible**, Admin nhập **tên nhà cung cấp, Base URL, API Key và Model**, bấm **Test kết nối** để kiểm tra trước rồi mới **Tạo và kích hoạt**; API key được mã hóa phía server và không hiển thị lại.
 - Sau bước cài backend ở mục 8.1 và trước khi khởi động PM2, tạo khóa mã hóa API key bằng lệnh sau trên VPS, rồi điền giá trị vào `AI_CONFIG_ENCRYPTION_KEY` trong `backend/.env` bằng editor/secret manager. Không đưa giá trị này vào Git, chat hoặc log; nếu để trống, Admin không lưu được API key mới:
   ```bash
   cd /home/ubuntu/hra/backend

@@ -15,6 +15,7 @@ type WorkerHealth = { pending: number; processing: number; stale_heartbeat: numb
 type RuntimeConfig = { config_id?: string | null; provider: string; provider_name?: string | null; model_name: string; api_base?: string | null; temperature_default: number; external_api_allowed: boolean; api_key_configured?: boolean; api_key_hint?: string | null };
 type AIOptions = { models: string[]; endpoints: string[]; external_api_allowed: boolean; custom_openai_compatible?: { api_key_encryption_configured: boolean } };
 type ConfigVersion = RuntimeConfig & { config_id: string; status: string; created_at: string };
+type ConnectionTestResult = { ok: boolean; status_code?: number | null; latency_ms?: number; provider_name?: string | null; model?: string; provider_returned_model?: string | null; error_code?: string; message: string };
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
 
@@ -36,6 +37,8 @@ export default function AdminPage() {
   const [temperature, setTemperature] = useState('0.1');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -59,6 +62,7 @@ export default function AdminPage() {
       setCustomModel(current.provider === 'compatible' ? current.model_name : '');
       setCustomBaseUrl(current.provider === 'compatible' ? (current.api_base || '') : '');
       setApiKey('');
+      setTestResult(null);
       setTemperature(String(current.temperature_default));
     } catch (err: any) {
       setError(err.response?.data?.detail || t("Không thể tải cấu hình AI và trạng thái hàng đợi."));
@@ -97,6 +101,29 @@ export default function AdminPage() {
       setSuccess(t("Đã kích hoạt phiên bản cấu hình. Tác vụ đang chạy tiếp tục dùng cấu hình đã ghim."));
     } catch (err: any) { setError(err.response?.data?.detail || t("Không thể kích hoạt cấu hình AI.")); }
     finally { setSaving(false); }
+  };
+  const testConnection = async () => {
+    if (!isCompatible) return;
+    const value = Number(temperature);
+    if (!customModel.trim() || !customBaseUrl.trim() || !Number.isFinite(value) || value < 0 || value > 1) {
+      setTestResult({ ok: false, message: "Vui lòng nhập Base URL, Model và temperature trong khoảng 0–1." }); return;
+    }
+    if (!providerName.trim()) {
+      setTestResult({ ok: false, message: "Vui lòng nhập tên nhà cung cấp cho OpenAI Compatible." }); return;
+    }
+    if (!apiKey && !activeKeyReusable) {
+      setTestResult({ ok: false, message: "Vui lòng nhập API Key cho nhà cung cấp OpenAI Compatible." }); return;
+    }
+    try {
+      setTesting(true); setTestResult(null); setError(null);
+      const response = await adminApi.testAiConnection({
+        provider, provider_name: providerName.trim(), model_name: customModel.trim(), api_base: customBaseUrl.trim(),
+        ...(apiKey ? { api_key: apiKey } : {}), temperature_default: value,
+      });
+      setTestResult(response.data);
+    } catch (err: any) {
+      setTestResult({ ok: false, message: err.response?.data?.detail || "Không thể kiểm tra kết nối tới nhà cung cấp." });
+    } finally { setTesting(false); }
   };
   const activate = async (id: string) => {
     try {
@@ -144,7 +171,7 @@ export default function AdminPage() {
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}><FormControl fullWidth size="small"><InputLabel id="ai-provider-label">{t("Nhà cung cấp")}</InputLabel>
                 <Select labelId="ai-provider-label" label={t("Nhà cung cấp")} value={provider} onChange={e => {
-                  const next = e.target.value; setProvider(next);
+                  const next = e.target.value; setProvider(next); setTestResult(null);
                   if (next === 'compatible') {
                     setCustomModel(current => current || model);
                     setCustomBaseUrl(current => current || endpoint);
@@ -153,12 +180,12 @@ export default function AdminPage() {
                   <MenuItem value="local">Local</MenuItem><MenuItem value="compatible">OpenAI Compatible</MenuItem><MenuItem value="openai">OpenAI-compatible (OpenAI)</MenuItem><MenuItem value="azure">OpenAI-compatible (Azure gateway)</MenuItem>
                 </Select></FormControl></Grid>
               {isCompatible ? <>
-                <Grid item xs={12} sm={6}><TextField fullWidth size="small" label={t("Tên nhà cung cấp")} value={providerName} onChange={e => setProviderName(e.target.value)} placeholder={t("Ví dụ: OpenAI, OpenRouter, DeepSeek")} inputProps={{ maxLength: 120 }} /></Grid>
-                <Grid item xs={12} sm={7}><TextField fullWidth size="small" label="Base URL" value={customBaseUrl} onChange={e => setCustomBaseUrl(e.target.value)} placeholder={t("Ví dụ: https://api.openai.com/v1")} autoComplete="url" /></Grid>
-                <Grid item xs={12} sm={5}><TextField fullWidth size="small" label="Model" value={customModel} onChange={e => setCustomModel(e.target.value)} placeholder={t("Nhập model của nhà cung cấp")} autoComplete="off" /></Grid>
-                <Grid item xs={12} sm={8}><TextField fullWidth size="small" label="API Key" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={t("Nhập API key của nhà cung cấp")} autoComplete="new-password"
+                <Grid item xs={12} sm={6}><TextField fullWidth size="small" label={t("Tên nhà cung cấp")} value={providerName} onChange={e => { setProviderName(e.target.value); setTestResult(null); }} placeholder={t("Ví dụ: OpenAI, OpenRouter, DeepSeek")} inputProps={{ maxLength: 120 }} /></Grid>
+                <Grid item xs={12} sm={7}><TextField fullWidth size="small" label="Base URL" value={customBaseUrl} onChange={e => { setCustomBaseUrl(e.target.value); setTestResult(null); }} placeholder={t("Ví dụ: https://api.openai.com/v1")} autoComplete="url" /></Grid>
+                <Grid item xs={12} sm={5}><TextField fullWidth size="small" label="Model" value={customModel} onChange={e => { setCustomModel(e.target.value); setTestResult(null); }} placeholder={t("Nhập model của nhà cung cấp")} autoComplete="off" /></Grid>
+                <Grid item xs={12} sm={8}><TextField fullWidth size="small" label="API Key" type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); setTestResult(null); }} placeholder={t("Nhập API key của nhà cung cấp")} autoComplete="new-password"
                   helperText={activeKeyReusable ? t("Đã lưu API key {0}. Để trống để giữ nguyên cho cùng Base URL.", config.api_key_hint || '') : t("API key được mã hóa phía server và không hiển thị lại.")} /></Grid>
-                <Grid item xs={12} sm={4}><TextField fullWidth size="small" type="number" label="Temperature" value={temperature} onChange={e => setTemperature(e.target.value)} inputProps={{ min: 0, max: 1, step: 0.05 }} /></Grid>
+                <Grid item xs={12} sm={4}><TextField fullWidth size="small" type="number" label="Temperature" value={temperature} onChange={e => { setTemperature(e.target.value); setTestResult(null); }} inputProps={{ min: 0, max: 1, step: 0.05 }} /></Grid>
               </> : <>
                 <Grid item xs={12} sm={6}><FormControl fullWidth size="small"><InputLabel id="ai-model-label">{t("Model được phép")}</InputLabel>
                   <Select labelId="ai-model-label" label={t("Model được phép")} value={options.models.includes(model) ? model : ''} onChange={e => setModel(e.target.value)}>
@@ -173,7 +200,14 @@ export default function AdminPage() {
             </Grid>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>{t("Temperature áp dụng khi tạo tiêu chí; trích xuất và đối chiếu CV luôn dùng 0. Các tác vụ đã bắt đầu giữ cấu hình của lần chạy đầu tiên, kể cả khi phục hồi.")}</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>{t("Kết quả đã có không tự đánh giá lại khi đổi cấu hình; pipeline chỉ đánh giá profile và tiêu chí chưa có kết quả hiện hành.")}</Typography>
-            <Button variant="contained" sx={{ mt: 2 }} onClick={save} disabled={saving || (!isCompatible && !options.endpoints.length)}>{t("Tạo và kích hoạt")}</Button>
+            {isCompatible && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>{t("Test kết nối chỉ gửi một prompt kiểm tra tối thiểu, không lưu cấu hình và không dùng dữ liệu ứng viên.")}</Typography>}
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mt: 2 }}>
+              {isCompatible && <Button variant="outlined" onClick={testConnection} disabled={testing || saving} startIcon={testing ? <CircularProgress size={16} /> : undefined}>{testing ? t("Đang kiểm tra kết nối...") : t("Test kết nối")}</Button>}
+              <Button variant="contained" onClick={save} disabled={saving || testing || (!isCompatible && !options.endpoints.length)}>{t("Tạo và kích hoạt")}</Button>
+            </Box>
+            {testResult && <Alert severity={testResult.ok ? "success" : "error"} sx={{ mt: 2 }} onClose={() => setTestResult(null)}>
+              {t(testResult.message)}{testResult.status_code ? ` · HTTP ${testResult.status_code}` : ''}{testResult.latency_ms != null ? ` · ${testResult.latency_ms} ms` : ''}{testResult.provider_returned_model ? ` · ${testResult.provider_returned_model}` : ''}
+            </Alert>}
           </CardContent></Card>
           {versions.length > 0 && <Card variant="outlined" sx={{ mt: 3 }}><CardContent sx={{ p: 3 }}>
             <Typography variant="h4" sx={{ mb: 2 }}>{t("Lịch sử phiên bản")}</Typography>

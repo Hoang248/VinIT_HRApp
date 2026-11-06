@@ -1,6 +1,7 @@
 import json
 import ipaddress
 import socket
+import time
 from urllib.parse import urlsplit
 import httpx
 from typing import Dict, Any, List, Optional
@@ -104,6 +105,94 @@ class LLMClient:
             except AIConfigError:
                 pass
         return None
+
+    async def test_provider_connection(self, runtime: Dict[str, Any]) -> Dict[str, Any]:
+        """Send one minimal, non-candidate prompt to verify a provider config.
+
+        Provider/network failures are returned as a diagnostic result instead
+        of raising, so the Admin UI can show the status and latency. Invalid
+        runtime values and endpoint-policy failures still raise LLMError. The
+        API key is used only in the Authorization header and is never logged
+        or returned.
+        """
+        if runtime.get("config_id") and runtime.get("api_key_configured") and not runtime.get("api_key"):
+            db = SessionLocal()
+            try:
+                runtime = hydrate_runtime_secret(db, runtime)
+            except Exception as exc:
+                logger.error("AI runtime secret unavailable", error_type=type(exc).__name__)
+                raise LLMError("AI configuration is unavailable") from None
+            finally:
+                db.close()
+        try:
+            runtime = validate_runtime(runtime)
+        except AIConfigError as exc:
+            raise LLMError(str(exc)) from None
+
+        base_url = runtime["api_base"]
+        self._check_endpoint_policy(base_url)
+        headers = {"Content-Type": "application/json"}
+        api_key = self._resolve_api_key(runtime)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": runtime["model_name"],
+            "messages": [
+                {"role": "system", "content": "You are a connectivity test. Reply with OK."},
+                {"role": "user", "content": "Reply OK"},
+            ],
+        }
+
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+                response = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+        except httpx.TimeoutException:
+            return {"ok": False, "status_code": None,
+                    "latency_ms": int((time.perf_counter() - started) * 1000),
+                    "error_code": "TIMEOUT",
+                    "message": "Hết thời gian chờ khi kết nối tới nhà cung cấp."}
+        except httpx.ConnectError:
+            return {"ok": False, "status_code": None,
+                    "latency_ms": int((time.perf_counter() - started) * 1000),
+                    "error_code": "CONNECT_ERROR",
+                    "message": "Không kết nối được tới Base URL của nhà cung cấp."}
+        except httpx.HTTPError:
+            return {"ok": False, "status_code": None,
+                    "latency_ms": int((time.perf_counter() - started) * 1000),
+                    "error_code": "NETWORK_ERROR",
+                    "message": "Lỗi mạng khi kết nối tới nhà cung cấp."}
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        result = {"status_code": response.status_code, "latency_ms": latency_ms,
+                  "provider_name": runtime.get("provider_name"), "model": runtime["model_name"]}
+        if not response.is_success:
+            if response.status_code in (401, 403):
+                error_code, message = "AUTH_FAILED", "Nhà cung cấp từ chối xác thực API key."
+            elif response.status_code == 404:
+                error_code, message = "NOT_FOUND", "Không tìm thấy model hoặc endpoint tại nhà cung cấp."
+            elif response.status_code == 429:
+                error_code, message = "RATE_LIMITED", "Nhà cung cấp đang giới hạn tốc độ yêu cầu; thử lại sau."
+            elif response.status_code >= 500:
+                error_code, message = "PROVIDER_ERROR", "Nhà cung cấp đang gặp lỗi; thử lại sau."
+            else:
+                error_code, message = "REQUEST_REJECTED", "Nhà cung cấp không chấp nhận yêu cầu kiểm tra."
+            return {**result, "ok": False, "error_code": error_code, "message": message}
+
+        try:
+            data = response.json()
+            choices = data.get("choices") if isinstance(data, dict) else None
+            if not isinstance(choices, list) or not choices:
+                raise ValueError("missing choices")
+        except (ValueError, AttributeError):
+            return {**result, "ok": False, "error_code": "INVALID_RESPONSE",
+                    "message": "Nhà cung cấp phản hồi không đúng định dạng OpenAI-compatible."}
+        return {**result, "ok": True, "provider_returned_model": data.get("model"),
+                "message": "Kết nối thành công tới nhà cung cấp."}
 
     @retry(
         stop=stop_after_attempt(3),

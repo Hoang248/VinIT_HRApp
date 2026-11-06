@@ -169,6 +169,7 @@ export const adminApi = {
   updateUser: (id: string, data: { display_name: string; account_status: string; roles: string[] }) =>
     apiClient.patch(`/admin/users/${id}`, data),
   listAiConfigs: () => apiClient.get('/admin/ai/config'),
+  testAiConnection: (data: any) => apiClient.post('/admin/ai/test-connection', data),
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),
   enableAiConfig: (id: string) => apiClient.post(`/admin/ai/config/${id}/enable`),
   getActiveAiConfig: () => apiClient.get('/admin/ai/active-config'),
