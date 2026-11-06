@@ -19,7 +19,12 @@ class Settings(BaseSettings):
     SUPABASE_URL: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    # Legacy HS256 verification only. Projects using asymmetric signing keys
+    # (for example ES256) are verified through JWKS derived from SUPABASE_URL.
     SUPABASE_JWT_SECRET: str = ""
+    SUPABASE_JWT_ISSUER: Optional[str] = None
+    SUPABASE_JWKS_URL: Optional[str] = None
+    SUPABASE_JWKS_CACHE_SECONDS: int = 300
 
     # Disabled by default. Set a unique random token only during first-admin
     # setup, over HTTPS and a restricted network; remove it afterwards.

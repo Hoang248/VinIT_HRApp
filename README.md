@@ -16,7 +16,7 @@
 ## Kiến trúc hiện tại
 
 - **Frontend:** Next.js 15 + React + MUI, giao diện Việt–Anh (mặc định Việt, lưu lựa chọn trên trình duyệt); gọi API qua proxy `/v1` cùng origin. Nội dung do người dùng nhập không được dịch tự động.
-- **Backend:** FastAPI, xác thực JWT Supabase HS256 và phân quyền nghiệp vụ theo vị trí/hồ sơ; kết nối PostgreSQL trực tiếp.
+- **Backend:** FastAPI, xác thực JWT Supabase qua JWKS (ES256/RS256) và HS256 legacy và phân quyền nghiệp vụ theo vị trí/hồ sơ; kết nối PostgreSQL trực tiếp.
 - **Worker:** thread trong process API, poll PostgreSQL; có advisory session lock, fencing, heartbeat và tự thử phục hồi job sau crash. Cuộc gọi AI là at-least-once, không bảo đảm chạy đúng một lần; xem [runbook](DEPLOYMENT.md#phục-hồi-worker-và-giám-sát).
 - **Lưu trữ:** Supabase Storage bucket private qua service role backend hoặc filesystem cục bộ dùng thử.
 

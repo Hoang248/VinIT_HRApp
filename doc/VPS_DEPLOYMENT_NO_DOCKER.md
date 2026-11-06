@@ -64,7 +64,7 @@ Không tạo `.env` ở thư mục gốc trong hướng dẫn này, trừ khi sa
 - Project Supabase đã chuẩn bị PostgreSQL, Auth và hai bucket private `cv-originals`, `cv-extracted-text`.
 - Backend hiện tại phụ thuộc migration `00005_account_administration.sql`. Project `myrymlqdbyqmpynesiwk` đã áp migration này ở version remote `20261105163626` ngày 05/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
 - Một LLM endpoint tương thích OpenAI đã được phê duyệt. Nếu chưa có model reachable từ backend thì có thể deploy web/API, nhưng không chạy được xử lý AI.
-- Backend hiện xác minh JWT bằng `HS256` với `SUPABASE_JWT_SECRET`, audience `authenticated`. Không tự đổi project sang signing key asymmetric/JWKS trước khi backend được nâng cấp tương ứng.
+- Backend xác minh access token theo `alg` trong JWT: token bất đối xứng (ví dụ `ES256`) được kiểm tra bằng JWKS tại `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` kèm `iss`/`aud`; token `HS256` legacy tiếp tục được kiểm tra bằng `SUPABASE_JWT_SECRET` trong thời gian chuyển đổi.
 - Service-role key từng lộ trong lịch sử Git vẫn là việc bảo mật riêng phải thu hồi theo kế hoạch trong `DEPLOYMENT.md`; tạo key mới không tự thu hồi key legacy.
 
 ## 4. Cài gói hệ thống
@@ -193,7 +193,8 @@ DATABASE_POOL_SIZE=5
 SUPABASE_URL=https://PROJECT_REF.supabase.co
 SUPABASE_ANON_KEY=THAY_BANG_PUBLISHABLE_OR_ANON_KEY_CUA_PROJECT
 SUPABASE_SERVICE_ROLE_KEY=THAY_BANG_SECRET_OR_SERVICE_ROLE_KEY_CHI_O_BACKEND
-SUPABASE_JWT_SECRET=THAY_BANG_HS256_JWT_SECRET_TUONG_UNG
+# Chỉ cần trong lúc còn chấp nhận token HS256 legacy; token ES256 dùng JWKS từ SUPABASE_URL.
+SUPABASE_JWT_SECRET=
 
 # Để trống. Chỉ đặt tạm trong cửa sổ bootstrap Admin được phê duyệt.
 ADMIN_BOOTSTRAP_TOKEN=
@@ -587,7 +588,7 @@ ss -ltnp | grep -E ':(80|443|3005|8005) '
 | Backend không start | `.env` sai định dạng, thiếu biến hoặc không kết nối được DB | `pm2 logs hra-backend --lines 200 --nostream` và `pm2 describe hra-backend`; kiểm tra quyền `600`, biến `cwd` và `script` trong ecosystem |
 | `/health` được nhưng `/health/ready` lỗi | Sai `DATABASE_URL`, CA, hostname TLS hoặc quyền DB | Kiểm tra đường dẫn `/etc/vinit-hrapp/supabase-db-ca.crt`, `sslmode=verify-full` và kết nối direct/session phù hợp |
 | Frontend mở được nhưng API báo 502 | Backend chưa chạy hoặc `API_INTERNAL_URL` sai | `curl http://127.0.0.1:8005/health`; kiểm tra `API_INTERNAL_URL`/`PORT` trong ecosystem rồi `pm2 restart hra-frontend --update-env` |
-| Đăng nhập lỗi sau khi đổi signing key | Backend hiện chỉ hỗ trợ HS256/JWKS chưa tương thích | Không tự rotate signing key; khôi phục cấu hình đã phê duyệt và xem `DEPLOYMENT.md` |
+| Đăng nhập xong quay lại trang login, `/auth/me` trả 401 | Token ES256/RS256 nhưng backend chưa lấy được JWKS, sai `SUPABASE_URL`/issuer, hoặc bản backend đang chạy chưa có hỗ trợ JWKS | Kiểm tra `alg`/`kid` của token, `GET {SUPABASE_URL}/auth/v1/.well-known/jwks.json` từ VPS, log `hra-backend`; restart backend sau khi cập nhật code/env |
 | Upload lớn bị Nginx chặn | `client_max_body_size` nhỏ hơn lô CV | Đặt khoảng `260m` và kiểm tra giới hạn app trong backend env |
 | OCR/DOCX lỗi | Thiếu gói hệ thống | Kiểm tra `tesseract`, `pdftotext`, LibreOffice và log backend |
 | AI không chạy | Model endpoint không reachable hoặc config ACTIVE trỏ loopback/endpoint cũ | Kiểm tra `LLM_API_BASE` từ chính VPS và cấu hình AI ACTIVE trong Admin |

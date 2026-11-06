@@ -12,11 +12,11 @@ Backend + worker --> PostgreSQL/Supabase Auth + Storage; model được phê duy
 
 Ví dụ dùng Ubuntu 24.04 LTS, DNS `hr.example.com` đã trỏ đến IP VPS, SSH quản trị và quyền `sudo`, Docker Engine 28+ với Compose plugin hiện hành, Nginx và Certbot. Mở cổng 80/443 và cổng SSH thực tế ở firewall nhà cung cấp/OS; nếu có bản ghi AAAA, IPv6 cũng phải hoạt động. Ước lượng ban đầu cho app/OCR thử nghiệm: 2 vCPU, 4 GB RAM và 30 GB ổ đĩa, sau đó đo tải; model local thường cần RAM/VRAM riêng lớn hơn nhiều. Upload tối đa 250 MB/lô có thể tăng bộ nhớ/đĩa tạm. Giới hạn truy cập staging bằng VPN/IP allowlist; không coi HTTPS là đủ bảo mật.
 
-- Supabase/PostgreSQL, Auth, hai bucket private `cv-originals`/`cv-extracted-text` và model **phải được chuẩn bị riêng**. Compose không tạo các dịch vụ đó. Backend đang xác minh JWT `HS256` audience `authenticated`; project phát token chỉ dùng asymmetric/JWKS chưa tương thích. Kiểm tra tương thích trước, không tự thay đổi signing key của project.
+- Supabase/PostgreSQL, Auth, hai bucket private `cv-originals`/`cv-extracted-text` và model **phải được chuẩn bị riêng**. Compose không tạo các dịch vụ đó. Backend xác minh JWT theo thuật toán ký: token asymmetric/JWKS (ví dụ ES256) qua `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`, token HS256 legacy bằng `SUPABASE_JWT_SECRET`; cả hai đều kiểm tra audience `authenticated`.
 - Cần tài khoản Auth và profile/role tương ứng; ở snapshot trước 00004, project kết nối chưa có auth user/profile/ADMIN (không khẳng định trạng thái hiện tại). HR và HM phải là hai người/tài khoản khác nhau cho hai bước duyệt. Tài khoản mới tạo từ app phải đổi mật khẩu tạm trước khi truy cập nghiệp vụ.
 - Dùng PostgreSQL direct connection qua TLS; chỉ dùng session pooler sau khi xác minh session/backend PID và advisory lock được giữ xuyên các transaction. **Không dùng transaction/statement pooling** cho worker. Direct Supabase có thể cần IPv6; xác minh tuyến mạng hoặc session pooler phù hợp với project.
 - `00004` và `00005` đã được áp vào project `myrymlqdbyqmpynesiwk`: `20261105152817 recovery_and_privacy` và `20261105163626 account_administration` (05/11/2026 16:36 UTC, preflight không có user/ADMIN, postflight marker `initialized_at` NULL → bootstrap mở). Backend hiện tại yêu cầu 00005; với project/môi trường khác, đối chiếu [lịch sử và checklist migration](../DEPLOYMENT.md#lịch-sử-project-đã-kết-nối), xin phê duyệt riêng, thử staging/backup/restore và drain worker cũ. Tên/version remote là timestamp, khác tiền tố file local; **không chạy `supabase db push`, reset hoặc migration repair mù quáng**.
-- Service-role key legacy từng lộ trong lịch sử Git **vẫn đang bật** trên project `myrymlqdbyqmpynesiwk` (05/11/2026 kiểm tra `list_api_keys` còn `anon`+`service_role` JWT, đồng thời đã có `sb_publishable_z2Ynu`/`sb_secret_rLbWw`). Thu hồi trọn vẹn cần: chuyển mọi client/backend/worker sang `sb_publishable_`/`sb_secret_`, deactivate legacy (Dashboard **Settings → API Keys → Legacy** hoặc `PUT /v1/projects/{ref}/api-keys/legacy?enabled=false`), và revoke legacy JWT secret sang signing keys asymmetric — backend hiện chỉ `HS256` nên phải nâng cấp verify JWKS trước khi revoke, nếu không đăng nhập sẽ gãy. Connector hiện không có thao tác deactivate legacy, phải làm thủ công và kiểm chứng. Browser không được nhận service-role key hay DB URL.
+- Service-role key legacy từng lộ trong lịch sử Git **vẫn đang bật** trên project `myrymlqdbyqmpynesiwk` (05/11/2026 kiểm tra `list_api_keys` còn `anon`+`service_role` JWT, đồng thời đã có `sb_publishable_z2Ynu`/`sb_secret_rLbWw`). Thu hồi trọn vẹn cần: chuyển mọi client/backend/worker sang `sb_publishable_`/`sb_secret_`, deactivate legacy (Dashboard **Settings → API Keys → Legacy** hoặc `PUT /v1/projects/{ref}/api-keys/legacy?enabled=false`), và revoke legacy JWT secret sau khi mọi backend đã chạy bản hỗ trợ JWKS/asymmetric; nếu còn backend bản cũ chỉ verify `HS256`, việc revoke/đổi signing key sẽ làm bản cũ không đăng nhập được. Connector hiện không có thao tác deactivate legacy, phải làm thủ công và kiểm chứng. Browser không được nhận service-role key hay DB URL.
 
 ## 2. Cài phần mềm trên VPS
 
@@ -81,7 +81,8 @@ DATABASE_URL=postgresql://DB_USER:URL_ENCODED_PASSWORD@DB_HOST:5432/postgres?ssl
 SUPABASE_URL=https://PROJECT_REF.supabase.co
 SUPABASE_ANON_KEY=THAY_BANG_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY=THAY_BANG_SERVICE_ROLE_KEY_DA_ROTATE
-SUPABASE_JWT_SECRET=THAY_BANG_LEGACY_HS256_SECRET_TUONG_UNG
+# Chỉ cần khi còn chấp nhận token HS256 legacy; token ES256 được verify qua JWKS.
+SUPABASE_JWT_SECRET=
 # Để trống; chỉ cấu hình tạm trong thời gian bootstrap được phê duyệt.
 ADMIN_BOOTSTRAP_TOKEN=
 STORAGE_BACKEND=supabase
