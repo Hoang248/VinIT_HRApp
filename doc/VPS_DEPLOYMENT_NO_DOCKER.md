@@ -1,6 +1,6 @@
 # Triển khai VinUni HRApp trên VPS không dùng Docker
 
-> Hướng dẫn này dành cho **staging/pilot với dữ liệu tổng hợp**, chạy trực tiếp bằng Python/Node trên Ubuntu và quản lý tiến trình bằng `systemd`. Đây chưa phải chứng nhận production. Supabase Auth/Storage thật, OCR, model thật và quy trình vận hành vẫn phải được kiểm thử đầu-cuối trong môi trường đích. Không dùng CV thật trước khi hoàn tất phê duyệt bảo mật/pháp lý, retention, backup/restore và đánh giá AI. Không đưa secret vào Git, log, ticket hay chat.
+> Hướng dẫn này dành cho **staging/pilot với dữ liệu tổng hợp**, chạy trực tiếp bằng Python/Node trên Ubuntu và quản lý hai tiến trình ứng dụng bằng **PM2** (không tạo unit `systemd` cho backend/frontend). Đây chưa phải chứng nhận production. Supabase Auth/Storage thật, OCR, model thật và quy trình vận hành vẫn phải được kiểm thử đầu-cuối trong môi trường đích. Không dùng CV thật trước khi hoàn tất phê duyệt bảo mật/pháp lý, retention, backup/restore và đánh giá AI. Không đưa secret vào Git, log, ticket hay chat.
 
 Tài liệu này thay cách chạy bằng Docker trong [`VPS_DEPLOYMENT.md`](VPS_DEPLOYMENT.md) bằng tiến trình native. Các yêu cầu về migration, quyền database, bảo mật và bootstrap vẫn tuân theo [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
 
@@ -10,11 +10,11 @@ Tài liệu này thay cách chạy bằng Docker trong [`VPS_DEPLOYMENT.md`](VPS
 Trình duyệt -- HTTPS :443 --> Nginx trên VPS
                                   |
                                   v
-                         Next.js 127.0.0.1:3000
+                         Next.js 127.0.0.1:3005
                                   |
                                   | proxy server-side /v1
                                   v
-                         FastAPI 127.0.0.1:8000
+                         FastAPI 127.0.0.1:8005
                                   |
                     +-------------+-------------+
                     |                           |
@@ -23,10 +23,11 @@ Trình duyệt -- HTTPS :443 --> Nginx trên VPS
 ```
 
 - Chỉ Nginx nghe public trên cổng 80/443.
-- Frontend và backend chỉ bind `127.0.0.1`; không mở 3000/8000 qua firewall.
+- Frontend chạy ở `127.0.0.1:3005`, backend chạy ở `127.0.0.1:8005`; không mở hai cổng này qua firewall.
 - Backend là tiến trình duy nhất giữ `DATABASE_URL`, service-role key và JWT secret.
 - Browser gọi `/v1` cùng origin; Next.js proxy sang backend ở phía server nên browser không cần biết địa chỉ backend.
-- Worker xử lý nền chạy **trong cùng tiến trình backend**. Vì vậy bản đầu tiên chỉ chạy một tiến trình Uvicorn với `--workers 1`.
+- PM2 quản lý đúng hai app: `hra-backend` và `hra-frontend`, mỗi app một tiến trình (`instances: 1`, `exec_mode: 'fork'`).
+- Worker xử lý nền chạy **trong cùng tiến trình backend**. Vì vậy backend chỉ chạy một tiến trình Uvicorn với `--workers 1`; không tăng `instances`/cluster trong PM2.
 - Supabase và LLM là dịch vụ bên ngoài VPS, trừ khi LLM/Ollama được cài riêng trên chính VPS này.
 
 ## 2. Cần bao nhiêu file env?
@@ -36,8 +37,8 @@ Repo có ba file **mẫu** khác nhau vì repo hỗ trợ ba cách nạp cấu h
 | File mẫu trong repo | File thật tương ứng | Ai đọc? | Khi chạy không Docker có cần không? |
 |---|---|---|---|
 | `.env.example` ở thư mục gốc | `.env` ở thư mục gốc | Docker Compose: nạp vào backend và nội suy các biến `HRA_*` | **Không.** Đây là file riêng cho Docker Compose. |
-| `backend/.env.example` | `backend/.env` | FastAPI/Pydantic Settings của backend | **Có**, hoặc thay bằng một `EnvironmentFile` của systemd. Chỉ chọn một nguồn này cho backend. |
-| `frontend/.env.local.example` | `frontend/.env.local` | Next.js khi chạy frontend trực tiếp | **Chỉ khi không inject bằng systemd.** Chỉ chứa `API_INTERNAL_URL`, không phải secret. |
+| `backend/.env.example` | `backend/.env` | FastAPI/Pydantic Settings của backend | **Có.** Đây là nguồn cấu hình/secret duy nhất cho backend; PM2 không khai báo lại các secret này. |
+| `frontend/.env.local.example` | `frontend/.env.local` | Next.js khi chạy frontend trực tiếp | **Không cần nếu đã đặt trong PM2 ecosystem.** Chỉ chứa `API_INTERNAL_URL`, không phải secret. |
 
 ### Cách hiểu đúng
 
@@ -51,7 +52,7 @@ Repo có ba file **mẫu** khác nhau vì repo hỗ trợ ba cách nạp cấu h
 Chỉ cần hai nhóm:
 
 - một file env cho backend, ví dụ `backend/.env`;
-- một biến `API_INTERNAL_URL=http://127.0.0.1:8000` cho frontend, đặt ngay trong unit `systemd` ở mục 9, nên không cần thêm `frontend/.env.local`.
+- một biến `API_INTERNAL_URL=http://127.0.0.1:8005` cho frontend, đặt trong file PM2 ecosystem ở mục 9, nên không cần thêm `frontend/.env.local`.
 
 Không tạo `.env` ở thư mục gốc trong hướng dẫn này, trừ khi sau này quay lại Docker Compose.
 
@@ -78,12 +79,14 @@ sudo apt-get install -y \
   tesseract-ocr tesseract-ocr-eng poppler-utils libmagic1 libreoffice-writer
 ```
 
-Backend yêu cầu Python `>=3.11`; Python mặc định của Ubuntu 24.04 đáp ứng yêu cầu này. Cài Node.js 22 LTS theo hướng dẫn chính thức của NodeSource tại thời điểm triển khai, sau đó kiểm tra:
+Backend yêu cầu Python `>=3.11`; Python mặc định của Ubuntu 24.04 đáp ứng yêu cầu này. Cài Node.js 22 LTS theo hướng dẫn chính thức của NodeSource tại thời điểm triển khai. Sau đó cài PM2 ở phạm vi global để quản lý hai tiến trình ứng dụng:
 
 ```bash
+sudo npm install --global pm2
 python3 --version
 node --version
 npm --version
+pm2 --version
 nginx -v
 ```
 
@@ -98,20 +101,30 @@ sudo ufw enable
 sudo ufw status
 ```
 
-Không mở public cổng 3000 hoặc 8000.
+Không mở public cổng 3005 hoặc 8005.
 
 ## 5. Tạo user và thư mục chạy
 
-Dùng một user hệ thống riêng, không chạy app bằng `root`:
+Dùng một user hệ thống riêng, không chạy app bằng `root`. PM2 cũng phải chạy bằng chính user này để hai app không chạy bằng root:
 
 ```bash
-sudo useradd --system --create-home \
-  --home-dir /opt/vinit-hrapp --shell /usr/sbin/nologin vinit-hrapp \
-  2>/dev/null || true
+if ! id -u vinit-hrapp >/dev/null 2>&1; then
+  sudo useradd --system --create-home \
+    --home-dir /opt/vinit-hrapp --shell /usr/sbin/nologin vinit-hrapp
+fi
 sudo install -d -o vinit-hrapp -g vinit-hrapp -m 0750 /opt/vinit-hrapp
+sudo install -d -o vinit-hrapp -g vinit-hrapp -m 0750 /opt/vinit-hrapp/.pm2
 sudo install -d -m 0755 /etc/vinit-hrapp
 sudo install -d -o vinit-hrapp -g vinit-hrapp -m 0750 /var/lib/vinit-hrapp/storage
 ```
+
+Trong tài liệu này, mọi lệnh PM2 đều được chạy qua bí danh sau để PM2 daemon, process list và log thuộc về user `vinit-hrapp`:
+
+```bash
+PM2_APP() { sudo -u vinit-hrapp env HOME=/opt/vinit-hrapp PM2_HOME=/opt/vinit-hrapp/.pm2 pm2 "$@"; }
+```
+
+Nếu bạn tự vận hành bằng user thường (ví dụ mã nằm trong `~/hra`), có thể bỏ lớp `sudo -u ...` và dùng trực tiếp lệnh `pm2`, nhưng phải dùng **cùng một user** cho mọi lệnh `pm2 start/stop/logs/save`.
 
 Nếu cần Git SSH deploy key, tạo key riêng chỉ có quyền đọc repo và đặt trong thư mục `.ssh` của user `vinit-hrapp` theo quy trình quản lý khóa của tổ chức. Không đưa personal access token vào URL clone hoặc shell history.
 
@@ -249,7 +262,7 @@ sudo -u vinit-hrapp cp -a .next/static .next/standalone/.next/static
 sudo -u vinit-hrapp cp -a public .next/standalone/public
 ```
 
-Không cần `frontend/.env.local` nếu biến `API_INTERNAL_URL` được đặt trong systemd ở bước tiếp theo. Nếu chạy thử bằng `npm run dev`, khi đó mới sao chép mẫu:
+Không cần `frontend/.env.local` nếu biến `API_INTERNAL_URL` đã được đặt trong PM2 ecosystem ở bước tiếp theo. Nếu chạy thử bằng `npm run dev`, khi đó mới sao chép mẫu:
 
 ```bash
 cp .env.local.example .env.local
@@ -257,99 +270,129 @@ cp .env.local.example .env.local
 
 Hai cách này là **lựa chọn thay thế**, không cần dùng đồng thời.
 
-## 9. Tạo service systemd
+## 9. Quản lý hai app bằng PM2
 
-### 9.1. Backend
+PM2 quản lý đúng hai app:
 
-Tạo `/etc/systemd/system/vinit-hrapp-backend.service`:
+| PM2 app | Tiến trình | Cổng nội bộ |
+|---|---|---|
+| `hra-backend` | Uvicorn/FastAPI từ Python venv | `127.0.0.1:8005` |
+| `hra-frontend` | Next.js standalone `server.js` | `127.0.0.1:3005` |
 
-```ini
-[Unit]
-Description=VinUni HRApp Backend
-Wants=network-online.target
-After=network-online.target
+Không tạo file `.service` trong `/etc/systemd/system` cho hai app này.
 
-[Service]
-Type=simple
-User=vinit-hrapp
-Group=vinit-hrapp
-WorkingDirectory=/opt/vinit-hrapp/app/backend
-Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/vinit-hrapp/app/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=30
-NoNewPrivileges=true
-PrivateTmp=true
+### 9.1. Tạo file PM2 ecosystem
 
-[Install]
-WantedBy=multi-user.target
+Tạo file `/opt/vinit-hrapp/ecosystem.config.cjs` **ngoài Git**. File này không chứa secret của backend:
+
+```js
+module.exports = {
+  apps: [
+    {
+      name: 'hra-backend',
+      cwd: '/opt/vinit-hrapp/app/backend',
+      script: '/opt/vinit-hrapp/app/backend/.venv/bin/python',
+      args: '-m uvicorn app.main:app --host 127.0.0.1 --port 8005 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1',
+      interpreter: 'none',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      restart_delay: 5000,
+      kill_timeout: 30000,
+      env: {
+        PYTHONUNBUFFERED: '1',
+        PYTHONDONTWRITEBYTECODE: '1',
+      },
+    },
+    {
+      name: 'hra-frontend',
+      cwd: '/opt/vinit-hrapp/app/frontend/.next/standalone',
+      script: 'server.js',
+      interpreter: 'node',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      restart_delay: 5000,
+      kill_timeout: 30000,
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3005',
+        HOSTNAME: '127.0.0.1',
+        API_INTERNAL_URL: 'http://127.0.0.1:8005',
+      },
+    },
+  ],
+};
 ```
 
-Backend đọc `backend/.env` vì `WorkingDirectory` là thư mục `backend` và cấu hình Pydantic dùng `env_file=".env"`. Không đồng thời khai báo lại cùng một bộ secret trong unit nếu không có lý do; chỉ giữ một nguồn cấu hình để tránh giá trị bị lệch.
-
-### 9.2. Frontend
-
-Tạo `/etc/systemd/system/vinit-hrapp-frontend.service`:
-
-```ini
-[Unit]
-Description=VinUni HRApp Frontend
-Wants=network-online.target
-After=network-online.target vinit-hrapp-backend.service
-
-[Service]
-Type=simple
-User=vinit-hrapp
-Group=vinit-hrapp
-WorkingDirectory=/opt/vinit-hrapp/app/frontend/.next/standalone
-Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=HOSTNAME=127.0.0.1
-Environment=API_INTERNAL_URL=http://127.0.0.1:8000
-ExecStart=/usr/bin/node server.js
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=30
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`API_INTERNAL_URL` không chứa `/v1` ở cuối. Route proxy của Next.js sẽ tự ghép đường dẫn `/v1/...` khi chuyển request sang backend.
-
-### 9.3. Kích hoạt và kiểm tra local
+Tạo và phân quyền cho file:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now vinit-hrapp-backend.service
-sudo systemctl enable --now vinit-hrapp-frontend.service
-sudo systemctl status vinit-hrapp-backend.service --no-pager
-sudo systemctl status vinit-hrapp-frontend.service --no-pager
+sudo -u vinit-hrapp ${EDITOR:-nano} /opt/vinit-hrapp/ecosystem.config.cjs
+sudo chown vinit-hrapp:vinit-hrapp /opt/vinit-hrapp/ecosystem.config.cjs
+sudo chmod 640 /opt/vinit-hrapp/ecosystem.config.cjs
+```
 
-curl --fail --silent --show-error http://127.0.0.1:8000/health
-curl --fail --silent --show-error http://127.0.0.1:8000/health/ready
-curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3000/
-ss -ltnp | grep -E ':(3000|8000) '
+Lưu ý:
+
+- Nếu mã nguồn nằm ở đường dẫn khác, ví dụ `~/hra`, phải sửa đồng bộ các giá trị `cwd` và `script` của backend trong ecosystem.
+- Backend đọc `backend/.env` vì `cwd` của PM2 là thư mục `backend` và Pydantic dùng `env_file=".env"`. Chỉ giữ secret trong `backend/.env`; không chép `DATABASE_URL`, service-role key hoặc JWT secret vào ecosystem.
+- `API_INTERNAL_URL` không có `/v1` ở cuối. Route proxy của Next.js sẽ tự ghép `/v1/...` khi chuyển request sang FastAPI ở cổng 8005.
+- Không tăng `instances` của backend và không bật cluster mode: worker nền chạy trong tiến trình API, bản vận hành hiện tại dùng một Uvicorn `--workers 1`.
+
+### 9.2. Khởi động và kiểm tra
+
+Trong cùng phiên terminal đã định nghĩa hàm `PM2_APP` ở mục 5, chạy:
+
+```bash
+PM2_APP start /opt/vinit-hrapp/ecosystem.config.cjs
+PM2_APP status
+PM2_APP describe hra-backend
+PM2_APP describe hra-frontend
+
+curl --fail --silent --show-error http://127.0.0.1:8005/health
+curl --fail --silent --show-error http://127.0.0.1:8005/health/ready
+curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3005/
+ss -ltnp | grep -E ':(3005|8005) '
 ```
 
 Kết quả kỳ vọng:
 
+- PM2 hiển thị `hra-backend` và `hra-frontend` ở trạng thái `online`, mỗi app một instance.
 - `/health` báo backend đang sống.
 - `/health/ready` báo database `connected`. Endpoint này chỉ chứng minh kết nối DB, không chứng minh quyền nghiệp vụ, Auth, Storage hay AI.
-- Cả hai cổng 3000 và 8000 chỉ xuất hiện ở `127.0.0.1`.
+- Cổng 3005 và 8005 chỉ xuất hiện ở `127.0.0.1`.
 
-Xem log khi service lỗi:
+Xem log khi một app lỗi:
 
 ```bash
-sudo journalctl -u vinit-hrapp-backend.service -n 200 --no-pager
-sudo journalctl -u vinit-hrapp-frontend.service -n 200 --no-pager
+PM2_APP logs hra-backend --lines 200 --nostream
+PM2_APP logs hra-frontend --lines 200 --nostream
 ```
 
 Không gửi log có khả năng chứa token, đường dẫn CV hoặc nội dung hồ sơ ra kênh không được phê duyệt.
+
+### 9.3. Lưu danh sách app và tự chạy sau reboot
+
+Sau khi hai app đã `online`, lưu process list của PM2:
+
+```bash
+PM2_APP save
+```
+
+Nếu muốn PM2 tự khôi phục hai app sau khi VPS reboot, chạy:
+
+```bash
+PM2_APP startup systemd -u vinit-hrapp --hp /opt/vinit-hrapp
+```
+
+PM2 sẽ in ra **một lệnh bắt đầu bằng `sudo env PATH=...`**; copy và chạy đúng nguyên văn lệnh đó một lần, sau đó chạy lại:
+
+```bash
+PM2_APP save
+```
+
+Lệnh startup chỉ đăng ký **PM2 daemon** với cơ chế khởi động của Ubuntu để PM2 khôi phục process list đã lưu; nó không tạo unit `systemd` riêng cho backend/frontend và không thay cách PM2 quản lý hai app. Nếu không muốn đăng ký tự khởi động, bỏ qua `pm2 startup`; sau reboot phải khôi phục thủ công bằng `PM2_APP resurrect`.
 
 ## 10. Cấu hình Nginx và HTTPS
 
@@ -365,7 +408,7 @@ server {
     server_tokens off;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:3005;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -398,7 +441,7 @@ curl --fail --silent --show-error --output /dev/null https://hr.example.com/
 Kiểm tra từ một máy ngoài VPS:
 
 - `https://hr.example.com` mở được và chứng chỉ hợp lệ.
-- Không truy cập trực tiếp được `http://IP-VPS:3000` hoặc `http://IP-VPS:8000`.
+- Không truy cập trực tiếp được `http://IP-VPS:3005` hoặc `http://IP-VPS:8005`.
 - Upload file tổng hợp nhỏ đi qua được `/v1` mà không lỗi giới hạn kích thước của Nginx.
 
 ## 11. Bootstrap Admin và smoke test
@@ -429,7 +472,7 @@ Chỉ thực hiện phần này khi database của môi trường đích chưa t
 3. Đặt token tạm vào `ADMIN_BOOTSTRAP_TOKEN` trong `backend/.env`, sau đó restart **chỉ backend**:
 
    ```bash
-   sudo systemctl restart vinit-hrapp-backend.service
+   PM2_APP restart hra-backend
    ```
 
 4. Qua HTTPS và mạng/VPN/IP allowlist tin cậy, mở trang đăng nhập của ứng dụng và chọn chức năng khởi tạo Admin đầu tiên. Tạo tài khoản Admin bằng email và mật khẩu do người vận hành quản lý trong secret manager.
@@ -437,7 +480,7 @@ Chỉ thực hiện phần này khi database của môi trường đích chưa t
 5. Xóa token khỏi `backend/.env` rồi restart backend lần nữa:
 
    ```bash
-   sudo systemctl restart vinit-hrapp-backend.service
+   PM2_APP restart hra-backend
    ```
 
 6. Kiểm tra lại `initialized_at` đã được ghi. Từ thời điểm này, việc tạo Admin qua bootstrap phải bị đóng.
@@ -462,8 +505,8 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
 3. Dừng frontend rồi backend:
 
    ```bash
-   sudo systemctl stop vinit-hrapp-frontend.service
-   sudo systemctl stop vinit-hrapp-backend.service
+   PM2_APP stop hra-frontend
+   PM2_APP stop hra-backend
    ```
 
 4. Checkout SHA mới, cài lại dependency và build:
@@ -479,19 +522,21 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    cd ../frontend
    sudo -u vinit-hrapp npm ci
    sudo -u vinit-hrapp npm run build
-   sudo -u vinit-hrapp cp -a .next/static/. .next/standalone/.next/static/
-   sudo -u vinit-hrapp cp -a public/. .next/standalone/public/
+   sudo -u vinit-hrapp rm -rf .next/standalone/.next/static .next/standalone/public
+   sudo -u vinit-hrapp cp -a .next/static .next/standalone/.next/static
+   sudo -u vinit-hrapp cp -a public .next/standalone/public
    ```
 
 5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout.
 6. Khởi động và kiểm tra:
 
    ```bash
-   sudo systemctl start vinit-hrapp-backend.service
-   curl --fail http://127.0.0.1:8000/health/ready
-   sudo systemctl start vinit-hrapp-frontend.service
-   curl --fail --output /dev/null http://127.0.0.1:3000/
+   PM2_APP start hra-backend
+   curl --fail http://127.0.0.1:8005/health/ready
+   PM2_APP start hra-frontend
+   curl --fail --output /dev/null http://127.0.0.1:3005/
    curl --fail --output /dev/null https://hr.example.com/
+   PM2_APP save
    ```
 
 ### 12.2. Rollback code
@@ -501,26 +546,31 @@ Nếu bản mới lỗi và không phụ thuộc thay đổi database không tư
 1. Dừng frontend/backend và drain worker như trên.
 2. Checkout lại SHA trước đó.
 3. Cài lại backend, build lại frontend và bổ sung static/public vào standalone như bước cập nhật.
-4. Khởi động backend trước, kiểm tra `/health/ready`, sau đó khởi động frontend và kiểm tra HTTPS.
+4. Khởi động backend bằng `PM2_APP start hra-backend`, kiểm tra `/health/ready` ở cổng 8005, sau đó khởi động frontend bằng `PM2_APP start hra-frontend`, kiểm tra cổng 3005/HTTPS và chạy `PM2_APP save`.
 
 Không tự rollback migration bằng cách sửa bảng migration history hoặc chạy reset. Rollback database phải theo kế hoạch đã thử trên staging.
 
 ## 13. Vận hành hằng ngày
 
 ```bash
-# Trạng thái
-sudo systemctl status vinit-hrapp-backend.service --no-pager
-sudo systemctl status vinit-hrapp-frontend.service --no-pager
+# Trạng thái hai app
+PM2_APP status
+PM2_APP describe hra-backend
+PM2_APP describe hra-frontend
 
 # Log trực tiếp
-sudo journalctl -u vinit-hrapp-backend.service -f
-sudo journalctl -u vinit-hrapp-frontend.service -f
+PM2_APP logs hra-backend
+PM2_APP logs hra-frontend
 
 # Restart sau khi thay backend/.env
-sudo systemctl restart vinit-hrapp-backend.service
+PM2_APP restart hra-backend
+
+# Áp dụng thay đổi trong ecosystem và lưu lại process list
+PM2_APP startOrReload /opt/vinit-hrapp/ecosystem.config.cjs --update-env
+PM2_APP save
 
 # Kiểm tra cổng public/loopback
-ss -ltnp | grep -E ':(80|443|3000|8000) '
+ss -ltnp | grep -E ':(80|443|3005|8005) '
 ```
 
 - Sao lưu PostgreSQL và hai bucket Supabase theo chính sách của tổ chức; phải thử restore trên staging trước khi coi backup là dùng được.
@@ -528,15 +578,15 @@ ss -ltnp | grep -E ':(80|443|3000|8000) '
 - Theo dõi dung lượng đĩa vì OCR/libreoffice và file tạm có thể phát sinh dữ liệu lớn.
 - Theo dõi `/v1/admin/worker/health` bằng tài khoản Admin và thiết lập giám sát ngoài ứng dụng; endpoint này không tự chứng minh worker còn sống.
 - Định kỳ cập nhật Ubuntu, Node.js, Python package và kiểm tra `certbot renew`.
-- Nếu đổi env, model allowlist hoặc secret, restart backend và bảo đảm mọi tiến trình backend dùng cùng cấu hình. Job đã bắt đầu có thể giữ snapshot cấu hình AI cũ.
+- Nếu đổi env, model allowlist hoặc secret, restart backend bằng PM2 và bảo đảm chỉ có một tiến trình backend dùng cấu hình đó. Nếu sửa ecosystem, dùng `PM2_APP startOrReload /opt/vinit-hrapp/ecosystem.config.cjs --update-env` rồi `PM2_APP save`. Job đã bắt đầu có thể giữ snapshot cấu hình AI cũ.
 
 ## 14. Xử lý sự cố thường gặp
 
 | Triệu chứng | Nguyên nhân hay gặp | Cách kiểm tra |
 |---|---|---|
-| Backend không start | `.env` sai định dạng, thiếu biến hoặc không kết nối được DB | `journalctl -u vinit-hrapp-backend.service`; kiểm tra quyền `600` và `WorkingDirectory` |
+| Backend không start | `.env` sai định dạng, thiếu biến hoặc không kết nối được DB | `PM2_APP logs hra-backend --lines 200 --nostream` và `PM2_APP describe hra-backend`; kiểm tra quyền `600`, biến `cwd` và `script` trong ecosystem |
 | `/health` được nhưng `/health/ready` lỗi | Sai `DATABASE_URL`, CA, hostname TLS hoặc quyền DB | Kiểm tra đường dẫn `/etc/vinit-hrapp/supabase-db-ca.crt`, `sslmode=verify-full` và kết nối direct/session phù hợp |
-| Frontend mở được nhưng API báo 502 | Backend chưa chạy hoặc `API_INTERNAL_URL` sai | `curl http://127.0.0.1:8000/health`; kiểm tra biến trong frontend unit rồi restart frontend |
+| Frontend mở được nhưng API báo 502 | Backend chưa chạy hoặc `API_INTERNAL_URL` sai | `curl http://127.0.0.1:8005/health`; kiểm tra `API_INTERNAL_URL`/`PORT` trong ecosystem rồi `PM2_APP restart hra-frontend --update-env` |
 | Đăng nhập lỗi sau khi đổi signing key | Backend hiện chỉ hỗ trợ HS256/JWKS chưa tương thích | Không tự rotate signing key; khôi phục cấu hình đã phê duyệt và xem `DEPLOYMENT.md` |
 | Upload lớn bị Nginx chặn | `client_max_body_size` nhỏ hơn lô CV | Đặt khoảng `260m` và kiểm tra giới hạn app trong backend env |
 | OCR/DOCX lỗi | Thiếu gói hệ thống | Kiểm tra `tesseract`, `pdftotext`, LibreOffice và log backend |
@@ -548,11 +598,11 @@ ss -ltnp | grep -E ':(80|443|3000|8000) '
 | Hạng mục | Docker Compose | Không Docker |
 |---|---|---|
 | File env gốc | Bắt buộc có `.env` ở root | Không dùng |
-| Backend env | Compose truyền root `.env` vào container | `backend/.env` hoặc một `EnvironmentFile` của systemd |
-| Địa chỉ backend từ frontend | `http://backend:8000` | `http://127.0.0.1:8000` |
+| Backend env | Compose truyền root `.env` vào container | `backend/.env`; PM2 chỉ đặt biến không chứa secret |
+| Địa chỉ backend từ frontend | `http://backend:8000` | `http://127.0.0.1:8005` |
 | `localhost` của LLM | Là container backend, thường không phải host | Là chính VPS |
 | Đường dẫn CA trong DB URL | `/run/secrets/supabase-db-ca.crt` | `/etc/vinit-hrapp/supabase-db-ca.crt` |
-| Quản lý tiến trình | Docker restart policy | `systemd` |
-| Cập nhật | Build lại image/container | Cài package, build frontend, restart service |
+| Quản lý tiến trình | Docker restart policy | PM2: `hra-backend`, `hra-frontend` |
+| Cập nhật | Build lại image/container | Cài package, build frontend, restart app bằng PM2 |
 
-Tóm lại: bản không Docker **không cần nhiều file env hơn**. Chỉ backend cần một file env chứa secret; frontend cần đúng một biến địa chỉ backend và biến đó có thể nằm trong `systemd`, không cần tạo thêm file.
+Tóm lại: bản không Docker **không cần nhiều file env hơn**. Chỉ backend cần một file env chứa secret; frontend cần đúng một biến địa chỉ backend và biến đó nằm trong PM2 ecosystem, không cần tạo thêm file.
