@@ -25,7 +25,7 @@
 | 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
 | 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Commit `90dd4b2`; GitHub Actions run `42382329761` đạt cả 3 job; chờ DevOps/HR chạy trên staging |
 | 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
-| 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Sửa worker/API + bổ sung test; DEP-01 đang bị chặn bởi mapping môi trường staging |
+| 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Commit `c862700`; GitHub Actions run `42385930996` đạt cả 3 job; DEP-01 đang bị chặn bởi mapping môi trường staging |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -288,6 +288,7 @@
 - Full backend local ở cấu hình mặc định: **98 passed, 63 skipped**; các test integration bị skip vì local không cấu hình `TEST_DATABASE_URL`, chờ GitHub CI chạy với PostgreSQL dùng một lần.
 - Ruff `--select F` đúng phạm vi CI cho các bề mặt LTR/retention/worker/test đã sửa: đạt.
 - `git diff --check`: đạt.
+- Commit `c862700` đã push; GitHub Actions run `42385930996` đạt cả Backend unit tests, Frontend checks và Backend integration. URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42385930996
 
 #### Blocker còn lại
 
