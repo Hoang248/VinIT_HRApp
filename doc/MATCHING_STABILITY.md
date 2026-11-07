@@ -1,6 +1,6 @@
 # Ổn định matching CV–JD
 
-Tài liệu này mô tả kiến trúc matching Phase 0–2 cùng lớp semantic retrieval (pgvector/BGE) và Learning-to-Rank được triển khai theo hướng tắt mặc định, có gate an toàn.
+Tài liệu này mô tả kiến trúc matching Phase 0–2 cùng lớp semantic retrieval (pgvector/BGE) và Learning-to-Rank được triển khai theo hướng tắt mặc định, có gate an toàn. Tài liệu liên quan: [thiết kế database](HRA_DatabaseDesign.md), [kiến trúc LLM](HRA_LLM_Architecture.md), [kiến trúc giải pháp](HRA_ArchitectureDesign.md), [vận hành/triển khai](../DEPLOYMENT.md) và [báo cáo triển khai pgvector/BGE/LTR](../audit/PGVECTOR_BGE_LTR_IMPLEMENTATION.md).
 
 ## 1. Nguyên tắc
 
@@ -24,7 +24,8 @@ CV đã redaction
                     -> hợp nhất findings theo đúng rubric
                     -> verify quote bằng normalized span + page/offset
                     -> score / must-have gate / evidence coverage
-                    -> ranking: status -> score -> coverage -> application_id
+                    -> ranking mặc định: status -> score -> coverage -> application_id
+                       (LTR ACTIVE, nếu đạt gate, chỉ reorder trong cùng status/coverage gate)
 ```
 
 ### 2.1 Fingerprint
@@ -84,6 +85,8 @@ LLM chỉ nhận các tiêu chí mà rule chưa quyết định, rubric con tư�
 | Nội dung profile prompt | `PROFILE_PROMPT_VERSION` |
 | Nội dung criteria prompt | `CRITERIA_PROMPT_VERSION` |
 | Model/endpoint/seed runtime | snapshot runtime tự vào fingerprint; vẫn cần ghi release note |
+| Embedding provider/model/dimension/index version/query instruction | semantic config tự vào fingerprint khi bật; tăng `EMBEDDING_INDEX_VERSION` khi đổi không gian vector hoặc cách chunk/index |
+| LTR feature schema, trọng số, scaler hoặc metric gate | tạo `model_version` artifact mới; không sửa artifact đã đăng ký/`APPROVED` tại chỗ |
 
 Sau khi tăng version, chạy golden/repeatability, ghi kết quả vào release note rồi mới triển khai. Không dùng lại version cũ cho hành vi mới.
 
@@ -156,7 +159,7 @@ Fixture tổng hợp trong repo chỉ là smoke test; không chứng minh chất
 5. Không đưa thuộc tính nhạy cảm vào nhãn hoặc dùng chúng làm feature.
 6. Mỗi thay đổi rule/prompt/policy phải chạy lại toàn bộ golden set; báo cáo outcome accuracy, false MATCH, false NO_MATCH, unresolved rate và các metric ổn định ở mục 4.
 
-Chỉ khi có nhãn HR thật đủ lớn mới cân nhắc Learning-to-Rank. Ngưỡng bắt đầu đánh giá LTR: vài trăm application đã có quyết định HR nhất quán hoặc đủ cặp so sánh pairwise; LTR chỉ xếp lại trong cùng gate/coverage hợp lệ và không được phá fingerprint/audit trail.
+Nền tảng Learning-to-Rank đã có trong mã, nhưng chỉ cân nhắc kích hoạt khi có nhãn HR thật đủ lớn. Ngưỡng bắt đầu đánh giá LTR: vài trăm application đã có quyết định HR nhất quán hoặc đủ cặp so sánh pairwise; LTR chỉ xếp lại trong cùng gate/coverage hợp lệ và không được phá fingerprint/audit trail.
 
 ## 6. pgvector/BGE và Learning-to-Rank
 
@@ -202,7 +205,8 @@ Quy trình vận hành:
 ```bash
 cd backend
 .venv/bin/python scripts/export_ltr_dataset.py --output /path/to/ltr_dataset.json
-.venv/bin/python scripts/train_ltr.py /path/to/ltr_dataset.json   --output /path/to/ltr_model.json --report /path/to/ltr_report.json --check
+.venv/bin/python scripts/train_ltr.py /path/to/ltr_dataset.json \
+  --output /path/to/ltr_model.json --report /path/to/ltr_report.json --check
 .venv/bin/python scripts/register_ltr_model.py /path/to/ltr_model.json
 ```
 

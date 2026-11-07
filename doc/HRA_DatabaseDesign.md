@@ -6,6 +6,8 @@
 
 Bản này áp dụng các quyết định bạn vừa cung cấp: dùng **Supabase/PostgreSQL và PostgREST**, không tích hợp CRM/ATS/HRIS trong Phase 1, giới hạn file **≤ 10 MB**, retention **12 tháng**, chưa triển khai SSO/MFA trong Phase 1 và tạm chưa xem xét căn cứ Luật 91/2025. Các trường dữ liệu và quy tắc ở mục 3, 5, 6, 7, 8 là đề xuất để chốt thiết kế.
 
+> **Cập nhật triển khai (07/11/2026):** migration `00009_structured_requirement_specs` đã bổ sung `criteria_items.requirement_spec JSONB`; migration `00010_pgvector_bge_ltr` đã bổ sung pgvector, bảng embedding chunk, registry LTR và các cột LTR trên ranking. Trên project Supabase đã kết nối, hai migration có version lần lượt là `20261107021622` và `20261107022845`. Chi tiết vận hành nằm ở [DEPLOYMENT.md](../DEPLOYMENT.md); semantics matching nằm ở [MATCHING_STABILITY.md](MATCHING_STABILITY.md).
+
 ## 1. Quyết định đã áp dụng
 
 | Nội dung | Thiết kế áp dụng |
@@ -243,8 +245,10 @@ CV được nhận khi file thuộc định dạng MVP và **`size_bytes ≤ 10.
 | `app_private.assessment_runs` | `assessment_id`; `position_id`; `application_id`; phiên bản JD, tiêu chí, profile, policy và AI config; `operation_id`; trạng thái; matching status; score; coverage; confidence; tóm tắt ngắn; `assessment_fingerprint`; matching/prompt policy version; provider model snapshot; thời điểm chạy. |
 | `app_private.criterion_assessment_results` | `assessment_id`; `criterion_id`; outcome; score nullable; confidence/band; cờ cần HR xác minh; giải thích ngắn; nguồn quyết định (`RULE`/`LLM`/`HYBRID`); evidence strength; evidence chunk ID; rule version. |
 | `app_private.evidence_items` | Kết quả tiêu chí; tài liệu nguồn; trích đoạn ngắn; số trang/vị trí trong CV; loại bằng chứng; trạng thái xác thực nguồn. |
-| `app_private.ranking_runs` | `ranking_run_id`; `position_id`; phiên bản tiêu chí, policy và AI config; operation; trạng thái; thời điểm. |
-| `app_private.ranking_items` | `ranking_run_id`; `position_id`; `application_id`; `assessment_id`; thứ hạng nullable; trạng thái xếp hạng; score, coverage và confidence được lưu riêng. |
+| `app_private.ranking_runs` | `ranking_run_id`; `position_id`; phiên bản tiêu chí, policy và AI config; operation; trạng thái; thời điểm; `ltr_model_version` và `ltr_mode` (`OFF`/`SHADOW`/`ACTIVE`) để truy vết artifact đã dùng. |
+| `app_private.ranking_items` | `ranking_run_id`; `position_id`; `application_id`; `assessment_id`; thứ hạng nullable; trạng thái xếp hạng; score, coverage và confidence được lưu riêng; `ltr_score` nullable, chỉ có giá trị khi LTR ở `SHADOW`/`ACTIVE`. |
+| `app_private.cv_chunk_embeddings` | Embedding của từng CV chunk: `application_id`, `document_id`, `chunk_id`, `chunk_text_sha256`, section/page/char offsets, `embedding vector(1024)`, `embedding_model`, `embedding_dimension`, `index_version`. Không lưu thêm raw CV text; unique theo `(document_id, chunk_id, chunk_text_sha256, embedding_model, index_version)`. |
+| `app_private.ltr_model_versions` | Registry artifact LTR train offline: `model_version`, artifact JSONB, metrics, feature names, số ví dụ/group huấn luyện, `data_sha256`, trạng thái `DRAFT`/`APPROVED`/`REJECTED`, thời điểm tạo/phê duyệt. |
 
 Kết quả assessment mới **tạo phiên bản mới**, không ghi đè kết quả đã dùng để tạo ranking cũ. Mỗi ranking run chỉ có một vị trí. Hồ sơ chưa đủ dữ liệu có thể có ranking item nhưng `rank_number = NULL`.
 
@@ -275,7 +279,7 @@ Chia sẻ không làm thay đổi `application_status`.
 - Bảng Candidate toàn cục hoặc Talent Pool.
 - Bảng đồng bộ CRM/ATS/HRIS.
 - Bảng lịch phỏng vấn, email ứng viên hoặc offer.
-- Bảng embedding/vector cho tái tìm kiếm CV nếu chưa có yêu cầu Phase 1.
+- Bảng Talent Pool/embedding dùng để tìm kiếm xuyên vị trí. Bảng `cv_chunk_embeddings` hiện chỉ phục vụ semantic retrieval trong đúng document/application đang đánh giá, không phải kho tái khám phá ứng viên.
 - Bảng báo cáo snapshot; có thể tính báo cáo từ view tổng hợp theo quyền.
 
 ## 6. Retention 12 tháng và xóa
@@ -288,7 +292,7 @@ Chia sẻ không làm thay đổi `application_status`.
 4. HR có quyền `CONFIRM_RETENTION_DELETION` xem phạm vi và xác nhận.
 5. Nếu vị trí mở lại trước khi xóa, hủy case retention cũ và tạo mốc mới khi vị trí đóng lần tiếp theo.
 6. Xóa theo từng hồ sơ ứng tuyển. Không xóa hồ sơ của cùng ứng viên ở vị trí khác.
-7. Xóa gồm CV gốc, văn bản trích xuất, profile, assessment, bằng chứng và các liên kết theo policy đã duyệt. Giữ lại tối thiểu dấu vết xóa không chứa PII.
+7. Xóa gồm CV gốc, văn bản trích xuất, profile, assessment, bằng chứng, embedding chunk và các liên kết theo policy đã duyệt. Giữ lại tối thiểu dấu vết xóa không chứa PII. Dataset/artifact LTR đã xuất ra ngoài database phải có quy trình retention/approval riêng; không tự giữ bản sao CV text trong dataset train.
 
 Database và Supabase Storage không xóa được trong cùng một giao dịch. Vì vậy nên dùng `deletion_jobs` để theo dõi việc xóa file và dữ liệu, xử lý lại khi lỗi, rồi mới ghi nhận hoàn tất. Thời hạn lưu audit log cần được quy định riêng.
 
@@ -314,6 +318,8 @@ Database và Supabase Storage không xóa được trong cùng một giao dịch
 - Không đặt unique constraint cho email ứng viên hoặc fingerprint trùng.
 - Chỉ cho phép `profile_fact` trong danh sách field được phê duyệt; không lưu tuổi, giới tính, ngoại hình/ảnh, tình trạng hôn nhân, tính cách hoặc “culture fit” làm dữ liệu matching/ranking.
 - JSONB chỉ dùng cho cấu hình/versioned payload có cấu trúc được kiểm soát; không dùng để thay thế các cột nghiệp vụ quan trọng.
+- Embedding dùng dimension cố định `1024` trong migration `00010`; đổi model sang dimension khác phải có migration mới và `index_version` mới. Không trộn vector của các model/index version khác nhau trong cùng truy vấn.
+- Artifact LTR chỉ được dùng ở `ACTIVE` khi registry ở trạng thái `APPROVED` và holdout metrics đạt gate; đăng ký artifact luôn bắt đầu ở `DRAFT`.
 
 ### 7.3 Chỉ mục nên có
 
@@ -325,6 +331,7 @@ Database và Supabase Storage không xóa được trong cùng một giao dịch
 - Retention case theo trạng thái và ngày đến hạn.
 - Audit theo thời điểm, người thao tác, vị trí và loại hành động.
 - Unique theo `(position_id, version_number)` cho JD/criteria; `(assessment_id, criterion_id)` cho kết quả theo tiêu chí.
+- Embedding: index theo `(document_id, embedding_model, index_version)` và HNSW cosine index trên cột `embedding` cho truy vấn pgvector.
 
 ## 8. Truy vết với acceptance criteria
 
@@ -333,8 +340,8 @@ Database và Supabase Storage không xóa được trong cùng một giao dịch
 | AC-01 — Tiêu chí nháp cần được phê duyệt | `criteria_versions`, `criteria_items`, `criteria_approval_events` |
 | AC-02 — Giới hạn upload | `cv_batches`, `cv_batch_items`, `application_documents` |
 | AC-03 — File lỗi cần HR kiểm tra | `application_documents`, `document_processing_runs` |
-| AC-04 — Matching có bằng chứng | `assessment_runs`, `criterion_assessment_results`, `evidence_items` |
-| AC-05 — Ranking cùng vị trí, tách điểm/coverage | `ranking_runs`, `ranking_items` |
+| AC-04 — Matching có bằng chứng | `assessment_runs`, `criterion_assessment_results`, `evidence_items`, `cv_chunk_embeddings` cho candidate retrieval |
+| AC-05 — Ranking cùng vị trí, tách điểm/coverage | `ranking_runs`, `ranking_items`, `ltr_model_versions` khi LTR được bật |
 | AC-06 — Cảnh báo trùng, không tự gộp | `duplicate_signals` |
 | AC-07 — AI không đổi trạng thái hồ sơ | `applications`, `application_status_events`, các quyền ghi riêng |
 | AC-08 — Phân quyền | `user_role_assignments`, `position_assignments`, `position_access_grants` |

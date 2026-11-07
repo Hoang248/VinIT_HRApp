@@ -22,3 +22,7 @@
 - Chưa cấu hình BGE endpoint/model runtime thật trong môi trường này; cấu hình mặc định vẫn `SEMANTIC_RETRIEVAL_ENABLED=false`, `EMBEDDING_PROVIDER=disabled`.
 - Dataset export hiện chỉ có weak label từ trạng thái vận hành, không phải HR gold label. Không bật `LTR_MODE=ACTIVE` cho tới khi có labelled dataset HR đủ lớn, holdout đạt gate và artifact được phê duyệt rõ ràng.
 - Không có tuyên bố production-ready cho chất lượng semantic/LTR trên CV thật cho tới khi đo trên golden set HR thật.
+
+## Đồng bộ tài liệu
+
+Các tài liệu liên quan đã được cập nhật để phản ánh trạng thái trên: `README.md`, `DEPLOYMENT.md`, `doc/MATCHING_STABILITY.md`, `doc/HRA_ArchitectureDesign.md`, `doc/HRA_DatabaseDesign.md`, `doc/HRA_LLM_Architecture.md`, `doc/HRA_Phase1_Architecture.md`, `doc/HRA_TechnicalRecomment.md`, `doc/HRA_InterfaceDesign.md`, `doc/HRA_NextPhase.md`, `doc/VPS_DEPLOYMENT.md`, `doc/VPS_DEPLOYMENT_NO_DOCKER.md` và các file `.env.example`. Các tài liệu audit lịch sử không bị viết lại; báo cáo này là điểm truy vết cho vòng triển khai pgvector/BGE/LTR.

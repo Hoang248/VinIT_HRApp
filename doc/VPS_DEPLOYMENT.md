@@ -15,7 +15,7 @@ Ví dụ dùng Ubuntu 24.04 LTS, DNS `hr.example.com` đã trỏ đến IP VPS, 
 - Supabase/PostgreSQL, Auth, hai bucket private `cv-originals`/`cv-extracted-text` và model **phải được chuẩn bị riêng**. Compose không tạo các dịch vụ đó. Backend xác minh JWT theo thuật toán ký: token asymmetric/JWKS (ví dụ ES256) qua `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`, token HS256 legacy bằng `SUPABASE_JWT_SECRET`; cả hai đều kiểm tra audience `authenticated`.
 - Cần tài khoản Auth và profile/role tương ứng; ở snapshot trước 00004, project kết nối chưa có auth user/profile/ADMIN (không khẳng định trạng thái hiện tại). HR và HM phải là hai người/tài khoản khác nhau cho hai bước duyệt. Tài khoản mới tạo từ app phải đổi mật khẩu tạm trước khi truy cập nghiệp vụ.
 - Dùng PostgreSQL direct connection qua TLS; chỉ dùng session pooler sau khi xác minh session/backend PID và advisory lock được giữ xuyên các transaction. **Không dùng transaction/statement pooling** cho worker. Direct Supabase có thể cần IPv6; xác minh tuyến mạng hoặc session pooler phù hợp với project.
-- `00004`, `00005`, `00006`, `00007` và `00008` đã được áp vào project `myrymlqdbyqmpynesiwk`: `20261105152817 recovery_and_privacy`, `20261105163626 account_administration` (05/11/2026), `20261106042158 openai_compatible_provider_secrets` (06/11/2026), `20261106050756 departments_and_position_codes` (06/11/2026) và `20261107012433 deterministic_assessment_foundation` (07/11/2026). Backend hiện tại yêu cầu 00005, 00006, 00007 và 00008; với project/môi trường khác, đối chiếu [lịch sử và checklist migration](../DEPLOYMENT.md#lịch-sử-project-đã-kết-nối), xin phê duyệt riêng, thử staging/backup/restore và drain worker cũ. Tên/version remote là timestamp, khác tiền tố file local; **không chạy `supabase db push`, reset hoặc migration repair mù quáng**.
+- `00004`–`00010` đã được áp vào project `myrymlqdbyqmpynesiwk`, gồm `20261107021622 structured_requirement_specs` và `20261107022845 pgvector_bge_ltr` ngày 07/11/2026. Backend hiện tại yêu cầu 00005–00010; với project/môi trường khác, đối chiếu [lịch sử và checklist migration](../DEPLOYMENT.md#lịch-sử-project-đã-kết-nối), xin phê duyệt riêng, thử staging/backup/restore và drain worker cũ. Tên/version remote là timestamp, khác tiền tố file local; **không chạy `supabase db push`, reset hoặc migration repair mù quáng**.
 - Service-role key legacy từng lộ trong lịch sử Git **vẫn đang bật** trên project `myrymlqdbyqmpynesiwk` (05/11/2026 kiểm tra `list_api_keys` còn `anon`+`service_role` JWT, đồng thời đã có `sb_publishable_z2Ynu`/`sb_secret_rLbWw`). Thu hồi trọn vẹn cần: chuyển mọi client/backend/worker sang `sb_publishable_`/`sb_secret_`, deactivate legacy (Dashboard **Settings → API Keys → Legacy** hoặc `PUT /v1/projects/{ref}/api-keys/legacy?enabled=false`), và revoke legacy JWT secret sau khi mọi backend đã chạy bản hỗ trợ JWKS/asymmetric; nếu còn backend bản cũ chỉ verify `HS256`, việc revoke/đổi signing key sẽ làm bản cũ không đăng nhập được. Connector hiện không có thao tác deactivate legacy, phải làm thủ công và kiểm chứng. Browser không được nhận service-role key hay DB URL.
 
 ## 2. Cài phần mềm trên VPS
@@ -97,6 +97,22 @@ AI_CONFIG_ENCRYPTION_KEY=
 LLM_ALLOWED_MODELS=[]
 LLM_ALLOWED_API_BASES=[]
 ALLOW_EXTERNAL_API=false
+SEMANTIC_RETRIEVAL_ENABLED=false
+EMBEDDING_PROVIDER=disabled
+EMBEDDING_API_BASE=
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSION=1024
+EMBEDDING_INDEX_VERSION=bge-index-v1
+SEMANTIC_TOP_K=5
+SEMANTIC_MIN_SIMILARITY=0.35
+LTR_MODE=OFF
+LTR_MODEL_PATH=
+LTR_MODEL_VERSION=
+LTR_MIN_NDCG_AT_10=0.70
+LTR_MIN_PAIRWISE_ACCURACY=0.65
+LTR_MIN_HOLDOUT_EXAMPLES=20
+LTR_MIN_HOLDOUT_GROUPS=2
 CORS_ORIGINS=["https://hr.example.com"]
 ```
 
@@ -105,6 +121,7 @@ CORS_ORIGINS=["https://hr.example.com"]
 - `10.20.0.12` chỉ minh họa một model endpoint private đã được phép; thay bằng địa chỉ **từ container backend** có thể truy cập. `127.0.0.1`/`localhost` bên trong container là chính container backend, không phải model chạy trên host. Endpoint mặc định và model mặc định tự nằm trong allowlist; các giá trị bổ sung dùng JSON array. Nếu chưa có model thì không chạy xử lý AI.
 - Cấu hình AI ACTIVE đã có trong DB được ưu tiên hơn env. Sau khi có ADMIN hãy vào **Admin → Cấu hình AI** để tạo/kích hoạt version reachable từ backend; không tự sửa hàng ACTIVE qua SQL. Với `local`/`openai`/`azure`, model/endpoint vẫn theo allowlist. Riêng **OpenAI Compatible**, Admin nhập tên nhà cung cấp, Base URL, API Key và Model; API key được mã hóa bằng `AI_CONFIG_ENCRYPTION_KEY` trước khi lưu và không hiển thị lại. Thay env/secret cần restart/redeploy mọi process; job đang chạy giữ snapshot công khai cũ và nạp lại key đã ghim trong bộ nhớ khi phục hồi. `allowed_by_this_process` không chứng minh model hoạt động.
 - Nếu sử dụng endpoint public, phải được phê duyệt, dùng HTTPS và đặt `ALLOW_EXTERNAL_API=true`. Che PII và guardrails hiện chỉ best effort; egress firewall, DLP, TLS, đánh giá bias và giám sát vẫn bắt buộc. Nhãn `azure` chỉ hoạt động qua gateway OpenAI-compatible/Bearer, không hỗ trợ Azure native. Xem [chính sách AI](../DEPLOYMENT.md#cấu-hình-ai-và-egress).
+- Giữ semantic/LTR tắt như ví dụ trên cho tới khi có BGE endpoint thật, golden set và quy trình phê duyệt artifact LTR. Nếu bật BGE trong Docker, `EMBEDDING_API_BASE` phải là địa chỉ reachable **từ container backend**, không dùng `127.0.0.1` để trỏ tới service chạy trên host.
 
 ## 5. Khởi chạy Compose
 

@@ -62,7 +62,7 @@ Không tạo `.env` ở thư mục gốc trong hướng dẫn này, trừ khi sa
 - DNS của domain, ví dụ `hr.example.com`, đã trỏ tới IP VPS. Nếu có bản ghi AAAA thì IPv6 của VPS cũng phải hoạt động.
 - Ước lượng ban đầu: 2 vCPU, 4 GB RAM, 30 GB ổ đĩa cho app/OCR thử nghiệm. LLM chạy local thường cần thêm RAM/VRAM đáng kể; build frontend cũng có thể tốn RAM.
 - Project Supabase đã chuẩn bị PostgreSQL, Auth và hai bucket private `cv-originals`, `cv-extracted-text`.
-- Backend hiện tại phụ thuộc migration `00005_account_administration.sql`, `00006_openai_compatible_provider_secrets.sql`, `00007_departments_and_position_codes.sql` và `00008_deterministic_assessment_foundation.sql`. Project `myrymlqdbyqmpynesiwk` đã áp 00005 ở version remote `20261105163626` ngày 05/11/2026, 00006 ở version remote `20261106042158` ngày 06/11/2026, 00007 ở version remote `20261106050756` ngày 06/11/2026 và 00008 ở version remote `20261107012433` ngày 07/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
+- Backend hiện tại phụ thuộc migration `00005`–`00010`, gồm `00009_structured_requirement_specs.sql` và `00010_pgvector_bge_ltr.sql`. Project `myrymlqdbyqmpynesiwk` đã áp 00009 ở version remote `20261107021622` và 00010 ở version remote `20261107022845` ngày 07/11/2026; môi trường khác phải đối chiếu và xin phê duyệt migration riêng, không chạy `supabase db push`/reset mù quáng.
 - Một LLM endpoint tương thích OpenAI đã được phê duyệt. Nếu chưa có model reachable từ backend thì có thể deploy web/API, nhưng không chạy được xử lý AI.
 - Backend xác minh access token theo `alg` trong JWT: token bất đối xứng (ví dụ `ES256`) được kiểm tra bằng JWKS tại `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` kèm `iss`/`aud`; token `HS256` legacy tiếp tục được kiểm tra bằng `SUPABASE_JWT_SECRET` trong thời gian chuyển đổi.
 - Service-role key từng lộ trong lịch sử Git vẫn là việc bảo mật riêng phải thu hồi theo kế hoạch trong `DEPLOYMENT.md`; tạo key mới không tự thu hồi key legacy.
@@ -217,6 +217,22 @@ LLM_ALLOWED_API_BASES=[]
 ALLOW_EXTERNAL_API=false
 
 MIN_EVIDENCE_COVERAGE=0.7
+SEMANTIC_RETRIEVAL_ENABLED=false
+EMBEDDING_PROVIDER=disabled
+EMBEDDING_API_BASE=
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSION=1024
+EMBEDDING_INDEX_VERSION=bge-index-v1
+SEMANTIC_TOP_K=5
+SEMANTIC_MIN_SIMILARITY=0.35
+LTR_MODE=OFF
+LTR_MODEL_PATH=
+LTR_MODEL_VERSION=
+LTR_MIN_NDCG_AT_10=0.70
+LTR_MIN_PAIRWISE_ACCURACY=0.65
+LTR_MIN_HOLDOUT_EXAMPLES=20
+LTR_MIN_HOLDOUT_GROUPS=2
 CORS_ORIGINS=["https://hr.example.com"]
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 ```
@@ -234,6 +250,7 @@ Lưu ý quan trọng:
 - Không bật `ALLOW_EXTERNAL_API=true` chỉ để thử nhanh. Nếu Base URL OpenAI Compatible là endpoint public như `https://api.openai.com/v1`, phải đặt `ALLOW_EXTERNAL_API=true` sau phê duyệt, dùng HTTPS và có kiểm soát egress/DLP phù hợp; nếu giữ `false`, chỉ endpoint private/loopback reachable mới chạy được.
 - Tài khoản trong `DATABASE_URL` phải có quyền nghiệp vụ cần thiết trên `app_private`, đồng thời có quyền `SELECT` trên hai cột `id`, `email` của `auth.users` để quản lý tài khoản. Đây là quyền mạnh, chỉ cấp cho backend theo phê duyệt DBA; service-role API key không tự thay thế tài khoản đăng nhập PostgreSQL.
 - Không dùng PgBouncer transaction/statement pooling cho worker. Worker giữ session PostgreSQL và advisory lock trong suốt một attempt; ưu tiên direct connection hoặc session pooler đã được kiểm chứng giữ cùng backend process/session.
+- Giữ `SEMANTIC_RETRIEVAL_ENABLED=false` và `LTR_MODE=OFF` như ví dụ cho tới khi có BGE endpoint thật reachable từ tiến trình backend trên VPS, golden set HR và artifact LTR được phê duyệt. Thay các biến này cần restart PM2 backend; không cần restart frontend.
 
 ## 8. Cài và build ứng dụng
 
