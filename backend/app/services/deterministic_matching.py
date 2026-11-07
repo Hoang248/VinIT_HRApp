@@ -697,14 +697,12 @@ class DeterministicMatchingEngine:
     @staticmethod
     def _best_quote(candidate: _Candidate, spec: RequirementSpec) -> str:
         text = candidate.chunk.text
-        if len(text) <= 340:
-            return text.strip()
         sentences = []
         for match in re.finditer(r"[^.!?;\n]+(?:[.!?;]+|$)", text):
             sentence = match.group(0).strip()
             if sentence:
                 sentences.append(sentence)
-        if not sentences:
+        if len(sentences) <= 1:
             return text.strip()[:340]
 
         def sentence_score(sentence: str) -> tuple[int, int, int]:
