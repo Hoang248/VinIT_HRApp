@@ -148,4 +148,12 @@ jobs:
           done
 
       - name: Run backend tests against disposable database
-        run: python -m pytest backend/tests -q
+        run: python -m pytest backend/tests -q --junitxml=integration-results.xml
+
+      - name: Upload integration test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-junit
+          path: integration-results.xml
+          if-no-files-found: warn
