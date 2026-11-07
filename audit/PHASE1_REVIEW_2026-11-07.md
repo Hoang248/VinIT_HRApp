@@ -18,8 +18,8 @@
 | Hạng mục | Bằng chứng | Trạng thái |
 |---|---|---|
 | Migration trên project Supabase đã kết nối | Đã kiểm tra danh sách migration: initial schema, audit fixes, operation scope, recovery/privacy, account administration, OpenAI-compatible provider secrets, departments/position codes, deterministic foundation, structured requirement specs, pgvector/BGE/LTR | `PASS` cho project đã kết nối; môi trường đích khác vẫn `NOT TESTED` |
-| Backend automated tests | Batch 4 local: full backend không có integration database đạt; integration mới sẽ chạy trong job PostgreSQL/pgvector của CI và cần bằng chứng staging riêng | `PARTIAL` |
-| GitHub CI | Đã bổ sung `.github/workflows/ci.yml` gồm backend unit, frontend checks và backend integration với PostgreSQL/pgvector dùng một lần | `PARTIAL` — chờ trạng thái checks thực tế trên GitHub và branch protection |
+| Backend automated tests | Local full backend trên PostgreSQL dùng một lần đạt **149 passed**; CI integration trên PostgreSQL/pgvector 17 cũng đạt tại run `42379643837` | `PARTIAL` — vẫn cần bằng chứng staging riêng |
+| GitHub CI | Đã bổ sung `.github/workflows/ci.yml` gồm backend unit, frontend checks và backend integration với PostgreSQL/pgvector dùng một lần; run `42379643837` tại commit `3105045` đạt cả 3 job | `PARTIAL` — còn branch protection |
 | Supabase Auth/Storage thật | Chưa có E2E staging được ghi nhận đầy đủ | `NOT TESTED` |
 | OCR scan thật | Có code và unit test mô phỏng; chưa có bộ hồ sơ scan thật được nghiệm thu | `NOT TESTED` |
 | LLM/BGE thật | Có provider và cấu hình; chưa có báo cáo golden set HR trên model/endpoint thật | `NOT TESTED` |
@@ -38,7 +38,7 @@
 | F1.07 | Cảnh báo trùng | duplicate detection theo email/phone | duplicate signals | Có tín hiệu trong cùng position, không tự gộp/xóa | `PARTIAL` | Test các trường hợp đổi identifier và dữ liệu thiếu |
 | F1.08 | Trạng thái và lịch sử | application status API | status events/audit events | HR cập nhật theo transition, lý do khi loại, AI không tự đổi trạng thái | `PARTIAL` | RBAC matrix và audit integrity |
 | F1.09 | Shortlist, feedback, ghi chú HR | shortlist API/UI | shortlist shares/items/feedback | Có chia sẻ HM, quyền xem CV, feedback, thu hồi; ghi chú append-only qua API | `PARTIAL` | Kiểm thử chia sẻ/thu hồi trên staging và quyền HM |
-| F1.10 | RBAC, audit, retention | admin/account APIs, audit events, Admin LTR review API | RBAC tables, audit events, retention/deletion tables, LTR governance tại 00011 | Có quản lý role/trạng thái; LTR approve/reject đã có hash/actor/reason/audit; đã bổ sung integration test RBAC theo position cho application/dashboard và endpoint Admin semantic/LTR/worker; audit toàn hệ thống chưa bất biến; retention workflow chưa hoàn tất; legacy key chưa đóng | `BLOCKED` | Đóng legacy key; retention/deletion workflow; audit append-only/integrity; chạy RBAC matrix trong CI integration và trên staging |
+| F1.10 | RBAC, audit, retention | admin/account APIs, audit events, Admin LTR review API | RBAC tables, audit events, retention/deletion tables, LTR governance tại 00011 | Có quản lý role/trạng thái; LTR approve/reject đã có hash/actor/reason/audit; đã bổ sung integration test RBAC theo position cho application/dashboard và endpoint Admin semantic/LTR/worker, CI integration đã xanh tại run `42379643837`; audit toàn hệ thống chưa bất biến; retention workflow chưa hoàn tất; legacy key chưa đóng | `BLOCKED` | Đóng legacy key; retention/deletion workflow; audit append-only/integrity; chạy RBAC matrix trên staging |
 | F1.11 | Cấu hình AI, privacy | Admin AI config, LLM/embedding providers, `GET /v1/admin/semantic/health` | AI config versions, provider secret encryption, pgvector embeddings | Có allowlist, mã hóa API key, redaction best effort; đã bổ sung embedding cache và semantic diagnostics phân biệt DISABLED/MISCONFIGURED/READY/OPERATIONAL/DEGRADED | `BLOCKED` cho CV thật | Phê duyệt privacy/egress; E2E model thật; đánh giá bias/prompt injection |
 | F1.12 | Việt–Anh | frontend i18n | Không áp dụng | Có VI/EN, mặc định VI, test i18n | `PARTIAL` | HR review nội dung nghiệp vụ và các nhãn mới theo policy điểm |
 | F1.13 | Dashboard, worker | dashboard API, worker health | operations, recovery events | Worker thread trong API, advisory lock/fencing/heartbeat/recovery; at-least-once; đã thêm RBAC integration test cho dashboard position scope | `PARTIAL` | Chỉ định một worker-enabled instance hoặc tách worker; monitoring/alerting; E2E recovery trên staging |
@@ -68,7 +68,7 @@ Chưa bật `LTR_MODE=ACTIVE` cho tới khi:
 
 Chưa tuyên bố production scale cho tới khi:
 
-- CI đã có workflow độc lập; cần xác nhận checks xanh trên GitHub và cấu hình branch protection.
+- CI đã có workflow độc lập và checks xanh tại run `42379643837`; còn cấu hình branch protection nếu quy trình phát hành yêu cầu.
 - Worker được triển khai có chủ đích cho nhiều replicas hoặc tách process.
 - Có monitoring/alerting, backup/restore và DR drill.
 - Audit trail có cơ chế bảo vệ tính toàn vẹn.
@@ -80,6 +80,6 @@ Chưa tuyên bố production scale cho tới khi:
 3. Tạo closure review này để theo dõi F1.01–F1.13.
 4. Embedding cache và semantic diagnostics — đã bổ sung ở mức code; cần kiểm thử với endpoint/pgvector thật trên staging.
 5. LTR governance migration/API — đã bổ sung và áp migration `00011` lên project đã kết nối; còn thiếu kiểm thử API trên staging và UI phê duyệt.
-6. RBAC test matrix và CI — đã bổ sung ở mức code; runbook E2E staging tại `doc/E2E_STAGING.md`, còn cần chạy thật trên staging có Auth/Storage/OCR/LLM/BGE.
+6. RBAC test matrix và CI — đã bổ sung và CI xanh tại run `42379643837`; runbook E2E staging tại `doc/E2E_STAGING.md`, còn cần chạy thật trên staging có Auth/Storage/OCR/LLM/BGE.
 7. Retention/deletion workflow và audit integrity.
 8. Đánh giá BGE bằng golden set; xây HR gold dataset và chạy LTR SHADOW trước ACTIVE.

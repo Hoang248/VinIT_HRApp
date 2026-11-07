@@ -21,7 +21,7 @@
 | 1 | Sửa công thức matching score cho UNCLEAR; khóa LTR file artifact ở production; tạo Phase 1 Closure Review | ĐÃ LÀM | Commit `57b9072`, `1386f7e`; targeted tests đạt |
 | 2 | Embedding cache + semantic diagnostics | ĐÃ LÀM | Commit `ccd9141`; semantic/LTR tests đạt |
 | 3 | LTR governance: artifact hash, review events, Admin approve/reject API | ĐÃ LÀM ở code + project Supabase đã kết nối | Commit `eb674d7`; migration `00011` remote version `20261107133211` |
-| 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code — CHƯA CHẠY E2E THẬT | Xem mục 5 |
+| 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
 | 5 | Retention/deletion workflow + audit integrity | CHƯA LÀM | Xem mục 6 |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
@@ -132,7 +132,8 @@
 - YAML của `.github/workflows/ci.yml` đã parse thành công.
 - Các lần chạy GitHub Actions đầu tiên cho thấy backend-unit và frontend đạt, nhưng backend-integration thất bại ở 6 test worker. Truy vết bằng JUnit/annotations và tái hiện cục bộ cho thấy nguyên nhân không phải RBAC mới: `backend/tests/test_accounts.py::reset_disposable_database()` truncate `auth.users CASCADE`, làm mất policy `assessment-v2.0` do migration `00008` seed, nhưng chỉ khôi phục policy cũ `v1.0`. Khi worker ghi `assessment_runs.policy_version='assessment-v2.0'`, PostgreSQL trả FK violation.
 - Đã sửa harness test để reset khôi phục cả `assessment-v2.0` đúng nội dung migration `00008`.
-- Sau sửa, chạy full backend trên PostgreSQL dùng một lần tại local đạt **149 passed**; chờ GitHub Actions xác nhận lại trên PostgreSQL/pgvector 17.
+- Sau sửa, chạy full backend trên PostgreSQL dùng một lần tại local đạt **149 passed**.
+- GitHub Actions run `42379643837` tại commit `3105045` đã đạt cả ba job: Backend unit tests, Frontend checks và Backend integration (disposable PostgreSQL + pgvector). URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42379643837
 
 ### Còn lại sau Batch 4
 
