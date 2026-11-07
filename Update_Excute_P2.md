@@ -75,7 +75,7 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 
 ### 3.6. Commit
 
-- Commit rà soát Phase 2: sẽ bổ sung sau khi commit/push.
+- Commit rà soát Phase 2: `7189d20` (`docs: rà soát Phase 2 và tạm dừng gate Phase 1`), đã push lên `arena/ea6e2570-vinit-hrapp`.
 
 ## 4. Việc cần người dùng quyết định trước plan
 
