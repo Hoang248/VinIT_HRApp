@@ -20,6 +20,7 @@ from app.core.logging import get_logger
 from app.services.document_processor import document_processor, DocumentType
 from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
+from app.services.deterministic_matching import deterministic_matcher
 from app.services.redaction import redact_text
 from app.services.ai_config import (
     get_active_runtime, hydrate_runtime_secret, runtime_context, runtime_snapshot,
@@ -742,15 +743,37 @@ class ProcessingWorker:
                             "prompt_version": settings.MATCHING_PROMPT_VERSION,
                             "provider_snapshot": json.dumps(provider_snapshot)}).scalar_one()
                     db.commit()
-                    findings = loop.run_until_complete(llm_client.match_criterion_evidence(
-                        cv_text=cv_text, candidate_profile=candidate_profile, rubric=criteria_items,
-                        candidate_identifier=application_id, rubric_version=criteria_version_id))
-                    provider_metadata = findings.pop("_provider_metadata", {}) if isinstance(findings, dict) else {}
-                    prompt_version = findings.pop("_prompt_version", settings.MATCHING_PROMPT_VERSION) if isinstance(findings, dict) else settings.MATCHING_PROMPT_VERSION
-                    provider_snapshot.update(provider_metadata or {})
+                    # Deterministic rules decide measurable criteria first.
+                    # The LLM is only a fallback for criteria the rules cannot
+                    # decide, and it receives just that unresolved sub-rubric.
+                    deterministic_result = deterministic_matcher.evaluate_criteria(
+                        cv_text, criteria_items, candidate_profile)
+                    if deterministic_result.get("candidate_years_experience"):
+                        candidate_profile["total_years_experience"] = deterministic_result[
+                            "candidate_years_experience"]
+                    raw_findings = list(deterministic_result.get("findings", []))
+                    unresolved_ids = set(deterministic_result.get("unresolved_criterion_ids", []))
+                    unresolved_criteria = [
+                        criterion for criterion in criteria_items
+                        if str(criterion.get("criterion_id")) in unresolved_ids
+                    ]
+                    provider_metadata: dict = {}
+                    prompt_version = settings.MATCHING_PROMPT_VERSION
+                    if unresolved_criteria:
+                        findings = loop.run_until_complete(llm_client.match_criterion_evidence(
+                            cv_text=cv_text, candidate_profile=candidate_profile,
+                            rubric=unresolved_criteria,
+                            candidate_identifier=application_id,
+                            rubric_version=criteria_version_id))
+                        if isinstance(findings, dict):
+                            provider_metadata = findings.pop("_provider_metadata", {}) or {}
+                            prompt_version = findings.pop(
+                                "_prompt_version", settings.MATCHING_PROMPT_VERSION)
+                            raw_findings.extend(findings.get("findings", []))
+                    provider_snapshot.update(provider_metadata)
                     validated = []
                     for finding in matching_engine.canonicalize_findings(
-                            criteria_items, findings.get("findings", []) if isinstance(findings, dict) else []):
+                            criteria_items, raw_findings):
                         evidence = finding.get("evidence") or {}
                         quote = evidence.get("verbatim_quote") or ""
                         span = matching_engine.find_quote_span(quote, cv_text)

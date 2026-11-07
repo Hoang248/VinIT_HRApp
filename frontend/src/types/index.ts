@@ -123,6 +123,10 @@ export interface CriterionResult {
   confidence: number | null;
   reasoning: string | null;
   requires_verification: boolean;
+  decision_source?: 'RULE' | 'LLM' | 'HYBRID' | null;
+  evidence_strength?: number | null;
+  evidence_chunk_id?: string | null;
+  rule_version?: string | null;
   verbatim_quote?: string;
   page_number?: number;
   evidence?: EvidenceItem[];
@@ -169,6 +173,9 @@ export interface AssessmentDetail {
   matching_score: number | null;
   evidence_coverage: number | null;
   summary: string | null;
+  assessment_fingerprint?: string | null;
+  matching_policy_version?: string | null;
+  prompt_version?: string | null;
   criterion_results: CriterionResult[];
 }
 

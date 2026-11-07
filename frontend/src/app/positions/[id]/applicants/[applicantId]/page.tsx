@@ -442,8 +442,22 @@ export default function ApplicantDetailPage() {
                               fontWeight: 600,
                               fontSize: 10,
                               height: 22,
+                              mr: 1,
                             }}
                           />
+                          {result.decision_source && (
+                            <Chip
+                              label={`${t(result.decision_source === 'RULE' ? "Theo quy tắc xác định" : result.decision_source === 'HYBRID' ? "Quy tắc + AI" : "AI đối chiếu")}${result.evidence_strength != null ? ` · ${Math.round(result.evidence_strength * 100)}%` : ''}`}
+                              size="small"
+                              sx={{
+                                backgroundColor: result.decision_source === 'RULE' ? '#ECFDF3' : result.decision_source === 'HYBRID' ? '#F4EBFF' : '#F2F4F7',
+                                color: result.decision_source === 'RULE' ? '#067647' : result.decision_source === 'HYBRID' ? '#6941C6' : '#344054',
+                                fontWeight: 600,
+                                fontSize: 10,
+                                height: 22,
+                              }}
+                            />
+                          )}
                         </Box>
                         {result.score !== null && (
                           <Typography variant="h6" sx={{ fontSize: 16, fontWeight: 'bold', color: style.color }}>

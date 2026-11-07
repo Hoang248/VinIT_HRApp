@@ -210,7 +210,9 @@ def test_upload_worker_runs_scoped_pipeline_with_stubbed_ai(client, seed, tmp_pa
         return {"findings": [{"criterion_id": kwargs["rubric"][0]["criterion_id"], "outcome": "STRONG_MATCH", "confidence": .9, "confidence_band": "HIGH", "evidence": {"verbatim_quote": quote, "page_number": 1}}]}
     monkeypatch.setattr(llm_client, "extract_candidate_profile", extract)
     monkeypatch.setattr(llm_client, "match_criterion_evidence", match)
-    document = Document(); document.add_paragraph("Developed Python systems for five years. test@example.com")
+    document = Document(); document.add_paragraph(
+        "Developed Python systems for five years. test@example.com" if valid_quote
+        else "Developed backend systems for five years. test@example.com")
     content = io.BytesIO(); document.save(content)
     files = [("files", ("candidate.docx", content.getvalue(), "application/octet-stream")),
              ("files", ("bad.pdf", b"not-a-pdf", "application/pdf"))]
@@ -236,8 +238,10 @@ def test_upload_worker_runs_scoped_pipeline_with_stubbed_ai(client, seed, tmp_pa
         result = conn.execute(text("SELECT matching_status,matching_score,evidence_coverage FROM app_private.assessment_runs WHERE application_id=:app AND status='COMPLETED'"), {"app": uploaded_app}).mappings().one()
         assert result["matching_status"] == ("MEETS_MANDATORY" if valid_quote else "NEEDS_HR_VERIFICATION")
         assert float(result["matching_score"]) == 95 if valid_quote else result["matching_score"] is None
-        criterion_score = conn.execute(text("SELECT score FROM app_private.criterion_assessment_results")).scalar_one()
-        assert float(criterion_score) == 95 if valid_quote else criterion_score is None
+        criterion_result = conn.execute(text("SELECT score, decision_source, evidence_chunk_id FROM app_private.criterion_assessment_results")).mappings().one()
+        assert float(criterion_result["score"]) == 95 if valid_quote else criterion_result["score"] is None
+        assert criterion_result["decision_source"] == ("RULE" if valid_quote else "LLM")
+        assert (criterion_result["evidence_chunk_id"] is not None) if valid_quote else criterion_result["evidence_chunk_id"] is None
         assert conn.execute(text("SELECT verification_status FROM app_private.evidence_items")).scalar_one() == ("VERIFIED" if valid_quote else "FAILED")
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.ranking_items WHERE position_id=:pos"), {"pos": seed["pos"]}).scalar_one() == 1
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE application_id=:app"), {"app": seed["app2"]}).scalar_one() == 0
@@ -609,6 +613,7 @@ def test_group_weights_are_approved_immutable_and_drive_worker_score(client, see
         """), {"op": upload.json()["operation_id"]}).mappings().one()
         assert float(assessment["matching_score"]) == 90.0
         assert float(assessment["evidence_coverage"]) == 1.0
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.criterion_assessment_results WHERE decision_source='RULE'")).scalar_one() == 2
         assert str(assessment["criteria_version_id"]) == seed["cv"]
         ranking_version = conn.execute(text("SELECT criteria_version_id FROM app_private.ranking_runs WHERE operation_id=:op"), {"op": upload.json()["operation_id"]}).scalar_one()
         assert str(ranking_version) == seed["cv"]
