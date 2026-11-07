@@ -4,6 +4,8 @@
 >
 > Phạm vi kiểm tra ban đầu: branch `arena/ea6e2570-vinit-hrapp`, commit nền `1326acd`, cập nhật sửa điểm tại `57b9072`. Project Supabase đã kết nối: `myrymlqdbyqmpynesiwk`.
 
+> Audit chi tiết các batch nâng cấp: [`audit/UPGRADE_AUDIT_2026-11-07.md`](UPGRADE_AUDIT_2026-11-07.md). Danh sách hạng mục đã sẵn sàng nhưng chưa triển khai/nghiệm thu: [`doc/PENDING_DEPLOYMENT.md`](../doc/PENDING_DEPLOYMENT.md).
+
 ## 1. Quy ước trạng thái
 
 | Trạng thái | Ý nghĩa |

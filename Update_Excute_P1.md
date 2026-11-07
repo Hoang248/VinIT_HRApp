@@ -24,6 +24,7 @@
 | 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
 | 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
 | 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Commit `90dd4b2`; GitHub Actions run `42382329761` đạt cả 3 job; chờ DevOps/HR chạy trên staging |
+| 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Full backend local **160 passed**; audit remote 0 broken; finding còn mở tại `doc/PENDING_DEPLOYMENT.md` |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -227,6 +228,36 @@
 - DevOps/IT dựng staging và deploy commit chứa Batch 5; HR/HM/Admin chạy checklist bằng tài khoản staging.
 - Nếu dùng LLM/BGE/OCR thật phải có phê duyệt privacy/egress; chưa có phê duyệt thì chỉ dùng local/mock hoặc dữ liệu tổng hợp trong staging tách biệt.
 - Sau khi chạy thật, mới cập nhật Closure Review bằng bằng chứng PASS/FAIL; không coi Batch 5.1 là E2E đã đạt.
+
+### Batch 5.2 — Tài liệu chờ triển khai + review/audit toàn bộ nâng cấp
+
+#### Trạng thái: ĐÃ AUDIT — CÁC GATE TRIỂN KHÁI/VẬN HÀNH VẪN CHƯA ĐÓNG
+
+#### Đã thay đổi
+
+- `doc/PENDING_DEPLOYMENT.md`
+  - Lưu riêng toàn bộ phần đã sẵn sàng trong repository nhưng chưa triển khai/chưa nghiệm thu: DEP-01 deploy staging + E2E, DEP-02 retention/audit qua backend staging, DEP-03 deploy code tương ứng schema lên môi trường phục vụ project đã kết nối, DEP-04 legacy keys, DEP-05 privacy/egress, DEP-06 BGE pilot, DEP-07 LTR SHADOW/ACTIVE, DEP-08 production readiness.
+  - Mỗi hạng mục có trạng thái chờ, phụ thuộc, chủ trì, bằng chứng đóng và mẫu ký nhận.
+- `audit/UPGRADE_AUDIT_2026-11-07.md`
+  - Audit độc lập toàn bộ nâng cấp từ `1326acd` tới `dc9d020` theo Batch 1, 2, 3, 4, 5 và 5.1.
+  - Kết luận: code/CI/remote schema đạt trong phạm vi đã nâng cấp; triển khai/vận hành và dữ liệu/model thật vẫn `PARTIAL/BLOCKED`.
+- Liên kết truy vết:
+  - `audit/PHASE1_REVIEW_2026-11-07.md` trỏ tới báo cáo audit nâng cấp và tài liệu chờ triển khai.
+  - `doc/E2E_STAGING_EXECUTION_CHECKLIST.md` trỏ tới tài liệu chờ triển khai.
+
+#### Kiểm chứng phục vụ audit
+
+- Full backend trên PostgreSQL dùng một lần tại local: **160 passed**.
+- Ruff phạm vi CI cho các bề mặt nâng cấp: đạt.
+- `generate_staging_fixtures.py --check`: đạt.
+- Supabase connector postflight: project `ACTIVE_HEALTHY`; migration tới `20261107142027`; audit events 21, broken 0, missing hash 0; operations đang chạy 0; approved LTR models 0.
+
+#### Finding còn mở được chuyển vào tài liệu chờ triển khai
+
+- F-01: Trước LTR ACTIVE, cần fail-closed hoặc re-register/re-approve nếu registry artifact thiếu `artifact_sha256`.
+- F-02: Audit hash chain là tamper-evidence, không chống DB superuser; cần kiểm soát DBA và kiểm tra định kỳ.
+- F-03: Retention API không lưu free-text reason để tránh PII; nếu governance yêu cầu lý do, dùng reason code có cấu trúc.
+- F-04/F-05: Chưa có bằng chứng deploy backend đích, E2E staging thật, phê duyệt privacy/egress, BGE golden set hoặc HR gold dataset cho LTR.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

@@ -1,0 +1,79 @@
+# Tài liệu chờ triển khai — Phase 1
+
+> Trạng thái tại ngày 2026-11-07: các nâng cấp Batch 1–5 đã có code, test, CI và migration tương ứng; Batch 5.1 đã chuẩn bị bộ dữ liệu/checklist staging. Tài liệu này lưu riêng những phần **đã sẵn sàng ở repository nhưng chưa được triển khai hoặc chưa được nghiệm thu trên môi trường đích**. Không mục nào trong tài liệu này được coi là đã hoàn thành chỉ vì đã có code, checklist hoặc migration.
+
+- Branch: `arena/ea6e2570-vinit-hrapp`
+- Mốc code/tài liệu được audit: `dc9d020`
+- Project Supabase đã kết nối: `myrymlqdbyqmpynesiwk`
+- Migration remote mới nhất đã xác nhận: `20261107142027 retention_audit_integrity`
+- Báo cáo audit chi tiết: [`audit/UPGRADE_AUDIT_2026-11-07.md`](../audit/UPGRADE_AUDIT_2026-11-07.md)
+- Checklist chạy staging: [`doc/E2E_STAGING_EXECUTION_CHECKLIST.md`](E2E_STAGING_EXECUTION_CHECKLIST.md)
+
+## 1. Danh sách chờ triển khai/thực thi
+
+| ID | Hạng mục chờ | Trạng thái chờ | Phụ thuộc | Chủ trì | Bằng chứng đóng hạng mục |
+|---|---|---|---|---|---|
+| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên staging và chạy E2E bằng dữ liệu tổng hợp | `READY_TO_EXECUTE` | Staging tách biệt, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
+| DEP-02 | Kiểm chứng retention/audit qua backend staging đã deploy | `READY_TO_EXECUTE` sau DEP-01 | Backend staging trỏ tới DB đã có migration `00012`, tài khoản đúng quyền | DevOps + HR Lead/Admin | `GET /v1/admin/audit/verify` trả `valid=true`; retention due/not-due/confirm/execute có case/job/audit evidence |
+| DEP-03 | Triển khai code tương ứng với schema `00011`/`00012` lên môi trường phục vụ project đã kết nối, nếu môi trường đó đang chạy code cũ | `WAITING_DEPLOYMENT_WINDOW` | Xác nhận topology/process đang chạy, cửa sổ deploy, drain worker, kế hoạch rollback | DevOps/Release owner | Phiên bản deploy thực tế, health checks, smoke test Admin/LTR/retention, xác nhận không chạy mixed-version worker |
+| DEP-04 | Đóng legacy Supabase API keys và revoke legacy JWT signing secret | `BLOCKED_MANUAL_OPS` | Kiểm kê mọi client/backend/worker đã chuyển sang key/JWKS mới; restart đồng nhất | Chủ project Supabase | Dashboard/Management API xác nhận legacy disabled, legacy JWT secret revoked, login/JWKS mới hoạt động |
+| DEP-05 | Phê duyệt privacy/egress cho LLM/BGE/OCR dùng dữ liệu thật | `WAITING_APPROVAL` | Provider/region/DPA, loại dữ liệu gửi, retention phía provider, DLP/redaction | IT Security/Legal/HR | Văn bản phê duyệt hoặc ticket bảo mật đã ký; cấu hình endpoint đúng phạm vi phê duyệt |
+| DEP-06 | BGE pilot bằng endpoint thật và golden set HR | `WAITING_ENDPOINT_AND_DATA` | DEP-05, endpoint BGE-M3 1024 chiều có token/quota, HR golden set | IT + HR | Báo cáo Recall@5, false MATCH/NO_MATCH, unresolved rate, latency; quyết định bật/tắt semantic |
+| DEP-07 | LTR SHADOW rồi mới xét ACTIVE | `WAITING_HR_GOLD_DATASET` | DEP-05 nếu dùng dữ liệu thật, HR gold dataset đủ lớn/đại diện, artifact đạt gates và được Admin approve | HR/HM + kỹ thuật | Dataset/labeling report, training gates, review event/artifact hash, SHADOW comparison chứng minh không vi phạm mandatory/coverage |
+| DEP-08 | Production readiness: branch protection, monitoring/alerting, topology worker, backup/restore/DR drill | `WAITING_OPS_DECISION` | Quy trình phát hành và hạ tầng đích | DevOps/IT | Cấu hình branch protection nếu áp dụng, dashboard/alert test, quyết định worker topology, biên bản restore/DR drill |
+
+## 2. Phần Batch 5.1 đã chuẩn bị nhưng chưa thực thi
+
+Đã lưu trong repository:
+
+- `staging/synthetic/manifest.json`
+- `staging/synthetic/candidates/*.txt`
+- `backend/scripts/generate_staging_fixtures.py`
+- `backend/tests/test_staging_fixtures.py`
+- `doc/E2E_STAGING_EXECUTION_CHECKLIST.md`
+
+Cách sinh DOCX upload staging:
+
+```bash
+backend/.venv/bin/python backend/scripts/generate_staging_fixtures.py --check
+backend/.venv/bin/python backend/scripts/generate_staging_fixtures.py
+```
+
+Giới hạn bắt buộc:
+
+- Chỉ dùng dữ liệu tổng hợp `@example.test`; không thay bằng CV thật khi chưa đóng DEP-04/DEP-05 theo phạm vi áp dụng.
+- Bộ fixture là dữ liệu smoke/E2E, **không** phải HR golden set để đo matching/BGE/LTR accuracy.
+- File `ocr_simulated.txt` chỉ là nội dung để tạo scan ngoài Git; không tự chứng minh chất lượng OCR.
+- DOCX sinh ra trong `staging/generated/` bị ignore; không commit file sinh ra chứa dữ liệu staging.
+
+## 3. Thứ tự triển khai khuyến nghị
+
+1. Chốt commit sẽ deploy và cửa sổ triển khai; xác nhận không có worker/API phiên bản cũ đang xử lý job.
+2. Deploy staging theo DEP-01; ghi commit SHA, cấu hình provider ở mức không lộ secret và migration versions.
+3. Chạy checklist E2E bằng dữ liệu tổng hợp; hoàn thành DEP-02 cho audit/retention.
+4. Nếu môi trường phục vụ project đã kết nối còn code cũ, lên lịch DEP-03 sau khi staging đạt; không để mixed-version worker.
+5. Chủ project thực hiện DEP-04 sau khi mọi deployment đã dùng key/JWKS mới.
+6. Xin DEP-05 trước khi gửi dữ liệu thật tới LLM/BGE/OCR.
+7. Chạy DEP-06 cho BGE; xây HR gold dataset và chạy DEP-07 ở `SHADOW`; chỉ xét `ACTIVE` sau SHADOW report đạt gate.
+8. Hoàn thiện DEP-08 trước khi tuyên bố production readiness.
+
+## 4. Lưu ý rollback và an toàn schema
+
+- Migration `00011`/`00012` là thay đổi cộng thêm; rollback mặc định là rollback code, giữ schema để tránh mất governance/evidence. Không drop cột, bảng, trigger hoặc audit hash chain nếu chưa có kế hoạch rollback đã phê duyệt và backup đã kiểm chứng.
+- Sau `00012`, audit events được trigger gán hash ngay cả khi backend cũ ghi audit. Nếu `GET /v1/admin/audit/verify` hoặc postflight SQL báo `valid=false`, dừng rollout retention và điều tra; không sửa tay audit row để làm xanh.
+- Nếu backend cũ chưa có API retention/LTR governance, không coi các workflow đó là đã triển khai chỉ vì schema đã có.
+- Giữ `LTR_MODE=OFF` và semantic ở cấu hình an toàn cho tới khi DEP-06/DEP-07 có bằng chứng riêng.
+- Trước khi xét LTR `ACTIVE`, xử lý finding F-01 trong báo cáo audit: worker phải fail-closed khi registry artifact thiếu `artifact_sha256`, hoặc artifact phải được re-register/re-approve để luôn gắn với hash đã duyệt.
+
+## 5. Mẫu ký nhận chờ triển khai
+
+| ID | Người phụ trách | Ngày dự kiến | Kết quả thực tế | Liên kết bằng chứng |
+|---|---|---|---|---|
+| DEP-01 |  |  |  |  |
+| DEP-02 |  |  |  |  |
+| DEP-03 |  |  |  |  |
+| DEP-04 |  |  |  |  |
+| DEP-05 |  |  |  |  |
+| DEP-06 |  |  |  |  |
+| DEP-07 |  |  |  |  |
+| DEP-08 |  |  |  |  |

@@ -2,6 +2,8 @@
 
 > Tài liệu này biến runbook tổng quát tại [`E2E_STAGING.md`](E2E_STAGING.md) thành checklist thực thi từng bước. Chỉ chạy trên staging tách biệt với dữ liệu tổng hợp trong `staging/synthetic`. Việc chuẩn bị checklist và dữ liệu **không** đồng nghĩa E2E đã đạt; chỉ khi có bằng chứng chạy thật và ký duyệt mới được cập nhật Closure Review.
 
+> Hạng mục này đang được lưu ở trạng thái chờ triển khai tại [`PENDING_DEPLOYMENT.md`](PENDING_DEPLOYMENT.md), mã DEP-01/DEP-02.
+
 ## 1. Bộ dữ liệu đi kèm
 
 - Manifest: `staging/synthetic/manifest.json`
