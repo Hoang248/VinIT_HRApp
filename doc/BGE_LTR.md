@@ -38,6 +38,7 @@ JD/criteria
 Các file liên quan:
 
 - `supabase/migrations/00010_pgvector_bge_ltr.sql`
+- `supabase/migrations/00011_ltr_model_governance.sql`
 - `backend/app/services/embedding.py`
 - `backend/app/services/semantic_retrieval.py`
 - `backend/app/services/ltr.py`
@@ -309,9 +310,10 @@ Không có feature định danh hoặc demographic trong schema hiện tại.
 
 ### 8.3. Registry và runtime đã có
 
-Migration `00010` đã tạo:
+Migration `00010` đã tạo nền registry; migration `00011` bổ sung governance:
 
-- `app_private.ltr_model_versions`: registry artifact, metrics, feature names, training counts, data hash, trạng thái `DRAFT/APPROVED/REJECTED`.
+- `app_private.ltr_model_versions`: registry artifact, metrics, feature names, training counts, data hash, trạng thái `DRAFT/APPROVED/REJECTED`, artifact hash và thông tin reviewer/lý do.
+- `app_private.ltr_model_review_events`: lịch sử REGISTERED/APPROVED/REJECTED có actor, artifact hash, metrics snapshot và reason.
 - `app_private.ranking_runs.ltr_model_version`, `app_private.ranking_runs.ltr_mode`.
 - `app_private.ranking_items.ltr_score`.
 
@@ -497,22 +499,25 @@ cd backend
 python scripts/register_ltr_model.py ../models/ltr-artifact.json
 ```
 
-Script chỉ đăng ký artifact ở trạng thái `DRAFT`. Nó không approve và không activate model.
+Script chỉ đăng ký artifact ở trạng thái `DRAFT`, đồng thời lưu `artifact_sha256` và sự kiện `REGISTERED`. Nếu cùng `model_version` đã tồn tại với artifact khác, script từ chối ghi đè. Nó không approve và không activate model.
 
-Sau khi HR/ops review báo cáo, người có quyền mới approve rõ ràng, ví dụ bằng SQL qua kênh vận hành được kiểm soát:
+Từ migration `00011_ltr_model_governance`, phê duyệt phải qua Admin API để lưu actor, lý do, artifact hash, metrics snapshot và audit event:
 
-```sql
-UPDATE app_private.ltr_model_versions
-SET status = 'APPROVED', approved_at = NOW()
-WHERE model_version = '<model_version>';
+```bash
+curl -X POST "$API_BASE/v1/admin/ltr/models/<model_version>/approve" \
+  -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Đạt NDCG/pairwise holdout gates và đã review dataset"}'
 ```
+
+Từ chối dùng endpoint tương tự `/reject` với lý do bắt buộc. API chỉ cho phép chuyển từ `DRAFT`; approve còn kiểm tra quality gates và artifact hash. Không sửa trực tiếp `status` bằng SQL trong vận hành bình thường.
 
 Yêu cầu phê duyệt:
 
 - Người train và người approve nên khác nhau nếu có thể.
-- Lưu lý do phê duyệt, báo cáo holdout, dataset hash và phạm vi position áp dụng.
-- Nếu artifact không đạt yêu cầu, đặt `REJECTED` thay vì để DRAFT mơ hồ.
-- Hiện chưa có UI/API approval; thao tác DB phải giới hạn cho ops có quyền và có audit ngoài hệ thống.
+- Lý do phê duyệt phải đối chiếu được với báo cáo holdout, dataset hash và phạm vi position áp dụng.
+- Nếu artifact không đạt yêu cầu, reject thay vì để DRAFT mơ hồ.
+- Chưa có UI approval riêng; Admin API là bề mặt phê duyệt có audit hiện tại.
 
 ### Bước 4: Chạy SHADOW
 
@@ -593,7 +598,7 @@ Sau ACTIVE cần theo dõi:
 |---|---|---|
 | HR gold dataset | Bắt buộc | Không có dataset này thì LTR chỉ dừng ở thử nghiệm |
 | Rubric chấm nhãn + adjudication | Bắt buộc | Giảm nhiễu nhãn và leakage |
-| Quy trình approve artifact | Bắt buộc | Hiện có registry/status nhưng chưa có UI/API approval |
+| Quy trình approve artifact | Đã có nền tảng | Migration 00011 + Admin API approve/reject đã có actor/reason/hash/audit; còn thiếu UI và kiểm thử trên staging |
 | SHADOW evaluation report | Bắt buộc trước ACTIVE | So sánh ranking hiện tại vs LTR theo position/gate |
 | Monitoring sau ACTIVE | Bắt buộc | Drift, gate violations, model load failures |
 | HR labelling UI/API | Khuyến nghị mạnh | Cần nếu làm LTR lâu dài thay vì file thủ công |

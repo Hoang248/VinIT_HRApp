@@ -4,7 +4,7 @@
 
 ## Lịch sử project đã kết nối
 
-Trên project `myrymlqdbyqmpynesiwk`, sau xác nhận của người dùng, đã áp `00003_phase1_operation_scope.sql`, `00004_recovery_and_privacy.sql` (05/11/2026 15:28 UTC), `00005_account_administration.sql` (05/11/2026 16:36 UTC), `00006_openai_compatible_provider_secrets.sql` (06/11/2026), `00007_departments_and_position_codes.sql` (06/11/2026), `00008_deterministic_assessment_foundation.sql`, `00009_structured_requirement_specs.sql` và `00010_pgvector_bge_ltr.sql` (07/11/2026). Lịch sử remote:
+Trên project `myrymlqdbyqmpynesiwk`, sau xác nhận của người dùng, đã áp `00003_phase1_operation_scope.sql`, `00004_recovery_and_privacy.sql` (05/11/2026 15:28 UTC), `00005_account_administration.sql` (05/11/2026 16:36 UTC), `00006_openai_compatible_provider_secrets.sql` (06/11/2026), `00007_departments_and_position_codes.sql` (06/11/2026), `00008_deterministic_assessment_foundation.sql`, `00009_structured_requirement_specs.sql`, `00010_pgvector_bge_ltr.sql` và `00011_ltr_model_governance.sql` (07/11/2026). Lịch sử remote:
 
 | File trong repository | Version/name trên Supabase |
 |---|---|
@@ -18,6 +18,7 @@ Trên project `myrymlqdbyqmpynesiwk`, sau xác nhận của người dùng, đã
 | `00008_deterministic_assessment_foundation.sql` | `20261107012433 deterministic_assessment_foundation` |
 | `00009_structured_requirement_specs.sql` | `20261107021622 structured_requirement_specs` |
 | `00010_pgvector_bge_ltr.sql` | `20261107022845 pgvector_bge_ltr` |
+| `00011_ltr_model_governance.sql` | `20261107133211 ltr_model_governance` |
 
 Preflight trước 00005 (05/11/2026 16:36 UTC): DB/Auth/REST/Storage khỏe, không có vị trí, hồ sơ, tác vụ đang xử lý, auth user hoặc profile; một cấu hình AI ACTIVE endpoint loopback. Sau áp 00005: bảng `app_private.account_initialization` (1 row, `initialized_at` NULL → bootstrap đang mở vì chưa từng có ADMIN), hai cột `user_profiles.must_change_password` (`boolean NOT NULL DEFAULT FALSE`) và `tokens_valid_after` (`timestamptz`), function `app_private.mark_admin_initialized()` và trigger `mark_admin_initialized` trên `user_role_assignments`, RLS `ENABLE` trên `account_initialization` chỉ `service_role` được `SELECT,UPDATE`. Backfill HM không tạo thêm row do không có `position_assignments` đang hiệu lực tại thời điểm áp. Postflight xác nhận `has_table=true`, `has_must_change=true`, `has_tokens_valid=true`, `has_func=true`, `has_trigger=true`. Endpoint của cấu hình AI ACTIVE hiện tại vẫn là **loopback** (`localhost` trong container backend không phải VPS/model bên ngoài); phải chọn và kích hoạt endpoint hợp lệ từ Admin trước khi dùng AI. Tại thời điểm kiểm tra chưa có ADMIN/auth user. Chưa xác minh backup/restore, rotate key hay E2E dịch vụ thật; không thể suy ra mọi worker bên ngoài đã dừng chỉ từ snapshot này.
 
@@ -32,6 +33,8 @@ Preflight trước 00008 (07/11/2026): project đang ở 7 migration, chưa có 
 Preflight trước 00009 (07/11/2026): project đang ở 8 migration và `app_private.criteria_items` chưa có `requirement_spec`. Đã áp thành công ở version `20261107021622`; postflight xác nhận cột `requirement_spec` có kiểu `jsonb`. Backend hiện tại đọc cột này trong worker/API tiêu chí, vì vậy không deploy code sau 00009 lên database chưa có migration này.
 
 Preflight trước 00010 (07/11/2026): project đang ở 9 migration, chưa có extension `vector`, bảng `cv_chunk_embeddings`/`ltr_model_versions` hoặc các cột LTR trên ranking. Đã áp thành công ở version `20261107022845`; postflight xác nhận extension `vector`, cột `cv_chunk_embeddings.embedding` kiểu `vector`, HNSW cosine index, RLS trên hai bảng mới, `ranking_runs.ltr_model_version`, `ranking_runs.ltr_mode` và `ranking_items.ltr_score`. Backend hiện tại ghi/đọc các cột LTR khi tạo và đọc ranking, kể cả khi LTR tắt, nên database đích phải có 00010 trước khi rollout code này.
+
+Preflight trước 00011 (07/11/2026): registry LTR chưa có artifact hash hoặc review history. Đã áp thành công ở version `20261107133211`; postflight xác nhận `ltr_model_versions` có `artifact_sha256`, `registered_by`, `reviewed_by`, `reviewed_at`, `review_reason`, bảng `app_private.ltr_model_review_events` tồn tại và RLS đang bật trên cả hai bảng. Backend/API phê duyệt LTR mới phụ thuộc 00011; không rollout API admin LTR lên database chưa có migration này.
 
 Schema ban đầu trên project này có một số cột AI đã tồn tại trước 00004; không giả định nội dung mọi version remote byte-for-byte giống file local. Không chạy `supabase db push`/reset mù quáng: version remote là timestamp, khác tiền tố file local. Với project/môi trường khác, đối chiếu migration thực tế, xin phê duyệt và làm staging/drain riêng theo checklist dưới đây. Hướng dẫn dựng VPS Ubuntu với Docker Compose, Nginx, TLS và vận hành: [doc/VPS_DEPLOYMENT.md](doc/VPS_DEPLOYMENT.md).
 

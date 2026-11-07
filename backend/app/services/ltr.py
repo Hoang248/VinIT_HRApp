@@ -48,6 +48,13 @@ class LTRError(RuntimeError):
     """Training data or a model artifact failed validation/gates."""
 
 
+def artifact_sha256(artifact: Mapping[str, Any]) -> str:
+    """Hash canonical artifact JSON so approval binds to exact content."""
+    canonical = json.dumps(
+        artifact, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def extract_ranking_features(
     assessment: Mapping[str, Any],
     criterion_results: Iterable[Mapping[str, Any]] | None = None,
@@ -315,6 +322,7 @@ class LTRModel:
         if list(artifact.get("feature_names") or []) != list(FEATURE_NAMES):
             raise LTRError("Feature schema của artifact LTR không khớp")
         self.artifact = dict(artifact)
+        self.artifact_sha256 = artifact_sha256(self.artifact)
         self.model_version = str(artifact.get("model_version") or "")
         self.means = [float(value) for value in artifact.get("means") or []]
         self.stds = [float(value) for value in artifact.get("stds") or []]

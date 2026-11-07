@@ -22,7 +22,13 @@ from app.services.semantic_diagnostics import (
     record_semantic_run,
     reset_semantic_diagnostics,
 )
-from app.services.ltr import LTRError, LTRModel, extract_ranking_features, train_ltr_model
+from app.services.ltr import (
+    LTRError,
+    LTRModel,
+    artifact_sha256,
+    extract_ranking_features,
+    train_ltr_model,
+)
 from app.services.matching import MatchingEngine
 from app.services.semantic_retrieval import merge_candidate_chunks, retrieve_semantic_candidates
 from app.workers.processor import ProcessingWorker
@@ -397,6 +403,28 @@ def test_worker_ltr_registry_requires_approval_for_active(monkeypatch):
     assert approved.model_version == artifact["model_version"]
 
 
+def test_ltr_artifact_hash_is_stable_and_worker_rejects_tampered_registry_artifact(monkeypatch):
+    from app.core.config import settings
+
+    artifact = train_ltr_model(
+        _ltr_examples(group_count=20), min_examples=30, min_groups=5, epochs=80)
+    reordered = dict(reversed(list(artifact.items())))
+    assert artifact_sha256(artifact) == artifact_sha256(reordered)
+    tampered = {**artifact, "weights": [0.0] * len(artifact["weights"])}
+    assert artifact_sha256(tampered) != artifact_sha256(artifact)
+
+    monkeypatch.setattr(settings, "LTR_MODE", "ACTIVE")
+    monkeypatch.setattr(settings, "LTR_MODEL_VERSION", artifact["model_version"])
+    monkeypatch.setattr(settings, "LTR_MODEL_PATH", None)
+    worker = ProcessingWorker.__new__(ProcessingWorker)
+    loaded = worker._load_ltr_model(_FakeRegistryDb({
+        "artifact": artifact,
+        "status": "APPROVED",
+        "artifact_sha256": "0" * 64,
+    }))
+    assert loaded is None
+
+
 def test_worker_ltr_file_artifact_is_blocked_for_active_in_production(monkeypatch, tmp_path):
     import json
 
@@ -416,6 +444,84 @@ def test_worker_ltr_file_artifact_is_blocked_for_active_in_production(monkeypatc
 
     monkeypatch.setattr(settings, "APP_ENV", "staging")
     assert worker._load_ltr_model() is not None
+
+
+class _FakeAdminResult:
+    def __init__(self, row=None):
+        self._row = row
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._row
+
+    def one(self):
+        return self._row
+
+
+class _FakeAdminDb:
+    def __init__(self, row):
+        self.row = row
+        self.sql = []
+        self.committed = False
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.sql.append(sql)
+        if "FOR UPDATE" in sql:
+            return _FakeAdminResult(self.row)
+        if sql.strip().startswith("SELECT model_version, status, artifact_sha256"):
+            return _FakeAdminResult({
+                "model_version": self.row["model_version"],
+                "status": "APPROVED",
+                "artifact_sha256": artifact_sha256(self.row["artifact"]),
+                "reviewed_by": "admin-1",
+                "reviewed_at": "2026-11-07T00:00:00Z",
+                "review_reason": "Đạt gate holdout",
+                "approved_at": "2026-11-07T00:00:00Z",
+            })
+        return _FakeAdminResult()
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_admin_ltr_review_records_approval_and_rejects_non_draft(monkeypatch):
+    import app.api.admin as admin_module
+
+    artifact = train_ltr_model(
+        _ltr_examples(group_count=20), min_examples=30, min_groups=5, epochs=80)
+    row = {
+        "model_version": artifact["model_version"],
+        "artifact": artifact,
+        "metrics": artifact["metrics"],
+        "data_sha256": artifact["training"]["data_sha256"],
+        "artifact_sha256": artifact_sha256(artifact),
+        "status": "DRAFT",
+    }
+    fake_db = _FakeAdminDb(row)
+    monkeypatch.setattr(admin_module, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(admin_module, "_lock_active_admin", lambda db, user_id: None)
+
+    result = admin_module._review_ltr_model(
+        artifact["model_version"], "APPROVED", "Đạt gate holdout", {"user_id": "admin-1"})
+    assert result["status"] == "APPROVED"
+    assert fake_db.committed is True
+    assert any("ltr_model_review_events" in sql for sql in fake_db.sql)
+    assert any("audit_events" in sql for sql in fake_db.sql)
+
+    row["status"] = "APPROVED"
+    with pytest.raises(admin_module.HTTPException) as exc_info:
+        admin_module._review_ltr_model(
+            artifact["model_version"], "REJECTED", "Thử reject", {"user_id": "admin-1"})
+    assert exc_info.value.status_code == 409
 
 
 def test_ltr_training_and_group_holdout_metrics():

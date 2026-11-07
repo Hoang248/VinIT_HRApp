@@ -38,7 +38,7 @@
 | F1.07 | Cảnh báo trùng | duplicate detection theo email/phone | duplicate signals | Có tín hiệu trong cùng position, không tự gộp/xóa | `PARTIAL` | Test các trường hợp đổi identifier và dữ liệu thiếu |
 | F1.08 | Trạng thái và lịch sử | application status API | status events/audit events | HR cập nhật theo transition, lý do khi loại, AI không tự đổi trạng thái | `PARTIAL` | RBAC matrix và audit integrity |
 | F1.09 | Shortlist, feedback, ghi chú HR | shortlist API/UI | shortlist shares/items/feedback | Có chia sẻ HM, quyền xem CV, feedback, thu hồi; ghi chú append-only qua API | `PARTIAL` | Kiểm thử chia sẻ/thu hồi trên staging và quyền HM |
-| F1.10 | RBAC, audit, retention | admin/account APIs, audit events | RBAC tables, audit events, retention/deletion tables | Có quản lý role/trạng thái; audit chưa bất biến; retention workflow chưa hoàn tất; legacy key chưa đóng | `BLOCKED` | Đóng legacy key; retention/deletion workflow; audit append-only/integrity; RBAC matrix |
+| F1.10 | RBAC, audit, retention | admin/account APIs, audit events, Admin LTR review API | RBAC tables, audit events, retention/deletion tables, LTR governance tại 00011 | Có quản lý role/trạng thái; LTR approve/reject đã có hash/actor/reason/audit; audit toàn hệ thống chưa bất biến; retention workflow chưa hoàn tất; legacy key chưa đóng | `BLOCKED` | Đóng legacy key; retention/deletion workflow; audit append-only/integrity; RBAC matrix |
 | F1.11 | Cấu hình AI, privacy | Admin AI config, LLM/embedding providers, `GET /v1/admin/semantic/health` | AI config versions, provider secret encryption, pgvector embeddings | Có allowlist, mã hóa API key, redaction best effort; đã bổ sung embedding cache và semantic diagnostics phân biệt DISABLED/MISCONFIGURED/READY/OPERATIONAL/DEGRADED | `BLOCKED` cho CV thật | Phê duyệt privacy/egress; E2E model thật; đánh giá bias/prompt injection |
 | F1.12 | Việt–Anh | frontend i18n | Không áp dụng | Có VI/EN, mặc định VI, test i18n | `PARTIAL` | HR review nội dung nghiệp vụ và các nhãn mới theo policy điểm |
 | F1.13 | Dashboard, worker | dashboard API, worker health | operations, recovery events | Worker thread trong API, advisory lock/fencing/heartbeat/recovery; at-least-once | `PARTIAL` | Chỉ định một worker-enabled instance hoặc tách worker; monitoring/alerting; E2E recovery trên staging |
@@ -60,7 +60,7 @@ Chưa bật `LTR_MODE=ACTIVE` cho tới khi:
 
 - Có HR gold dataset, không chỉ weak labels.
 - Train offline đạt gates và artifact được đăng ký.
-- Governance có artifact hash, người phê duyệt, lý do và audit event.
+- Governance có artifact hash, người phê duyệt, lý do và audit event — đã bổ sung tại migration 00011/Admin API, còn cần kiểm thử trên staging.
 - Production ACTIVE chỉ dùng registry artifact `APPROVED`; file artifact đã bị chặn ở production từ `57b9072`.
 - SHADOW report chứng minh không có vi phạm mandatory/coverage gate.
 
@@ -79,7 +79,7 @@ Chưa tuyên bố production scale cho tới khi:
 2. Đóng legacy Supabase keys — `BLOCKED` chờ thao tác Dashboard/Management API của chủ project sau khi xác nhận mọi deployment đã chuyển sang key/JWKS mới.
 3. Tạo closure review này để theo dõi F1.01–F1.13.
 4. Embedding cache và semantic diagnostics — đã bổ sung ở mức code; cần kiểm thử với endpoint/pgvector thật trên staging.
-5. LTR governance migration/API.
+5. LTR governance migration/API — đã bổ sung và áp migration `00011` lên project đã kết nối; còn thiếu kiểm thử API trên staging và UI phê duyệt.
 6. RBAC test matrix, E2E staging và CI.
 7. Retention/deletion workflow và audit integrity.
 8. Đánh giá BGE bằng golden set; xây HR gold dataset và chạy LTR SHADOW trước ACTIVE.

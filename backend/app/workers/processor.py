@@ -26,7 +26,7 @@ from app.services.embedding import (
     requirement_query_text, semantic_config_fingerprint, vector_literal,
 )
 from app.services.semantic_diagnostics import record_semantic_run
-from app.services.ltr import LTRModel, extract_ranking_features
+from app.services.ltr import LTRModel, artifact_sha256, extract_ranking_features
 from app.services.semantic_retrieval import merge_candidate_chunks, retrieve_semantic_candidates
 from app.services.redaction import redact_text
 from app.services.ai_config import (
@@ -811,7 +811,8 @@ class ProcessingWorker:
                     logger.warning("LTR_MODEL_VERSION is configured but no database session is available")
                     return None
                 row = db.execute(text("""
-                    SELECT artifact, status FROM app_private.ltr_model_versions
+                    SELECT artifact, status, artifact_sha256
+                    FROM app_private.ltr_model_versions
                     WHERE model_version = :model_version
                 """), {"model_version": settings.LTR_MODEL_VERSION}).mappings().first()
                 if not row:
@@ -824,6 +825,10 @@ class ProcessingWorker:
                 artifact = row["artifact"]
                 if isinstance(artifact, str):
                     artifact = json.loads(artifact)
+                stored_hash = row.get("artifact_sha256") if hasattr(row, "get") else None
+                if stored_hash and str(stored_hash) != artifact_sha256(artifact):
+                    logger.warning("LTR artifact hash does not match registry; ranking unchanged")
+                    return None
                 model = LTRModel.from_artifact(artifact)
             elif settings.LTR_MODEL_PATH:
                 if mode == "ACTIVE" and (settings.APP_ENV or "").strip().lower() == "production":

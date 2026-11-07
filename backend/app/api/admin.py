@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from app.services.ai_secrets import (
     normalize_api_key,
 )
 from app.services.llm_client import LLMError, llm_client
+from app.services.ltr import LTRError, LTRModel, artifact_sha256
 from app.services.semantic_diagnostics import get_semantic_diagnostics
 
 router = APIRouter()
@@ -55,6 +57,16 @@ class AIConfigUpdateRequest(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+
+class LTRModelReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _strip_reason(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 def _lock_active_admin(db, user_id: str) -> None:
@@ -310,6 +322,135 @@ async def get_semantic_health(current_user: dict = Depends(require_admin_role)):
     candidates because the provider failed.
     """
     return get_semantic_diagnostics()
+
+
+@router.get("/ltr/models")
+async def list_ltr_models(current_user: dict = Depends(require_admin_role)):
+    """List LTR registry metadata without returning model artifacts."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT model_version, status, metrics, feature_names, training_examples,
+                   training_groups, data_sha256, artifact_sha256, registered_by,
+                   reviewed_by, reviewed_at, review_reason, created_at, approved_at
+            FROM app_private.ltr_model_versions
+            ORDER BY created_at DESC, model_version DESC
+            LIMIT 100
+        """)).mappings().all()
+        return [dict(row) for row in rows]
+    finally:
+        db.close()
+
+
+def _review_ltr_model(model_version: str, action: str, reason: str, current_user: dict) -> dict:
+    target_status = "APPROVED" if action == "APPROVED" else "REJECTED"
+    db = SessionLocal()
+    try:
+        _lock_active_admin(db, current_user["user_id"])
+        row = db.execute(text("""
+            SELECT model_version, artifact, metrics, data_sha256, artifact_sha256, status
+            FROM app_private.ltr_model_versions
+            WHERE model_version = :model_version
+            FOR UPDATE
+        """), {"model_version": model_version}).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Không tìm thấy LTR model version")
+        if str(row["status"] or "").upper() != "DRAFT":
+            raise HTTPException(status_code=409, detail="Chỉ có thể phê duyệt hoặc từ chối model ở trạng thái DRAFT")
+        artifact = row["artifact"]
+        if isinstance(artifact, str):
+            artifact = json.loads(artifact)
+        try:
+            model = LTRModel.from_artifact(artifact)
+        except (LTRError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=f"Artifact LTR không hợp lệ: {exc}") from None
+        current_hash = artifact_sha256(artifact)
+        if row["artifact_sha256"] and str(row["artifact_sha256"]) != current_hash:
+            raise HTTPException(status_code=409, detail="Artifact hash trong registry không khớp nội dung artifact")
+        if action == "APPROVED" and not model.passes_gates(
+            min_ndcg=float(settings.LTR_MIN_NDCG_AT_10),
+            min_pairwise=float(settings.LTR_MIN_PAIRWISE_ACCURACY),
+            min_test_examples=int(settings.LTR_MIN_HOLDOUT_EXAMPLES),
+            min_test_groups=int(settings.LTR_MIN_HOLDOUT_GROUPS),
+        ):
+            raise HTTPException(status_code=400, detail="Artifact chưa đạt quality gates để phê duyệt")
+
+        db.execute(text("""
+            UPDATE app_private.ltr_model_versions
+            SET status = :status,
+                artifact_sha256 = :artifact_sha256,
+                reviewed_by = :user_id,
+                reviewed_at = NOW(),
+                review_reason = :reason,
+                approved_at = CASE WHEN :status = 'APPROVED' THEN NOW() ELSE NULL END
+            WHERE model_version = :model_version
+        """), {
+            "status": target_status, "artifact_sha256": current_hash,
+            "user_id": current_user["user_id"], "reason": reason,
+            "model_version": model_version,
+        })
+        metrics = row["metrics"] if isinstance(row["metrics"], dict) else {}
+        db.execute(text("""
+            INSERT INTO app_private.ltr_model_review_events
+                (model_version, artifact_sha256, actor_user_id, action, from_status,
+                 to_status, reason, metrics, data_sha256)
+            VALUES (:model_version, :artifact_sha256, :user_id, :action, 'DRAFT',
+                    :status, :reason, CAST(:metrics AS jsonb), :data_sha256)
+        """), {
+            "model_version": model_version, "artifact_sha256": current_hash,
+            "user_id": current_user["user_id"], "action": action,
+            "status": target_status, "reason": reason,
+            "metrics": json.dumps(metrics, ensure_ascii=False),
+            "data_sha256": row["data_sha256"],
+        })
+        db.execute(text("""
+            INSERT INTO app_private.audit_events
+                (actor_user_id, action_type, object_type, object_id, outcome, metadata)
+            VALUES (:user_id, :action_type, 'LTR_MODEL', NULL, :status,
+                    CAST(:metadata AS jsonb))
+        """), {
+            "user_id": current_user["user_id"],
+            "action_type": f"LTR_MODEL_{action}",
+            "status": target_status,
+            "metadata": json.dumps({
+                "model_version": model_version,
+                "artifact_sha256": current_hash,
+            }, ensure_ascii=False),
+        })
+        updated = db.execute(text("""
+            SELECT model_version, status, artifact_sha256, reviewed_by, reviewed_at,
+                   review_reason, approved_at
+            FROM app_private.ltr_model_versions
+            WHERE model_version = :model_version
+        """), {"model_version": model_version}).mappings().one()
+        db.commit()
+        return dict(updated)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@router.post("/ltr/models/{model_version}/approve")
+async def approve_ltr_model(
+    model_version: str,
+    request: LTRModelReviewRequest,
+    current_user: dict = Depends(require_admin_role),
+):
+    return _review_ltr_model(model_version, "APPROVED", request.reason, current_user)
+
+
+@router.post("/ltr/models/{model_version}/reject")
+async def reject_ltr_model(
+    model_version: str,
+    request: LTRModelReviewRequest,
+    current_user: dict = Depends(require_admin_role),
+):
+    return _review_ltr_model(model_version, "REJECTED", request.reason, current_user)
 
 
 @router.get("/worker/health")
