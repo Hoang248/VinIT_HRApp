@@ -184,6 +184,19 @@ jobs:
               *(node.text for node in root.iter("system-out")),
               *(node.text for node in root.iter("system-err")),
           ]))
+
+          def diagnostic_snippets(value: str) -> str:
+              snippets = []
+              for marker in ("Operation failed", "error_type=", "Traceback", "psycopg2", "sqlalchemy"):
+                  start = 0
+                  while len(snippets) < 8:
+                      index = value.find(marker, start)
+                      if index < 0:
+                          break
+                      snippets.append(value[max(0, index - 500):index + 1500])
+                      start = index + len(marker)
+              return "\n---DIAGNOSTIC SNIPPET---\n".join(snippets)
+
           for testcase, node in failures[:10]:
               title = f"{testcase.get('classname')}::{testcase.get('name')}"
               captured = "\n".join(filter(None, [
@@ -191,6 +204,7 @@ jobs:
                   testcase.findtext("system-err"),
                   global_captured,
               ]))
-              detail = ((node.get("message") or "") + "\n" + (node.text or "") + "\nCAPTURED:\n" + captured)[-6000:]
+              detail = ((node.get("message") or "") + "\n" + (node.text or "") +
+                        "\nDIAGNOSTICS:\n" + diagnostic_snippets(captured))[-6000:]
               print(f"::error title=Integration failure::{escape(title + chr(10) + detail)}")
           PY
