@@ -2,7 +2,7 @@
 
 > File này ghi lại quá trình rà soát, lập plan và triển khai Phase 2 theo quy ước giống `Update_Excute_P1.md`: trạng thái tổng quan, thay đổi file/code/migration, test đã chạy và kết quả, commit hash sau khi push, blocker và điều kiện mở khóa.
 >
-> **Trạng thái hiện tại:** mới hoàn thành rà soát tài liệu/code. **Chưa triển khai tính năng Phase 2 và chưa có plan triển khai được duyệt.**
+> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng Phase 2; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt.**
 >
 > **F2.08 SSO: TẠM TREO** theo quyết định của người dùng; không đưa vào plan ở vòng này.
 
@@ -12,9 +12,10 @@
 |---|---|---|---|
 | P2-0 | Đọc tài liệu, rà soát code/schema/API/frontend/tests F2.01–F2.07 và F2.09 | HOÀN THÀNH RÀ SOÁT | `audit/PHASE2_REVIEW_2026-11-07.md` |
 | P2-0 | F2.08 SSO | TẠM TREO | Không lập plan/không thay đổi auth trong vòng này |
-| P2-1 | Chốt phạm vi ưu tiên và quyết định nghiệp vụ/pháp lý đầu vào | CHỜ NGƯỜI DÙNG DUYỆT | Các câu hỏi trong mục 6 của báo cáo rà soát |
-| P2-2 | Lập plan triển khai theo batch | CHƯA BẮT ĐẦU | Chỉ thực hiện sau khi P2-1 được duyệt |
-| P2-3 | Triển khai/test/CI | CHƯA BẮT ĐẦU | Cập nhật theo từng batch sau này |
+| P2-1 | Chốt phạm vi ưu tiên đầu tiên | ĐÃ CHỐT | Workflow cốt lõi F2.01 + F2.02; F2.07 loại khỏi vòng này; Candidate Rediscovery để cuối Phase 2 |
+| P2-2 | Lập plan triển khai chi tiết batch đầu | HOÀN THÀNH — CHỜ DUYỆT PLAN | `doc/PHASE2_IMPLEMENTATION_PLAN.md` |
+| P2-2.1 | Chốt quyết định nghiệp vụ D-01…D-10 trong plan batch đầu | CHỜ HR/HR LEAD DUYỆT | Mục 3 của plan chi tiết |
+| P2-3 | Triển khai/test/CI batch Workflow Core | CHƯA BẮT ĐẦU | Chỉ thực hiện sau khi plan và D-01…D-10 được duyệt |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -23,7 +24,7 @@
 3. Không dùng CV/dữ liệu thật khi chưa có phê duyệt privacy/egress và kiểm chứng vận hành cần thiết.
 4. Không tự suy diễn HR override, chất lượng OCR/matching hoặc hiệu quả tuyển dụng từ trạng thái hiện tại khi hệ thống chưa ghi sự kiện/dữ liệu phù hợp.
 5. F2.08 SSO giữ trạng thái tạm treo cho tới khi người dùng có quyết định mở lại.
-6. Candidate Rediscovery chưa được tự ý đưa vào Phase 2: PRD roadmap và `HRA_NextPhase.md` đang phân loại khác nhau (PRD Phase 2, NextPhase F3.01); cần quyết định riêng.
+6. Candidate Rediscovery đã được chốt để ở cuối Phase 2, không thuộc batch đầu; trước khi lập plan chi tiết cho hạng mục này vẫn phải có quyết định về consent, retention và quyền tái sử dụng CV.
 
 ## 3. P2-0 — Rà soát tài liệu và code hiện tại
 
@@ -77,27 +78,53 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 
 - Commit rà soát Phase 2: `7189d20` (`docs: rà soát Phase 2 và tạm dừng gate Phase 1`), đã push lên `arena/ea6e2570-vinit-hrapp`.
 
-## 4. Việc cần người dùng quyết định trước plan
+### 3.7. P2-2 — Plan chi tiết batch đầu Workflow Core
 
-1. Phạm vi/ưu tiên triển khai đầu tiên trong F2.01–F2.07 và F2.09.
-2. Job-family taxonomy và chủ sở hữu phê duyệt rubric mẫu.
-3. Mẫu scorecard HM và rule nhắc việc.
-4. Định nghĩa HR override và metric dictionary cho analytics.
-5. Chính sách QA sampling/reviewer/flag handling.
-6. Mức hiển thị dữ liệu khi phát hiện ứng viên trùng giữa các position.
-7. Trường dữ liệu và quyền export ở F2.09.
-8. Hướng Legal cho retention hold, OTP/chữ ký điện tử và kênh cảnh báo.
-9. Candidate Rediscovery thuộc Phase 2 hay Phase 3.
+- Đã tạo `doc/PHASE2_IMPLEMENTATION_PLAN.md` cho F2.01 Rubric Library và F2.02 Structured Collaborative Workflow HR–HM.
+- Plan đã khóa phạm vi ngoài batch đầu: F2.07 loại khỏi vòng này, Candidate Rediscovery để cuối Phase 2 và F2.08 SSO tiếp tục tạm treo.
+- Plan gồm cổng quyết định D-01…D-10, thiết kế dữ liệu/API/UI dự kiến, thứ tự triển khai, kiểm thử bắt buộc, tiêu chí nghiệm thu và rủi ro.
+- Chưa thay đổi code tính năng, schema/migration, API hoặc frontend; triển khai chỉ bắt đầu sau khi plan và D-01…D-10 được duyệt.
+- Commit plan: sẽ bổ sung sau khi commit/push.
+
+## 4. Quyết định đã chốt và việc còn phải duyệt
+
+### 4.1. Quyết định phạm vi đã chốt ngày 2026-11-07
+
+1. Ưu tiên đầu tiên: Workflow cốt lõi F2.01 + F2.02.
+2. Chỉ lập plan chi tiết cho batch đầu; các nhóm Phase 2 còn lại ở mức roadmap.
+3. F2.07 loại khỏi vòng triển khai này; giữ nguyên retention thủ công an toàn của Phase 1.
+4. Candidate Rediscovery để ở cuối Phase 2, không thuộc batch đầu.
+5. F2.08 SSO tiếp tục tạm treo.
+
+### 4.2. Quyết định còn phải chốt trước khi triển khai batch đầu
+
+Các quyết định D-01…D-10 tại Mục 3 của `doc/PHASE2_IMPLEMENTATION_PLAN.md`, đặc biệt:
+
+- Job-family taxonomy, chủ sở hữu/publish template và chuẩn hóa `level_band`.
+- Thang scorecard, điều kiện submit, deadline mặc định và phạm vi email reminder.
+- Quyền xem scorecard và xác nhận HR private notes luôn tách khỏi HM view.
+
+### 4.3. Quyết định để dành cho các plan sau
+
+- Định nghĩa HR override và metric dictionary cho F2.03.
+- QA sampling/reviewer/flag handling cho F2.04.
+- Mức hiển thị cross-position duplicate cho F2.05.
+- Ngưỡng OCR/manual review cho F2.06.
+- Quyền và trường dữ liệu export cho F2.09.
+- Consent/retention/quyền tái sử dụng CV cho Candidate Rediscovery cuối Phase 2.
 
 ## 5. Blocker và điều kiện mở khóa
 
 | Mã | Hạng mục | Trạng thái | Điều kiện mở khóa |
 |---|---|---|---|
-| P2-B01 | Chưa chốt phạm vi/ưu tiên Phase 2 | CHỜ QUYẾT ĐỊNH | Người dùng duyệt nhóm tính năng làm trước từ báo cáo rà soát |
-| P2-B02 | Thiếu quyết định nghiệp vụ cho rubric/scorecard/analytics/QA | CHỜ HR/HM | Chốt taxonomy, scorecard, metric dictionary và sampling policy |
-| P2-B03 | Thiếu quyết định Legal/privacy cho QA dataset, cross-position, retention và export | CHỜ LEGAL/IT SECURITY | Có hướng xử lý dữ liệu và phê duyệt theo từng tính năng |
-| P2-B04 | Phase 1 Production gates đang tạm dừng | KHÔNG CHẶN RÀ SOÁT/PLAN | Chỉ chặn nghiệm thu Production/dữ liệu thật; không chặn thiết kế hoặc dev bằng dữ liệu tổng hợp |
-| P2-B05 | SSO | TẠM TREO | Chỉ mở lại khi người dùng yêu cầu |
+| P2-B01 | Phạm vi/ưu tiên batch đầu Phase 2 | ĐÃ CHỐT | Workflow cốt lõi F2.01 + F2.02; chỉ lập plan chi tiết batch đầu |
+| P2-B02 | Plan chi tiết batch Workflow Core | CHỜ DUYỆT PLAN | Người dùng duyệt `doc/PHASE2_IMPLEMENTATION_PLAN.md` |
+| P2-B03 | Quyết định nghiệp vụ D-01…D-10 | CHỜ HR/HR LEAD + HM/IT | Chốt taxonomy/template ownership, chuẩn hóa level, scorecard, deadline, reminder và quyền xem |
+| P2-B04 | Nội dung rubric mẫu và dữ liệu kiểm thử nghiệp vụ | CHỜ HR CUNG CẤP | Có taxonomy đã duyệt và ít nhất một rubric draft thực tế để kiểm thử |
+| P2-B05 | Phase 1 Production gates đang tạm dừng | KHÔNG CHẶN LẬP PLAN | Chỉ chặn nghiệm thu Production/dữ liệu thật; không chặn thiết kế hoặc dev bằng dữ liệu tổng hợp |
+| P2-B06 | SSO | TẠM TREO | Chỉ mở lại khi người dùng yêu cầu |
+| P2-B07 | F2.07 Retention automation | LOẠI KHỎI VÒNG NÀY | Chỉ xét lại khi có quyết định mới; quyết định Legal về hold/OTP/chữ ký vẫn cần nếu mở lại |
+| P2-B08 | Candidate Rediscovery | ĐỂ CUỐI PHASE 2 | Chỉ lập plan sau khi chốt consent, retention và quyền tái sử dụng CV |
 
 ## 6. Quy ước cập nhật file này
 
