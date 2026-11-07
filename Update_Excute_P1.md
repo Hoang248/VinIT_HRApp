@@ -24,7 +24,7 @@
 | 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
 | 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
 | 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Commit `90dd4b2`; GitHub Actions run `42382329761` đạt cả 3 job; chờ DevOps/HR chạy trên staging |
-| 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Full backend local **160 passed**; audit remote 0 broken; finding còn mở tại `doc/PENDING_DEPLOYMENT.md` |
+| 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -251,6 +251,7 @@
 - Ruff phạm vi CI cho các bề mặt nâng cấp: đạt.
 - `generate_staging_fixtures.py --check`: đạt.
 - Supabase connector postflight: project `ACTIVE_HEALTHY`; migration tới `20261107142027`; audit events 21, broken 0, missing hash 0; operations đang chạy 0; approved LTR models 0.
+- Commit `5f5ab66` đã push; GitHub Actions run `42383228867` đạt cả Backend unit tests, Frontend checks và Backend integration. URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42383228867
 
 #### Finding còn mở được chuyển vào tài liệu chờ triển khai
 
