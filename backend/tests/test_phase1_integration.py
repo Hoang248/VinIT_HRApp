@@ -563,14 +563,18 @@ def test_rbac_matrix_position_scope_and_admin_surfaces(client, seed):
         assert response.status_code == 200, (user_key, response.text)
         assert [row["position_id"] for row in response.json()] == expected_positions
 
-    # Application/dashboard access follows position assignment, not merely
-    # possessing an authenticated account or a global HM role.
+    # Application access follows position assignment/share rules.  Position
+    # dashboard is visible to an assigned HM, but application aggregates stay
+    # empty until HR shares that application; unassigned users are denied.
     assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["hr"])).status_code == 200
     assert client.get(f"/v1/applications/{seed['app2']}", headers=headers(seed["hr"])).status_code == 403
     assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["hm"])).status_code == 403
     assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["other"])).status_code == 403
     assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["hr"])).status_code == 200
-    assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["hm"])).status_code == 403
+    manager_dashboard = client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["hm"]))
+    assert manager_dashboard.status_code == 200, manager_dashboard.text
+    assert manager_dashboard.json()["total_applications"] == 0
+    assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["other"])).status_code == 403
     assert client.get(f"/v1/dashboard/position/{seed['pos2']}", headers=headers(seed["hr"])).status_code == 403
 
     # New semantic/LTR admin surfaces are ADMIN-only.  The unassigned user

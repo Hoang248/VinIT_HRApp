@@ -181,6 +181,10 @@ jobs:
 
           for testcase, node in failures[:10]:
               title = f"{testcase.get('classname')}::{testcase.get('name')}"
-              detail = ((node.get("message") or "") + "\n" + (node.text or ""))[-3500:]
+              captured = "\n".join(filter(None, [
+                  testcase.findtext("system-out"),
+                  testcase.findtext("system-err"),
+              ]))
+              detail = ((node.get("message") or "") + "\n" + (node.text or "") + "\nCAPTURED:\n" + captured)[-6000:]
               print(f"::error title=Integration failure::{escape(title + chr(10) + detail)}")
           PY
