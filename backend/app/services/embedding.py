@@ -56,6 +56,23 @@ def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in normalize_vector(vector)) + "]"
 
 
+def parse_vector_literal(value: Any) -> list[float]:
+    """Parse a pgvector text value (or an already-decoded sequence)."""
+    if isinstance(value, (list, tuple)):
+        return normalize_vector([float(item) for item in value])
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            inner = text[1:-1].strip()
+            if not inner:
+                raise EmbeddingError("Embedding vector is empty")
+            try:
+                return normalize_vector([float(item.strip()) for item in inner.split(",")])
+            except ValueError:
+                raise EmbeddingError("Embedding vector is malformed") from None
+    raise EmbeddingError("Embedding vector has an unsupported representation")
+
+
 class EmbeddingProvider(Protocol):
     name: str
     model: str

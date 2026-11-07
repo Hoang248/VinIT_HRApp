@@ -56,8 +56,8 @@ Các file liên quan:
 BGE trong hệ thống hiện tại không chấm điểm ứng viên trực tiếp. Quy trình:
 
 1. CV được chia chunk tối đa khoảng 900 ký tự bởi deterministic matching.
-2. Worker gọi embedding provider với `kind="document"` cho toàn bộ CV chunks.
-3. Vector được chuẩn hoá L2, kiểm tra dimension, rồi lưu vào `app_private.cv_chunk_embeddings` kèm:
+2. Worker tra cứu vector đã lưu theo `document_id + chunk_id + chunk_text_sha256 + embedding_model + index_version`; chỉ các chunk còn thiếu mới được gọi embedding provider với `kind="document"`.
+3. Vector mới được chuẩn hoá L2, kiểm tra dimension, rồi lưu vào `app_private.cv_chunk_embeddings` kèm:
    - `document_id`, `chunk_id`
    - `chunk_text_sha256`
    - section/page/char offsets
@@ -99,6 +99,21 @@ Provider hiện tại:
 - `hash` chỉ để test plumbing pgvector/retrieval; không phải BGE và không được dùng để tuyên bố chất lượng semantic.
 - `bge_http` gửi `{"model": ..., "input": [...]}` tới `{EMBEDDING_API_BASE}/embeddings`, dùng Bearer token nếu có.
 - Endpoint ngoài phải là HTTPS và `ALLOW_EXTERNAL_API=true`; endpoint private/loopback được phép theo policy nội bộ trong code.
+
+### 3.4. Embedding cache và diagnostics
+
+Từ vòng nâng cấp sau review lần 2, worker không embed lại toàn bộ CV chunks ở mỗi assessment. Cache key là document, chunk, hash nội dung, model và index version; đổi nội dung chunk, model hoặc index version sẽ tạo cache miss đúng chủ đích và chỉ embed lại phần thiếu.
+
+Admin có thể gọi `GET /v1/admin/semantic/health` (yêu cầu role Admin) để phân biệt:
+
+- `DISABLED`: semantic đang tắt.
+- `MISCONFIGURED`: semantic bật nhưng provider/base/dimension/top-k/similarity không hợp lệ, hoặc đang dùng `hash` test provider.
+- `READY_UNVERIFIED`: cấu hình hợp lệ nhưng process chưa có lượt semantic thành công.
+- `OPERATIONAL`: lượt gần nhất thành công với pgvector.
+- `OPERATIONAL_IN_MEMORY_PGVECTOR_UNAVAILABLE`: provider chạy được nhưng pgvector lỗi, hệ thống dùng cosine in-memory.
+- `DEGRADED_FALLBACK`: lượt gần nhất lỗi provider và quay về lexical.
+
+Diagnostics trả thêm số run, cache hit/miss, hit rate, số chunk/query đã embed, trạng thái pgvector và loại lỗi gần nhất. Endpoint không gọi provider và không trả API base/API key.
 
 ## 4. BGE-M3 có API free dùng ngay không?
 

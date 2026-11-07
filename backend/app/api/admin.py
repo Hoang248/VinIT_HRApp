@@ -27,6 +27,7 @@ from app.services.ai_secrets import (
     normalize_api_key,
 )
 from app.services.llm_client import LLMError, llm_client
+from app.services.semantic_diagnostics import get_semantic_diagnostics
 
 router = APIRouter()
 
@@ -296,6 +297,19 @@ async def get_active_ai_config(current_user: dict = Depends(require_admin_role))
         allowed = False
     return {"active": True, "source": runtime["source"], "allowed_by_this_process": allowed,
             "config": {**public_runtime(runtime), "external_api_allowed": settings.ALLOW_EXTERNAL_API}}
+
+
+@router.get("/semantic/health")
+async def get_semantic_health(current_user: dict = Depends(require_admin_role)):
+    """Configured/runtime semantic state for this API/worker process.
+
+    This intentionally does not call the embedding provider and never
+    returns the configured endpoint or API key.  ``READY_UNVERIFIED`` means
+    configuration is coherent but this process has not completed a semantic
+    run yet; ``DEGRADED_FALLBACK`` means the last attempt returned lexical
+    candidates because the provider failed.
+    """
+    return get_semantic_diagnostics()
 
 
 @router.get("/worker/health")

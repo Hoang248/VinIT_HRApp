@@ -39,7 +39,7 @@
 | F1.08 | Trạng thái và lịch sử | application status API | status events/audit events | HR cập nhật theo transition, lý do khi loại, AI không tự đổi trạng thái | `PARTIAL` | RBAC matrix và audit integrity |
 | F1.09 | Shortlist, feedback, ghi chú HR | shortlist API/UI | shortlist shares/items/feedback | Có chia sẻ HM, quyền xem CV, feedback, thu hồi; ghi chú append-only qua API | `PARTIAL` | Kiểm thử chia sẻ/thu hồi trên staging và quyền HM |
 | F1.10 | RBAC, audit, retention | admin/account APIs, audit events | RBAC tables, audit events, retention/deletion tables | Có quản lý role/trạng thái; audit chưa bất biến; retention workflow chưa hoàn tất; legacy key chưa đóng | `BLOCKED` | Đóng legacy key; retention/deletion workflow; audit append-only/integrity; RBAC matrix |
-| F1.11 | Cấu hình AI, privacy | Admin AI config, LLM/embedding providers | AI config versions, provider secret encryption | Có allowlist, mã hóa API key, redaction best effort, semantic diagnostics còn hạn chế | `BLOCKED` cho CV thật | Phê duyệt privacy/egress; E2E model thật; semantic diagnostics; đánh giá bias/prompt injection |
+| F1.11 | Cấu hình AI, privacy | Admin AI config, LLM/embedding providers, `GET /v1/admin/semantic/health` | AI config versions, provider secret encryption, pgvector embeddings | Có allowlist, mã hóa API key, redaction best effort; đã bổ sung embedding cache và semantic diagnostics phân biệt DISABLED/MISCONFIGURED/READY/OPERATIONAL/DEGRADED | `BLOCKED` cho CV thật | Phê duyệt privacy/egress; E2E model thật; đánh giá bias/prompt injection |
 | F1.12 | Việt–Anh | frontend i18n | Không áp dụng | Có VI/EN, mặc định VI, test i18n | `PARTIAL` | HR review nội dung nghiệp vụ và các nhãn mới theo policy điểm |
 | F1.13 | Dashboard, worker | dashboard API, worker health | operations, recovery events | Worker thread trong API, advisory lock/fencing/heartbeat/recovery; at-least-once | `PARTIAL` | Chỉ định một worker-enabled instance hoặc tách worker; monitoring/alerting; E2E recovery trên staging |
 
@@ -78,7 +78,7 @@ Chưa tuyên bố production scale cho tới khi:
 1. Sửa công thức điểm UNCLEAR và khóa LTR file artifact ở production — đã có tại `57b9072`.
 2. Đóng legacy Supabase keys — `BLOCKED` chờ thao tác Dashboard/Management API của chủ project sau khi xác nhận mọi deployment đã chuyển sang key/JWKS mới.
 3. Tạo closure review này để theo dõi F1.01–F1.13.
-4. Embedding cache và semantic diagnostics.
+4. Embedding cache và semantic diagnostics — đã bổ sung ở mức code; cần kiểm thử với endpoint/pgvector thật trên staging.
 5. LTR governance migration/API.
 6. RBAC test matrix, E2E staging và CI.
 7. Retention/deletion workflow và audit integrity.

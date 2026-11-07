@@ -12,8 +12,15 @@ from app.services.embedding import (
     HashEmbeddingProvider,
     cosine_similarity,
     normalize_vector,
+    parse_vector_literal,
     requirement_query_text,
     semantic_config_fingerprint,
+    vector_literal,
+)
+from app.services.semantic_diagnostics import (
+    get_semantic_diagnostics,
+    record_semantic_run,
+    reset_semantic_diagnostics,
 )
 from app.services.ltr import LTRError, LTRModel, extract_ranking_features, train_ltr_model
 from app.services.matching import MatchingEngine
@@ -111,6 +118,37 @@ def test_bge_provider_requires_configured_endpoint():
         asyncio.run(provider.embed(["text"], kind="document"))
 
 
+def test_parse_vector_literal_round_trip():
+    vector = parse_vector_literal(vector_literal([3.0, 4.0]))
+    assert vector == pytest.approx([0.6, 0.8])
+    with pytest.raises(EmbeddingError):
+        parse_vector_literal("not-a-vector")
+
+
+def test_semantic_diagnostics_distinguish_configuration_and_fallback(monkeypatch):
+    from app.core.config import settings
+
+    reset_semantic_diagnostics()
+    monkeypatch.setattr(settings, "SEMANTIC_RETRIEVAL_ENABLED", False)
+    assert get_semantic_diagnostics()["state"] == "DISABLED"
+
+    monkeypatch.setattr(settings, "SEMANTIC_RETRIEVAL_ENABLED", True)
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "disabled")
+    diagnostics = get_semantic_diagnostics()
+    assert diagnostics["state"] == "MISCONFIGURED"
+    assert diagnostics["issues"]
+
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "bge_http")
+    monkeypatch.setattr(settings, "EMBEDDING_API_BASE", "https://embeddings.example")
+    assert get_semantic_diagnostics()["state"] == "READY_UNVERIFIED"
+
+    record_semantic_run(outcome="PROVIDER_FALLBACK", error_type="EmbeddingError")
+    diagnostics = get_semantic_diagnostics()
+    assert diagnostics["state"] == "DEGRADED_FALLBACK"
+    assert diagnostics["runtime"]["provider_failures"] == 1
+    reset_semantic_diagnostics()
+
+
 def test_requirement_query_text_from_structured_spec():
     query = requirement_query_text({
         "name": "Backend experience",
@@ -187,6 +225,113 @@ def test_worker_semantic_fallback_uses_in_memory_when_pgvector_fails(monkeypatch
         loop.close()
     assert result["crit-1"][0]["chunk_id"] == "c1"
     assert result["crit-1"][0]["retrieval_source"] == "SEMANTIC"
+
+
+class _CacheResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _FakeEmbeddingCacheDb:
+    class _Nested:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def __init__(self):
+        self.store = {}
+
+    def begin_nested(self):
+        return self._Nested()
+
+    def execute(self, statement, params=None):
+        params = params or {}
+        sql = str(statement)
+        if "embedding::text AS embedding_text" in sql:
+            hashes = set(params["chunk_hashes"])
+            return _CacheResult([
+                {"chunk_id": chunk_id, "chunk_text_sha256": chunk_hash,
+                 "embedding_text": vector_literal(vector)}
+                for (chunk_id, chunk_hash), vector in self.store.items()
+                if chunk_hash in hashes
+            ])
+        if "INSERT INTO app_private.cv_chunk_embeddings" in sql:
+            self.store[(params["chunk_id"], params["chunk_hash"])] = parse_vector_literal(
+                params["embedding"])
+            return _CacheResult([])
+        if "1 - (embedding <=>" in sql:
+            query_vector = parse_vector_literal(params["query_vector"])
+            rows = [
+                {"chunk_id": chunk_id,
+                 "similarity": sum(a * b for a, b in zip(query_vector, vector))}
+                for (chunk_id, _), vector in self.store.items()
+            ]
+            rows.sort(key=lambda row: -row["similarity"])
+            return _CacheResult(rows[:params["top_k"]])
+        raise AssertionError(f"Unexpected SQL in cache test: {sql}")
+
+
+class _CountingHashProvider(HashEmbeddingProvider):
+    def __init__(self):
+        super().__init__(dimension=32)
+        self.document_batch_sizes = []
+
+    async def embed(self, texts, *, kind="document"):
+        if kind == "document":
+            self.document_batch_sizes.append(len(texts))
+        return await super().embed(texts, kind=kind)
+
+
+def test_worker_semantic_embedding_cache_avoids_repeat_document_calls(monkeypatch):
+    import app.workers.processor as processor_module
+    from app.core.config import settings
+
+    reset_semantic_diagnostics()
+    monkeypatch.setattr(settings, "SEMANTIC_RETRIEVAL_ENABLED", True)
+    monkeypatch.setattr(settings, "SEMANTIC_MIN_SIMILARITY", 0.1)
+    monkeypatch.setattr(settings, "SEMANTIC_TOP_K", 5)
+    provider = _CountingHashProvider()
+    monkeypatch.setattr(processor_module, "get_embedding_provider", lambda: provider)
+    worker = ProcessingWorker.__new__(ProcessingWorker)
+    db = _FakeEmbeddingCacheDb()
+    deterministic_result = {
+        "chunks": [
+            {"chunk_id": "c1", "text": "Python SQL backend APIs",
+             "page_number": 1, "char_start": 0, "char_end": 25},
+            {"chunk_id": "c2", "text": "Cooking gardening travel",
+             "page_number": 1, "char_start": 26, "char_end": 50},
+        ],
+        "fallback_chunks": {"crit-1": []},
+        "requirement_specs": {
+            "crit-1": {"name": "Backend", "kind": "skill",
+                       "terms": [{"label": "Python"}, {"label": "SQL"}]},
+        },
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        for _ in range(2):
+            result = worker._semantic_fallback_chunks(
+                db, loop, application_id="app-1", document_id="doc-1",
+                deterministic_result=deterministic_result,
+                unresolved_criteria=[{"criterion_id": "crit-1"}],
+            )
+            assert result["crit-1"][0]["chunk_id"] == "c1"
+    finally:
+        loop.close()
+    assert provider.document_batch_sizes == [2]
+    diagnostics = get_semantic_diagnostics()
+    assert diagnostics["runtime"]["cache_hits"] == 2
+    assert diagnostics["runtime"]["cache_misses"] == 2
+    assert diagnostics["runtime"]["cache_hit_rate"] == 0.5
+    reset_semantic_diagnostics()
 
 
 def _ltr_examples(group_count: int = 6, per_group: int = 8):

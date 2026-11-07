@@ -22,9 +22,10 @@ from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
 from app.services.deterministic_matching import deterministic_matcher
 from app.services.embedding import (
-    chunk_text_sha256, get_embedding_provider,
+    chunk_text_sha256, get_embedding_provider, parse_vector_literal,
     requirement_query_text, semantic_config_fingerprint, vector_literal,
 )
+from app.services.semantic_diagnostics import record_semantic_run
 from app.services.ltr import LTRModel, extract_ranking_features
 from app.services.semantic_retrieval import merge_candidate_chunks, retrieve_semantic_candidates
 from app.services.redaction import redact_text
@@ -644,28 +645,87 @@ class ProcessingWorker:
         provider = get_embedding_provider()
         embedding_model = str(getattr(provider, "model", settings.EMBEDDING_MODEL))
         embedding_dimension = int(getattr(provider, "dimension", settings.EMBEDDING_DIMENSION))
+        specs = deterministic_result.get("requirement_specs") or {}
+        queries = {
+            str(criterion.get("criterion_id")): requirement_query_text(
+                specs.get(str(criterion.get("criterion_id"))) or criterion)
+            for criterion in unresolved_criteria
+        }
+        chunk_hashes = [chunk_text_sha256(str(chunk.get("text") or "")) for chunk in chunks]
+
+        # Reuse vectors already stored for this exact document chunk text,
+        # model and index version.  Only missing chunks are sent to the
+        # embedding provider; this avoids repeating cost and CV egress when
+        # a new rubric/policy causes another assessment of the same document.
+        pg_available = True
+        cached_vectors: dict[tuple[str, str], list[float]] = {}
         try:
-            chunk_vectors = loop.run_until_complete(
-                provider.embed([str(chunk.get("text") or "") for chunk in chunks], kind="document"))
-            specs = deterministic_result.get("requirement_specs") or {}
-            queries = {
-                str(criterion.get("criterion_id")): requirement_query_text(
-                    specs.get(str(criterion.get("criterion_id"))) or criterion)
-                for criterion in unresolved_criteria
-            }
+            with db.begin_nested():
+                cached_rows = db.execute(text("""
+                    SELECT chunk_id, chunk_text_sha256, embedding::text AS embedding_text
+                    FROM app_private.cv_chunk_embeddings
+                    WHERE document_id = :document_id AND embedding_model = :model
+                      AND index_version = :index_version
+                      AND chunk_text_sha256 = ANY(CAST(:chunk_hashes AS text[]))
+                """), {
+                    "document_id": document_id, "model": embedding_model,
+                    "index_version": settings.EMBEDDING_INDEX_VERSION,
+                    "chunk_hashes": chunk_hashes,
+                }).mappings().all()
+            for row in cached_rows:
+                try:
+                    cached_vectors[(str(row["chunk_id"]), str(row["chunk_text_sha256"]))] = (
+                        parse_vector_literal(row["embedding_text"]))
+                except Exception:
+                    continue
+        except Exception as exc:
+            pg_available = False
+            logger.warning("pgvector embedding cache unavailable; embedding all chunks",
+                           error_type=type(exc).__name__)
+
+        chunk_vectors: list[list[float] | None] = [
+            cached_vectors.get((str(chunk.get("chunk_id")), chunk_hashes[index]))
+            for index, chunk in enumerate(chunks)
+        ]
+        missing_indices = [index for index, vector in enumerate(chunk_vectors) if vector is None]
+        cache_hits = len(chunks) - len(missing_indices)
+        try:
+            if missing_indices:
+                missing_vectors = loop.run_until_complete(provider.embed(
+                    [str(chunks[index].get("text") or "") for index in missing_indices],
+                    kind="document"))
+                for index, vector in zip(missing_indices, missing_vectors, strict=True):
+                    chunk_vectors[index] = vector
             query_vectors = loop.run_until_complete(
                 provider.embed(list(queries.values()), kind="query"))
         except Exception as exc:  # provider outage must not fail assessment
+            record_semantic_run(
+                cache_hits=cache_hits, cache_misses=len(missing_indices),
+                pgvector_status="AVAILABLE" if pg_available else "UNAVAILABLE",
+                outcome="PROVIDER_FALLBACK", error_type=type(exc).__name__)
             logger.warning("Semantic embedding unavailable; using lexical fallback",
                            error_type=type(exc).__name__)
             return fallback
+        resolved_chunk_vectors: list[list[float]] = [
+            vector for vector in chunk_vectors if vector is not None
+        ]
+        if len(resolved_chunk_vectors) != len(chunks):
+            record_semantic_run(
+                cache_hits=cache_hits, cache_misses=len(missing_indices),
+                pgvector_status="AVAILABLE" if pg_available else "UNAVAILABLE",
+                outcome="PROVIDER_FALLBACK", error_type="EmbeddingError")
+            logger.warning("Semantic embedding unavailable; using lexical fallback",
+                           error_type="EmbeddingError")
+            return fallback
+        chunk_vectors = resolved_chunk_vectors
 
-        # Persist vectors for reuse.  A missing extension/table only disables
-        # pgvector for this run; in-memory cosine below still works.
-        pg_available = True
+        # Persist only newly embedded vectors.  A missing extension/table
+        # only disables pgvector for this run; in-memory cosine below still
+        # works.
         try:
             with db.begin_nested():
-                for chunk, vector in zip(chunks, chunk_vectors, strict=True):
+                for index in missing_indices:
+                    chunk, vector = chunks[index], chunk_vectors[index]
                     db.execute(text("""
                         INSERT INTO app_private.cv_chunk_embeddings
                             (application_id, document_id, chunk_id, chunk_text_sha256, section,
@@ -732,6 +792,12 @@ class ProcessingWorker:
                 fallback.get(criterion_id, []), semantic_chunks,
                 limit=5,
             )
+        record_semantic_run(
+            cache_hits=cache_hits, cache_misses=len(missing_indices),
+            document_chunks_embedded=len(missing_indices),
+            query_texts_embedded=len(queries),
+            pgvector_status="AVAILABLE" if pg_available else "UNAVAILABLE",
+            outcome="SEMANTIC_SUCCESS")
         return fallback
 
     def _load_ltr_model(self, db=None) -> LTRModel | None:
