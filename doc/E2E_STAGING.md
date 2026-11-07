@@ -2,6 +2,8 @@
 
 > Mục đích: kiểm chứng toàn bộ luồng bằng dịch vụ thật trên staging với dữ liệu tổng hợp hoặc dữ liệu đã được phê duyệt sử dụng. Tài liệu này là runbook/khung bằng chứng; việc có runbook không đồng nghĩa E2E đã đạt.
 
+Checklist thực thi từng bước và mẫu ký duyệt nằm tại [`E2E_STAGING_EXECUTION_CHECKLIST.md`](E2E_STAGING_EXECUTION_CHECKLIST.md). Bộ dữ liệu tổng hợp đi kèm nằm tại `staging/synthetic/manifest.json`; sinh DOCX upload bằng `backend/scripts/generate_staging_fixtures.py`.
+
 ## 1. Điều kiện an toàn
 
 - Chỉ dùng staging tách biệt, không dùng database/Supabase project production hoặc project chứa CV thật chưa được phê duyệt.

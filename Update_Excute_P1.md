@@ -23,6 +23,7 @@
 | 3 | LTR governance: artifact hash, review events, Admin approve/reject API | ĐÃ LÀM ở code + project Supabase đã kết nối | Commit `eb674d7`; migration `00011` remote version `20261107133211` |
 | 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
 | 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
+| 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Fixture tests + backend unit không DB đạt; chờ DevOps/HR chạy trên staging |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -191,6 +192,40 @@
 - Chạy retention workflow trên staging thật với Supabase Auth/Storage và backend đã deploy code Batch 5; chưa dùng CV thật.
 - Kiểm chứng `GET /v1/admin/audit/verify` qua backend staging (postflight SQL trên project đã kết nối hiện đạt 0 broken event, nhưng chưa thay thế smoke test qua API đã deploy).
 - F1.10 chưa đóng hoàn toàn cho tới khi có staging evidence; EXT-1 legacy keys vẫn `BLOCKED – manual ops`.
+
+### Batch 5.1 — Chuẩn bị thực thi gate staging
+
+#### Trạng thái: ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT
+
+#### Đã thay đổi
+
+- `staging/synthetic/manifest.json` + `staging/synthetic/candidates/*.txt`
+  - Bộ dữ liệu tổng hợp `phase1-staging-synthetic-v1`: 5 user theo vai trò, department/position mẫu, criteria Python/PostgreSQL/Docker, 8 candidate cho matching/duplicate/retention và 1 fixture text phục vụ tạo scan OCR ngoài Git.
+  - Mọi identity dùng `@example.test` và số điện thoại tổng hợp chứa `000`; không chứa CV/dữ liệu thật.
+- `backend/scripts/generate_staging_fixtures.py`
+  - Validate manifest chỉ cho phép dữ liệu `SYNTHETIC_ONLY`, kiểm tra source files/expected outcomes, sinh DOCX vào `staging/generated/` để upload staging.
+- `backend/tests/test_staging_fixtures.py`
+  - Kiểm tra manifest hoàn chỉnh, chỉ dùng email tổng hợp và DOCX sinh ra đọc lại được bằng `python-docx`.
+- `doc/E2E_STAGING_EXECUTION_CHECKLIST.md`
+  - Checklist thực thi từng bước cho DevOps/Admin/HR/HM: preflight, chuẩn bị dữ liệu, 16 kịch bản E2E-01…E2E-16, mẫu bằng chứng, điều kiện ký duyệt và dọn dẹp.
+  - Ghi rõ fixture này là smoke/E2E data, không phải HR golden set cho matching/BGE/LTR.
+- `doc/E2E_STAGING.md`
+  - Liên kết runbook tổng quát tới checklist thực thi và bộ fixture.
+- `.gitignore`
+  - Ignore `staging/generated/`; source pack tổng hợp vẫn được review trong Git.
+
+#### Kiểm chứng
+
+- `generate_staging_fixtures.py --check`: đạt; sinh thử 8 DOCX vào thư mục tạm thành công.
+- Targeted `test_staging_fixtures.py` + `test_retention_audit.py`: **7 passed**.
+- Backend unit không có integration database: **97 passed, 63 skipped**.
+- Ruff cho script/test mới: đạt.
+
+#### Còn phụ thuộc bên ngoài
+
+- DevOps/IT dựng staging và deploy commit chứa Batch 5; HR/HM/Admin chạy checklist bằng tài khoản staging.
+- Nếu dùng LLM/BGE/OCR thật phải có phê duyệt privacy/egress; chưa có phê duyệt thì chỉ dùng local/mock hoặc dữ liệu tổng hợp trong staging tách biệt.
+- Sau khi chạy thật, mới cập nhật Closure Review bằng bằng chứng PASS/FAIL; không coi Batch 5.1 là E2E đã đạt.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

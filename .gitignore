@@ -48,6 +48,9 @@ env/
 backend/data/
 backend/storage/
 
+# Generated synthetic staging CV files (source pack stays in staging/synthetic)
+staging/generated/
+
 # Coverage & testing
 .pytest_cache/
 .coverage
