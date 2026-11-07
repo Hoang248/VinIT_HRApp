@@ -83,6 +83,32 @@ class Settings(BaseSettings):
     MATCH_SCORE: int = 80
     NO_MATCH_SCORE: int = 0
 
+    # Semantic retrieval (pgvector + BGE). Disabled by default: enabling it
+    # changes the candidate chunks sent to the LLM fallback, so the full
+    # semantic configuration is pinned into the assessment fingerprint.
+    SEMANTIC_RETRIEVAL_ENABLED: bool = False
+    EMBEDDING_PROVIDER: str = "disabled"  # disabled | bge_http | hash
+    EMBEDDING_API_BASE: str | None = None
+    EMBEDDING_API_KEY: str | None = None
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    EMBEDDING_DIMENSION: int = 1024
+    EMBEDDING_INDEX_VERSION: str = "bge-index-v1"
+    EMBEDDING_TIMEOUT_SECONDS: float = 30.0
+    EMBEDDING_QUERY_INSTRUCTION: str = ""
+    SEMANTIC_TOP_K: int = 5
+    SEMANTIC_MIN_SIMILARITY: float = 0.35
+
+    # Learning-to-Rank. OFF by default; SHADOW scores without changing the
+    # published order, ACTIVE may reorder only inside the existing
+    # mandatory-status/coverage gates when a gated model artifact is loaded.
+    LTR_MODE: str = "OFF"  # OFF | SHADOW | ACTIVE
+    LTR_MODEL_PATH: str | None = None
+    LTR_MODEL_VERSION: str | None = None
+    LTR_MIN_NDCG_AT_10: float = 0.70
+    LTR_MIN_PAIRWISE_ACCURACY: float = 0.65
+    LTR_MIN_HOLDOUT_EXAMPLES: int = 20
+    LTR_MIN_HOLDOUT_GROUPS: int = 2
+
     # Retention
     RETENTION_MONTHS: int = 12
 

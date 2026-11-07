@@ -17,10 +17,16 @@ from sqlalchemy.orm import Session
 from app.db.database import SessionLocal, engine
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.document_processor import document_processor, DocumentType
+from app.services.document_processor import document_processor
 from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
 from app.services.deterministic_matching import deterministic_matcher
+from app.services.embedding import (
+    chunk_text_sha256, get_embedding_provider,
+    requirement_query_text, semantic_config_fingerprint, vector_literal,
+)
+from app.services.ltr import LTRModel, extract_ranking_features
+from app.services.semantic_retrieval import merge_candidate_chunks, retrieve_semantic_candidates
 from app.services.redaction import redact_text
 from app.services.ai_config import (
     get_active_runtime, hydrate_runtime_secret, runtime_context, runtime_snapshot,
@@ -619,6 +625,163 @@ class ProcessingWorker:
             raise RuntimeError("Operation has no associated position; cannot process safely")
         return str(position_id)
 
+    def _semantic_fallback_chunks(self, db, loop, *, application_id: str, document_id: str,
+                                  deterministic_result: dict, unresolved_criteria: list[dict]) -> dict:
+        """Add BGE/pgvector candidates to the lexical fallback chunks.
+
+        Any embedding or pgvector failure keeps the lexical chunks; semantic
+        retrieval must never fail an assessment.
+        """
+        fallback = {
+            criterion_id: list(chunks)
+            for criterion_id, chunks in (deterministic_result.get("fallback_chunks") or {}).items()
+        }
+        if not settings.SEMANTIC_RETRIEVAL_ENABLED or not unresolved_criteria:
+            return fallback
+        chunks = [chunk for chunk in deterministic_result.get("chunks", []) if isinstance(chunk, dict)]
+        if not chunks:
+            return fallback
+        provider = get_embedding_provider()
+        embedding_model = str(getattr(provider, "model", settings.EMBEDDING_MODEL))
+        embedding_dimension = int(getattr(provider, "dimension", settings.EMBEDDING_DIMENSION))
+        try:
+            chunk_vectors = loop.run_until_complete(
+                provider.embed([str(chunk.get("text") or "") for chunk in chunks], kind="document"))
+            specs = deterministic_result.get("requirement_specs") or {}
+            queries = {
+                str(criterion.get("criterion_id")): requirement_query_text(
+                    specs.get(str(criterion.get("criterion_id"))) or criterion)
+                for criterion in unresolved_criteria
+            }
+            query_vectors = loop.run_until_complete(
+                provider.embed(list(queries.values()), kind="query"))
+        except Exception as exc:  # provider outage must not fail assessment
+            logger.warning("Semantic embedding unavailable; using lexical fallback",
+                           error_type=type(exc).__name__)
+            return fallback
+
+        # Persist vectors for reuse.  A missing extension/table only disables
+        # pgvector for this run; in-memory cosine below still works.
+        pg_available = True
+        try:
+            with db.begin_nested():
+                for chunk, vector in zip(chunks, chunk_vectors, strict=True):
+                    db.execute(text("""
+                        INSERT INTO app_private.cv_chunk_embeddings
+                            (application_id, document_id, chunk_id, chunk_text_sha256, section,
+                             page_number, char_start, char_end, embedding, embedding_model,
+                             embedding_dimension, index_version)
+                        VALUES (:application_id, :document_id, :chunk_id, :chunk_hash, :section,
+                                :page_number, :char_start, :char_end, CAST(:embedding AS vector),
+                                :model, :dimension, :index_version)
+                        ON CONFLICT (document_id, chunk_id, chunk_text_sha256, embedding_model, index_version)
+                        DO NOTHING
+                    """), {
+                        "application_id": application_id, "document_id": document_id,
+                        "chunk_id": chunk.get("chunk_id"),
+                        "chunk_hash": chunk_text_sha256(str(chunk.get("text") or "")),
+                        "section": chunk.get("section"), "page_number": chunk.get("page_number"),
+                        "char_start": chunk.get("char_start"), "char_end": chunk.get("char_end"),
+                        "embedding": vector_literal(vector), "model": embedding_model,
+                        "dimension": embedding_dimension,
+                        "index_version": settings.EMBEDDING_INDEX_VERSION,
+                    })
+        except Exception as exc:
+            pg_available = False
+            logger.warning("pgvector persistence unavailable; using in-memory semantic retrieval",
+                           error_type=type(exc).__name__)
+
+        chunk_by_id = {str(chunk.get("chunk_id")): chunk for chunk in chunks}
+        for (criterion_id, _query), query_vector in zip(queries.items(), query_vectors, strict=True):
+            semantic_chunks: list[dict] = []
+            if pg_available:
+                try:
+                    with db.begin_nested():
+                        rows = db.execute(text("""
+                            SELECT chunk_id, 1 - (embedding <=> CAST(:query_vector AS vector)) AS similarity
+                            FROM app_private.cv_chunk_embeddings
+                            WHERE document_id = :document_id AND embedding_model = :model
+                              AND index_version = :index_version
+                            ORDER BY embedding <=> CAST(:query_vector AS vector)
+                            LIMIT :top_k
+                        """), {
+                            "document_id": document_id, "model": embedding_model,
+                            "index_version": settings.EMBEDDING_INDEX_VERSION,
+                            "query_vector": vector_literal(query_vector),
+                            "top_k": int(settings.SEMANTIC_TOP_K),
+                        }).mappings().all()
+                    for row in rows:
+                        similarity = float(row["similarity"])
+                        chunk = chunk_by_id.get(str(row["chunk_id"]))
+                        if chunk and similarity >= float(settings.SEMANTIC_MIN_SIMILARITY):
+                            semantic_chunks.append({
+                                **chunk, "semantic_similarity": round(similarity, 6),
+                                "retrieval_source": "SEMANTIC",
+                            })
+                except Exception as exc:
+                    pg_available = False
+                    logger.warning("pgvector query unavailable; using in-memory semantic retrieval",
+                                   error_type=type(exc).__name__)
+            if not semantic_chunks:
+                semantic_chunks = retrieve_semantic_candidates(
+                    query_vector, chunks, chunk_vectors,
+                    min_similarity=float(settings.SEMANTIC_MIN_SIMILARITY),
+                    top_k=int(settings.SEMANTIC_TOP_K),
+                )
+            fallback[criterion_id] = merge_candidate_chunks(
+                fallback.get(criterion_id, []), semantic_chunks,
+                limit=5,
+            )
+        return fallback
+
+    def _load_ltr_model(self, db=None) -> LTRModel | None:
+        mode = (settings.LTR_MODE or "OFF").upper()
+        if mode not in {"SHADOW", "ACTIVE"}:
+            return None
+        try:
+            model: LTRModel | None = None
+            if settings.LTR_MODEL_VERSION:
+                if db is None:
+                    logger.warning("LTR_MODEL_VERSION is configured but no database session is available")
+                    return None
+                row = db.execute(text("""
+                    SELECT artifact, status FROM app_private.ltr_model_versions
+                    WHERE model_version = :model_version
+                """), {"model_version": settings.LTR_MODEL_VERSION}).mappings().first()
+                if not row:
+                    logger.warning("Configured LTR model version was not found; ranking unchanged")
+                    return None
+                status = str(row["status"] or "").upper()
+                if status == "REJECTED" or (mode == "ACTIVE" and status != "APPROVED"):
+                    logger.warning("LTR model version is not approved for this mode; ranking unchanged")
+                    return None
+                artifact = row["artifact"]
+                if isinstance(artifact, str):
+                    artifact = json.loads(artifact)
+                model = LTRModel.from_artifact(artifact)
+            elif settings.LTR_MODEL_PATH:
+                model = LTRModel.load(settings.LTR_MODEL_PATH)
+            else:
+                return None
+            if not model.passes_gates(
+                min_ndcg=float(settings.LTR_MIN_NDCG_AT_10),
+                min_pairwise=float(settings.LTR_MIN_PAIRWISE_ACCURACY),
+                min_test_examples=int(settings.LTR_MIN_HOLDOUT_EXAMPLES),
+                min_test_groups=int(settings.LTR_MIN_HOLDOUT_GROUPS),
+            ):
+                logger.warning("LTR artifact did not pass quality gates; ranking unchanged")
+                return None
+            return model
+        except Exception as exc:  # LTR is optional; never fail ranking for it
+            logger.warning("LTR artifact unavailable; ranking unchanged",
+                           error_type=type(exc).__name__)
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            return None
+
     def _run_assessments(self, operation_id: UUID, db):
         """Assess only the position explicitly associated with this operation."""
         position_id = self._operation_position(operation_id, db)
@@ -737,6 +900,7 @@ class ProcessingWorker:
                             "nice_to_have_weight_default": settings.NICE_TO_HAVE_WEIGHT_DEFAULT,
                             "llm_strict_json_schema": settings.LLM_STRICT_JSON_SCHEMA,
                         },
+                        "semantic_retrieval": semantic_config_fingerprint(),
                     }
                     assessment_fingerprint = hashlib.sha256(json.dumps(
                         fingerprint_payload, sort_keys=True, ensure_ascii=False, default=str
@@ -790,13 +954,19 @@ class ProcessingWorker:
                     ]
                     provider_metadata: dict = {}
                     prompt_version = settings.MATCHING_PROMPT_VERSION
+                    fallback_chunks = deterministic_result.get("fallback_chunks", {})
+                    if unresolved_criteria:
+                        fallback_chunks = self._semantic_fallback_chunks(
+                            db, loop, application_id=application_id, document_id=document_id,
+                            deterministic_result=deterministic_result,
+                            unresolved_criteria=unresolved_criteria)
                     if unresolved_criteria:
                         findings = loop.run_until_complete(llm_client.match_criterion_evidence(
                             cv_text=cv_text, candidate_profile=candidate_profile,
                             rubric=unresolved_criteria,
                             candidate_identifier=application_id,
                             rubric_version=criteria_version_id,
-                            candidate_chunks=deterministic_result.get("fallback_chunks", {})))
+                            candidate_chunks=fallback_chunks))
                         if isinstance(findings, dict):
                             provider_metadata = findings.pop("_provider_metadata", {}) or {}
                             prompt_version = findings.pop(
@@ -952,27 +1122,54 @@ class ProcessingWorker:
                          "latest_assessment": {"assessment_id": row["assessment_id"],
                              "matching_status": row["matching_status"], "matching_score": row["matching_score"],
                              "evidence_coverage": row["evidence_coverage"]}} for row in rows]
-        ranked = matching_engine.rank_applications(applications, [])
+        ltr_model = self._load_ltr_model(db)
+        ltr_mode = (settings.LTR_MODE or "OFF").upper() if ltr_model else "OFF"
+        ltr_scores: dict[str, float] = {}
+        if ltr_model:
+            assessment_ids = [str(item["latest_assessment"]["assessment_id"]) for item in applications]
+            if assessment_ids:
+                feature_rows = db.execute(text("""
+                    SELECT cr.assessment_id::text AS assessment_id, cr.outcome, cr.decision_source,
+                           cr.evidence_strength, ci.category
+                    FROM app_private.criterion_assessment_results cr
+                    JOIN app_private.criteria_items ci ON ci.criterion_id = cr.criterion_id
+                    WHERE cr.assessment_id = ANY(CAST(:assessment_ids AS uuid[]))
+                """), {"assessment_ids": assessment_ids}).mappings().all()
+                results_by_assessment: dict[str, list[dict]] = {}
+                for row in feature_rows:
+                    results_by_assessment.setdefault(str(row["assessment_id"]), []).append(dict(row))
+                for item in applications:
+                    assessment = item["latest_assessment"]
+                    features = extract_ranking_features(
+                        assessment, results_by_assessment.get(str(assessment["assessment_id"]), []))
+                    ltr_scores[str(item["application_id"])] = ltr_model.score(features)
+        ranked = matching_engine.rank_applications(
+            applications, [], ltr_scores=ltr_scores, ltr_mode=ltr_mode)
         ranking_run_id = db.execute(text("""
             INSERT INTO app_private.ranking_runs
-                (position_id, criteria_version_id, policy_version, operation_id, ai_config_id, status, completed_at)
-            VALUES (:position_id, :criteria_version_id, :ranking_policy_version, :operation_id, :ai_config_id, 'COMPLETED', NOW())
+                (position_id, criteria_version_id, policy_version, operation_id, ai_config_id, status, completed_at,
+                 ltr_model_version, ltr_mode)
+            VALUES (:position_id, :criteria_version_id, :ranking_policy_version, :operation_id, :ai_config_id, 'COMPLETED', NOW(),
+                    :ltr_model_version, :ltr_mode)
             RETURNING ranking_run_id
         """), {"position_id": position_id, "criteria_version_id": str(criteria_version_id),
                 "ranking_policy_version": settings.RANKING_POLICY_VERSION,
-                "operation_id": str(operation_id), "ai_config_id": (runtime_context.get() or {}).get("config_id")}).scalar_one()
+                "operation_id": str(operation_id), "ai_config_id": (runtime_context.get() or {}).get("config_id"),
+                "ltr_model_version": ltr_model.model_version if ltr_model else None,
+                "ltr_mode": ltr_mode}).scalar_one()
         for item in ranked:
             assessment = item["latest_assessment"]
             db.execute(text("""
                 INSERT INTO app_private.ranking_items
                     (ranking_run_id, position_id, application_id, assessment_id, rank_number,
-                     ranking_status, matching_score, evidence_coverage)
+                     ranking_status, matching_score, evidence_coverage, ltr_score)
                 VALUES (:ranking_run_id, :position_id, :application_id, :assessment_id, :rank_number,
-                        :ranking_status, :matching_score, :coverage)
+                        :ranking_status, :matching_score, :coverage, :ltr_score)
             """), {"ranking_run_id": ranking_run_id, "position_id": position_id,
                     "application_id": item["application_id"], "assessment_id": assessment["assessment_id"],
                     "rank_number": item["rank_number"], "ranking_status": assessment["matching_status"],
-                    "matching_score": assessment["matching_score"], "coverage": assessment["evidence_coverage"]})
+                    "matching_score": assessment["matching_score"], "coverage": assessment["evidence_coverage"],
+                    "ltr_score": item.get("ltr_score")})
         identity_rows = db.execute(text("""
             SELECT a.application_id, i.email, i.phone FROM app_private.applications a
             LEFT JOIN app_private.application_identities i ON i.application_id = a.application_id

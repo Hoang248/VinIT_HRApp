@@ -104,6 +104,7 @@ export interface RankingItem {
   matching_status: 'NOT_ASSESSED' | 'NEEDS_HR_VERIFICATION' | 'POSSIBLE_MISMATCH' | 'MEETS_MANDATORY';
   matching_score: number | null;
   evidence_coverage: number | null;
+  ltr_score?: number | null;
   needs_verification: boolean;
   has_mismatch: boolean;
   file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';

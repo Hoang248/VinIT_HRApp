@@ -153,5 +153,6 @@ class RankingItem(BaseSchema):
     matching_status: MatchingStatus
     matching_score: Optional[float]
     evidence_coverage: Optional[float]
+    ltr_score: Optional[float] = None
     needs_verification: bool
     has_mismatch: bool

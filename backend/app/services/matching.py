@@ -294,21 +294,32 @@ class MatchingEngine:
     def rank_applications(
         self,
         applications_with_assessments: List[Dict[str, Any]],
-        criteria: List[Dict[str, Any]]
+        criteria: List[Dict[str, Any]],
+        *,
+        ltr_scores: Dict[str, float] | None = None,
+        ltr_mode: str = "OFF",
     ) -> List[Dict[str, Any]]:
         """
         Rank applications within same position per policy:
         Priority 1: Match mandatory criteria (MEETS_MANDATORY > NEEDS_VERIFICATION > POSSIBLE_MISMATCH)
         Priority 2: Matching score (descending)
         Priority 3: Evidence coverage (descending)
+
+        LTR may only reorder inside Priority 1 (and inside the coverage
+        eligibility gate) in ACTIVE mode.  SHADOW records scores without
+        changing the published order.
         """
-        # Group by matching status priority
         status_order = {
             "MEETS_MANDATORY": 0,
             "NEEDS_HR_VERIFICATION": 1,
             "POSSIBLE_MISMATCH": 2,
             "NOT_ASSESSED": 3
         }
+        mode = (ltr_mode or "OFF").upper()
+        scores = ltr_scores or {}
+
+        def application_id(item: Dict[str, Any]) -> str:
+            return str(item.get("application_id") or item.get("id") or "")
 
         def sort_key(item):
             assess = item.get("latest_assessment", {})
@@ -316,11 +327,22 @@ class MatchingEngine:
             score = assess.get("matching_score")
             score = score if score is not None else -1
             coverage = assess.get("evidence_coverage") or 0
+            eligible = coverage >= settings.MIN_EVIDENCE_COVERAGE and status != "NOT_ASSESSED"
+            ltr_score = scores.get(application_id(item))
+            if mode == "ACTIVE":
+                return (
+                    status_order.get(status, 99),
+                    0 if eligible else 1,
+                    -float(ltr_score) if ltr_score is not None else float("inf"),
+                    -score,
+                    -coverage,
+                    application_id(item),
+                )
             return (
                 status_order.get(status, 99),
                 -score,  # Negative for descending sort
                 -coverage,
-                str(item.get("application_id") or item.get("id") or ""),
+                application_id(item),
             )
 
         sorted_items = sorted(applications_with_assessments, key=sort_key)
@@ -341,6 +363,7 @@ class MatchingEngine:
             result.append({
                 **item,
                 "rank_number": rank_num,
+                "ltr_score": scores.get(application_id(item)),
                 "has_mismatch": status == "POSSIBLE_MISMATCH",
                 "needs_verification": status == "NEEDS_HR_VERIFICATION" or coverage < settings.MIN_EVIDENCE_COVERAGE
             })

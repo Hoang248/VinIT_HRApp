@@ -129,7 +129,7 @@ async def get_latest_ranking(position_id: UUID, current_user: dict = Depends(get
     try:
         rows = db.execute(text("""
             SELECT ri.application_id, ri.rank_number, ri.ranking_status AS matching_status,
-                   ri.matching_score, ri.evidence_coverage, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
+                   ri.matching_score, ri.evidence_coverage, ri.ltr_score, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
             FROM app_private.ranking_items ri
             JOIN app_private.applications a ON a.application_id = ri.application_id
             JOIN app_private.assessment_runs ar ON ar.assessment_id = ri.assessment_id

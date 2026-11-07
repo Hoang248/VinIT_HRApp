@@ -1,6 +1,6 @@
 # Ổn định matching CV–JD
 
-Tài liệu này mô tả kiến trúc matching đã triển khai theo Phase 0–2, cách đo độ lặp lại và quy trình xây dựng golden set trước khi cân nhắc semantic retrieval hoặc Learning-to-Rank.
+Tài liệu này mô tả kiến trúc matching Phase 0–2 cùng lớp semantic retrieval (pgvector/BGE) và Learning-to-Rank được triển khai theo hướng tắt mặc định, có gate an toàn.
 
 ## 1. Nguyên tắc
 
@@ -158,17 +158,55 @@ Fixture tổng hợp trong repo chỉ là smoke test; không chứng minh chất
 
 Chỉ khi có nhãn HR thật đủ lớn mới cân nhắc Learning-to-Rank. Ngưỡng bắt đầu đánh giá LTR: vài trăm application đã có quyết định HR nhất quán hoặc đủ cặp so sánh pairwise; LTR chỉ xếp lại trong cùng gate/coverage hợp lệ và không được phá fingerprint/audit trail.
 
-## 6. Giới hạn hiện tại và bước hạ tầng tiếp theo
+## 6. pgvector/BGE và Learning-to-Rank
 
-Đã triển khai lexical/rule retrieval trong tiến trình worker. **Chưa** triển khai pgvector, embedding BGE, cross-encoder reranker hoặc NLI service; không được mô tả các thành phần này là đã hoàn thành.
+### 6.1 Semantic retrieval
 
-Chỉ bổ sung semantic retrieval khi golden set chứng minh lexical rule bỏ sót bằng chứng do paraphrase. Khi đó bắt buộc:
+Đã có migration `00010_pgvector_bge_ltr.sql` (remote version `20261107022845`) tạo extension `vector`, bảng `app_private.cv_chunk_embeddings`, HNSW cosine index và các cột LTR. Embedding được khóa theo `document_id + chunk_id + chunk_text_sha256 + embedding_model + index_version`; bảng không lưu thêm bản sao raw CV text.
 
-- migration pgvector và bảng chunk embedding gắn với chunk hash/index version;
-- pin embedding model + dimension + index version vào fingerprint;
-- reranker/NLI pin version, có ngưỡng hiệu chuẩn trên holdout;
-- fallback lexical khi service semantic không sẵn sàng;
-- đo lại unresolved rate, false-match và độ ổn định trước phát hành.
+Cấu hình mặc định vẫn an toàn:
+
+```dotenv
+SEMANTIC_RETRIEVAL_ENABLED=false
+EMBEDDING_PROVIDER=disabled
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSION=1024
+EMBEDDING_INDEX_VERSION=bge-index-v1
+EMBEDDING_API_BASE=
+SEMANTIC_TOP_K=5
+SEMANTIC_MIN_SIMILARITY=0.35
+```
+
+Khi bật, worker embed các chunk của CV và query được tạo từ `requirement_spec`, lưu vector vào pgvector, truy vấn cosine và merge với lexical chunks. Semantic similarity chỉ bổ sung tối đa 5 candidate chunks cho LLM fallback; nó không tạo rule finding, không đổi outcome deterministic và không vượt qua evidence verification. Lỗi provider, lỗi dimension hoặc lỗi pgvector đều fallback về lexical/in-memory. Toàn bộ cấu hình semantic được pin vào assessment fingerprint khi bật.
+
+`EMBEDDING_PROVIDER=hash` chỉ phục vụ test/plumbing, không phải BGE và không được dùng làm bằng chứng chất lượng semantic. Production cần một BGE endpoint thật tương thích `/embeddings`; đổi model có dimension khác 1024 phải có migration mới.
+
+### 6.2 Learning-to-Rank
+
+LTR là pairwise logistic ranker train offline từ ví dụ đã gán nhãn theo group/position. Tập test được tách theo nguyên group/position, không tách ngẫu nhiên từng dòng. Artifact chỉ được dùng khi đạt gate cấu hình:
+
+```dotenv
+LTR_MODE=OFF
+LTR_MIN_NDCG_AT_10=0.70
+LTR_MIN_PAIRWISE_ACCURACY=0.65
+LTR_MIN_HOLDOUT_EXAMPLES=20
+LTR_MIN_HOLDOUT_GROUPS=2
+```
+
+- `OFF`: không tính điểm LTR.
+- `SHADOW`: tính và lưu `ltr_score`, không đổi thứ hạng công bố.
+- `ACTIVE`: chỉ reorder trong cùng mandatory status và cùng coverage-eligibility gate; không ứng viên nào vượt qua `POSSIBLE_MISMATCH`, trạng thái chưa đánh giá hoặc coverage gate nhờ LTR.
+
+Quy trình vận hành:
+
+```bash
+cd backend
+.venv/bin/python scripts/export_ltr_dataset.py --output /path/to/ltr_dataset.json
+.venv/bin/python scripts/train_ltr.py /path/to/ltr_dataset.json   --output /path/to/ltr_model.json --report /path/to/ltr_report.json --check
+.venv/bin/python scripts/register_ltr_model.py /path/to/ltr_model.json
+```
+
+Exporter chỉ dùng trạng thái ứng tuyển vận hành làm **weak label** và chỉ lấy assessment COMPLETED mới nhất của mỗi application; đây không phải HR gold label. Train script mặc định fail-closed khi có dưới 200 ví dụ hoặc dưới 10 group/position, thiếu mức relevance hoặc không tách được holdout. Register luôn tạo trạng thái `DRAFT`; ACTIVE chỉ dùng artifact đã `APPROVED` trong registry hoặc artifact file đạt gate. Chưa có HR labelled dataset đủ lớn và chưa cấu hình BGE endpoint thật trong môi trường hiện tại, nên không được tuyên bố LTR/BGE production đã được kích hoạt.
 
 ## 7. Kiểm thử liên quan
 
@@ -177,7 +215,8 @@ backend/.venv/bin/python -m pytest -q \
   backend/tests/test_deterministic_matching.py \
   backend/tests/test_matching_evaluation.py \
   backend/tests/test_phase1_unit.py \
-  backend/tests/test_matching_audit_fixes.py
+  backend/tests/test_matching_audit_fixes.py \
+  backend/tests/test_semantic_ltr.py
 ```
 
 Integration test cần PostgreSQL cục bộ dùng một lần theo `backend/tests/README.md`; không chạy chúng trên database production/Supabase thật.
