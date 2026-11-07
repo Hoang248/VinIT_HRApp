@@ -1,6 +1,8 @@
 # Tài liệu chờ triển khai — Phase 1
 
 > Trạng thái tại ngày 2026-11-07: các nâng cấp Batch 1–5 đã có code, test, CI và migration tương ứng; Batch 5.1 đã chuẩn bị bộ dữ liệu/checklist staging. Tài liệu này lưu riêng những phần **đã sẵn sàng ở repository nhưng chưa được triển khai hoặc chưa được nghiệm thu trên môi trường đích**. Không mục nào trong tài liệu này được coi là đã hoàn thành chỉ vì đã có code, checklist hoặc migration.
+>
+> Quyết định ngày 2026-11-07: các gate Phase 1 còn lại **tạm dừng, chờ triển khai Production**. Rà soát Phase 2 được thực hiện ở mức tài liệu/code nhưng không đóng bất kỳ DEP nào trong tài liệu này.
 
 - Branch: `arena/ea6e2570-vinit-hrapp`
 - Mốc code/tài liệu được audit: `dc9d020`

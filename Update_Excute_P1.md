@@ -270,7 +270,13 @@
 - LTR: HR gold dataset đủ lớn; train đạt gates; artifact APPROVED; SHADOW report không có vi phạm mandatory/coverage gate.
 - Không dùng weak label từ trạng thái ứng tuyển để bật LTR ACTIVE.
 
-## 8. Blocker ngoài code
+## 8. Quyết định tạm dừng gate Phase 1
+
+- Ngày 2026-11-07, người dùng quyết định: các gate còn lại của Phase 1 **tạm dừng tại đây, chờ triển khai Production**. Các hạng mục DEP-01…DEP-08 trong `doc/PENDING_DEPLOYMENT.md` giữ nguyên trạng thái chờ; không mục nào được coi là đã nghiệm thu chỉ vì code/CI/migration đã sẵn sàng.
+- Phase 1 chưa đóng. Việc chuyển sang rà soát Phase 2 không thay thế E2E staging/production, không đóng legacy keys, không phê duyệt privacy/egress và không cho phép dùng CV thật ngoài phạm vi đã được phê duyệt.
+- Khi Production được triển khai, quay lại `doc/PENDING_DEPLOYMENT.md` để thực hiện và ký bằng chứng theo từng DEP.
+
+## 9. Blocker ngoài code
 
 | Mã | Hạng mục | Người/điều kiện cần | Trạng thái |
 |---|---|---|---|
@@ -279,7 +285,7 @@
 | EXT-3 | Golden set HR cho matching/BGE và HR gold dataset cho LTR | HR/HM cung cấp/chấm nhãn | CHƯA CÓ |
 | EXT-4 | E2E trên môi trường staging đích | DevOps/IT chuẩn bị staging tương đương | CHƯA CÓ BẰNG CHỨNG |
 
-## 9. Quy ước cập nhật file này
+## 10. Quy ước cập nhật file này
 
 Sau mỗi batch, dev thực hiện phải bổ sung:
 
