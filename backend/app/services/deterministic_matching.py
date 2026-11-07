@@ -169,7 +169,7 @@ def normalize_text(value: Any) -> str:
     with semantic value (C++, C#, .NET, Node.js) are expanded first so they
     do not collapse into meaningless one-letter tokens.
     """
-    text = str(value or "").lower()
+    text = str(value or "").lower().replace("đ", "d")
     text = re.sub(r"c\+\+", " cplusplus ", text)
     text = re.sub(r"c#", " csharp ", text)
     text = re.sub(r"(?<![a-z0-9])\.net(?![a-z0-9])", " dotnet ", text)
@@ -356,15 +356,10 @@ class DeterministicMatchingEngine:
                 out.append((start, end, page_number, section))
             return
         segment = source[start:end]
-        sentences: list[tuple[int, int]] = []
-        for match in re.finditer(r"[^.!?;\n]+(?:[.!?;]+|$)", segment):
-            chunk_start, chunk_end = match.span()
-            while chunk_start < chunk_end and segment[chunk_start].isspace():
-                chunk_start += 1
-            while chunk_end > chunk_start and segment[chunk_end - 1].isspace():
-                chunk_end -= 1
-            if chunk_end > chunk_start:
-                sentences.append((start + chunk_start, start + chunk_end))
+        sentences = [
+            (start + sentence_start, start + sentence_end)
+            for sentence_start, sentence_end in DeterministicMatchingEngine._sentence_spans(segment)
+        ]
         current: tuple[int, int] | None = None
         for sentence_start, sentence_end in sentences:
             if sentence_end - sentence_start > max_chars:
@@ -406,14 +401,12 @@ class DeterministicMatchingEngine:
             variants.update(TERM_ALIASES[canonical])
             label = canonical
         else:
+            # Constituent words of a phrase may help a human read the label,
+            # but they must not satisfy the concept by themselves: e.g.
+            # "programming" alone is not evidence for "Python programming".
+            # Known concepts inside the phrase are added as separate term
+            # groups by build_requirement_spec().
             label = normalized
-            # A multi-word phrase should also retrieve on its meaningful
-            # constituent tokens, e.g. "Python programming" -> "python".
-            for token in normalized.split():
-                if len(token) >= 3 and token not in STOPWORDS:
-                    variants.add(token)
-                    if token in _ALIAS_TO_CANONICAL:
-                        variants.update(TERM_ALIASES[_ALIAS_TO_CANONICAL[token]])
         if label in GENERIC_TERMS and label not in TERM_ALIASES:
             return
         if label in groups:
@@ -424,7 +417,7 @@ class DeterministicMatchingEngine:
 
     @staticmethod
     def _parse_min_years(combined: str) -> float | None:
-        normalized = normalize_text(combined)
+        normalized = str(combined or "").lower()
         values: list[float] = []
         for match in re.finditer(
             r"(\d+(?:[.,]\d+)?)\s*(?:-|to)\s*(\d+(?:[.,]\d+)?)\s*(?:years?|yrs?|nam)\b",
@@ -460,6 +453,44 @@ class DeterministicMatchingEngine:
         return None
 
     def build_requirement_spec(self, criterion: dict[str, Any]) -> RequirementSpec:
+        inferred = self._infer_requirement_spec(criterion)
+        explicit = criterion.get("requirement_spec")
+        if not isinstance(explicit, dict) or not explicit:
+            return inferred
+
+        kind = str(explicit.get("kind") or inferred.kind).upper()
+        if kind not in {"SKILL", "YEARS", "DEGREE", "CERTIFICATION", "LANGUAGE"}:
+            kind = inferred.kind
+        groups: dict[str, TermGroup] = {}
+        raw_terms = explicit.get("terms")
+        if isinstance(raw_terms, list):
+            for term in raw_terms:
+                self._add_term(groups, term)
+        terms = tuple(list(groups.values())[:12]) or inferred.terms
+
+        def pick(key: str, default: Any) -> Any:
+            value = explicit.get(key)
+            return default if value is None else value
+
+        languages = explicit.get("required_languages")
+        if not isinstance(languages, list) or not languages:
+            languages = list(inferred.required_languages)
+        return RequirementSpec(
+            criterion_id=inferred.criterion_id,
+            name=inferred.name,
+            category=inferred.category,
+            kind=kind,
+            terms=terms,
+            min_years=float(pick("min_years", inferred.min_years)) if pick("min_years", inferred.min_years) is not None else None,
+            required_degree_level=int(pick("required_degree_level", inferred.required_degree_level)) if pick("required_degree_level", inferred.required_degree_level) is not None else None,
+            required_languages=tuple(str(item).lower() for item in languages),
+            required_ielts=float(pick("required_ielts", inferred.required_ielts)) if pick("required_ielts", inferred.required_ielts) is not None else None,
+            required_toeic=int(pick("required_toeic", inferred.required_toeic)) if pick("required_toeic", inferred.required_toeic) is not None else None,
+            required_cefr=str(pick("required_cefr", inferred.required_cefr)).upper() if pick("required_cefr", inferred.required_cefr) else None,
+            required_language_rank=int(pick("required_language_rank", inferred.required_language_rank)) if pick("required_language_rank", inferred.required_language_rank) is not None else None,
+        )
+
+    def _infer_requirement_spec(self, criterion: dict[str, Any]) -> RequirementSpec:
         name = str(criterion.get("name") or "")
         description = str(criterion.get("description") or "")
         combined = f"{name}. {description}"
@@ -496,9 +527,10 @@ class DeterministicMatchingEngine:
         required_languages = tuple(
             language for language in LANGUAGE_NAMES if _contains_phrase(normalized, language)
         )
-        ielts = re.search(r"ielts\s*(?:band\s*)?(\d+(?:[.,]\d+)?)", normalized)
-        toeic = re.search(r"toeic\s*(\d{3,4})", normalized)
-        cefr = re.search(r"\b([abc][12])\b", normalized)
+        lowered_combined = combined.lower()
+        ielts = re.search(r"ielts[^0-9]{0,30}?(\d+(?:[.,]\d+)?)", lowered_combined)
+        toeic = re.search(r"toeic[^0-9]{0,30}?(\d{3,4})", lowered_combined)
+        cefr = re.search(r"\b([abc][12])\b", lowered_combined)
         qualitative_rank = None
         for label, rank in QUALITATIVE_LANGUAGE_RANK.items():
             if _contains_phrase(normalized, label):
@@ -511,11 +543,11 @@ class DeterministicMatchingEngine:
         has_degree = required_degree is not None or any(
             marker in normalized for marker in ("degree", "bachelor", "master", "phd", "cu nhan", "thac si", "tien si")
         )
-        has_language = bool(required_languages) and any(
+        has_language = any(
             marker in normalized
             for marker in ("language", "ielts", "toeic", "cefr", "fluent", "proficiency",
                            "communication", "tieng", "ngoai ngu", "giao tiep")
-        )
+        ) or bool(required_languages and qualitative_rank is not None)
 
         if has_language:
             kind = "LANGUAGE"
@@ -550,7 +582,8 @@ class DeterministicMatchingEngine:
         values = [
             float(match.group(1).replace(",", "."))
             for match in re.finditer(
-                r"(\d+(?:[.,]\d+)?)\s*\+?\s*(?:years?|yrs?|nam)\b", normalized
+                r"(\d+(?:[.,]\d+)?)\s*\+?\s*(?:years?|yrs?|nam)\b",
+                str(text or "").lower(),
             )
         ]
         number_words = {
@@ -613,40 +646,83 @@ class DeterministicMatchingEngine:
             for item in value:
                 yield from DeterministicMatchingEngine._iter_strings(item)
 
-    def candidate_years_experience(
+    def _years_assessment(
         self,
         candidate_profile: dict[str, Any] | None,
         chunks: list[DocumentChunk],
         relevant_chunk_ids: set[str] | None = None,
-    ) -> float | None:
+    ) -> dict[str, Any]:
+        """Best years estimate plus whether it is safe for a NO_MATCH.
+
+        A NO_MATCH is only allowed from a reliable total: an explicit
+        profile total or merged date intervals.  Separate duration phrases
+        may prove a positive match when summed, but if their sum is below
+        the threshold the CV may still contain unquantified experience, so
+        the criterion stays unresolved instead of becoming a mismatch.
+        """
         candidates: list[float] = []
+        reliable_total = False
         profile = candidate_profile or {}
-        total = profile.get("total_years_experience")
+
         try:
-            total_value = float(total)
+            total_value = float(profile.get("total_years_experience"))
             if total_value > 0:
                 candidates.append(total_value)
+                reliable_total = True
         except (TypeError, ValueError):
             pass
+
+        explicit_keys: set[str] = set()
+        explicit_values: list[float] = []
+
+        def add_explicit(source_text: str) -> None:
+            for sentence in self._sentences(source_text):
+                values = self._explicit_years_in(sentence)
+                if not values:
+                    continue
+                key = normalize_text(sentence)
+                if key in explicit_keys:
+                    continue
+                explicit_keys.add(key)
+                explicit_values.append(max(values))
+
+        profile_intervals: list[tuple[int, int]] = []
         for value in self._iter_strings(profile):
-            candidates.extend(self._explicit_years_in(value))
-            intervals = self._date_intervals_in(value, date.today().year)
-            if intervals:
-                candidates.append(self._merged_interval_years(intervals))
+            add_explicit(value)
+            profile_intervals.extend(self._date_intervals_in(value, date.today().year))
+        if profile_intervals:
+            candidates.append(self._merged_interval_years(profile_intervals))
+            reliable_total = True
 
         relevant = [
             chunk for chunk in chunks
             if (relevant_chunk_ids is None or chunk.chunk_id in relevant_chunk_ids)
             and chunk.section in {"WORK", "PROJECT", "SUMMARY"}
         ]
+        chunk_intervals: list[tuple[int, int]] = []
         for chunk in relevant:
-            candidates.extend(self._explicit_years_in(chunk.text))
-        intervals: list[tuple[int, int]] = []
-        for chunk in relevant:
-            intervals.extend(self._date_intervals_in(chunk.text, date.today().year))
-        if intervals:
-            candidates.append(self._merged_interval_years(intervals))
-        return max(candidates) if candidates else None
+            add_explicit(chunk.text)
+            chunk_intervals.extend(self._date_intervals_in(chunk.text, date.today().year))
+        if chunk_intervals:
+            candidates.append(self._merged_interval_years(chunk_intervals))
+            reliable_total = True
+        if explicit_values:
+            candidates.append(round(sum(explicit_values), 2))
+
+        return {
+            "years": max(candidates) if candidates else None,
+            "reliable_total": reliable_total,
+            "explicit_duration_total": round(sum(explicit_values), 2) if explicit_values else None,
+            "explicit_duration_count": len(explicit_values),
+        }
+
+    def candidate_years_experience(
+        self,
+        candidate_profile: dict[str, Any] | None,
+        chunks: list[DocumentChunk],
+        relevant_chunk_ids: set[str] | None = None,
+    ) -> float | None:
+        return self._years_assessment(candidate_profile, chunks, relevant_chunk_ids)["years"]
 
     # -------------------------------------------------------------- matching
     @staticmethod
@@ -694,14 +770,85 @@ class DeterministicMatchingEngine:
         candidates.sort(key=lambda item: (-item.strength, -item.coverage, item.chunk.chunk_id))
         return candidates
 
+    def _fallback_chunks(
+        self,
+        spec: RequirementSpec,
+        chunks: list[DocumentChunk],
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Top chunks an adjudicator may inspect for an unresolved criterion."""
+        selected: list[DocumentChunk] = []
+        strengths: dict[str, float] = {}
+        for candidate in self._candidates(spec, chunks):
+            selected.append(candidate.chunk)
+            strengths[candidate.chunk.chunk_id] = candidate.strength
+            if len(selected) >= limit:
+                break
+        if len(selected) < limit:
+            relevant_sections = {
+                "YEARS": {"WORK", "PROJECT"},
+                "DEGREE": {"EDUCATION"},
+                "CERTIFICATION": {"CERTIFICATION", "WORK"},
+                "LANGUAGE": {"LANGUAGE"},
+                "SKILL": {"WORK", "PROJECT", "SKILL"},
+            }.get(spec.kind, set())
+            chosen = {chunk.chunk_id for chunk in selected}
+            for chunk in chunks:
+                if chunk.section in relevant_sections and chunk.chunk_id not in chosen:
+                    selected.append(chunk)
+                    chosen.add(chunk.chunk_id)
+                    if len(selected) >= limit:
+                        break
+        return [
+            {**chunk.to_dict(), "retrieval_strength": strengths.get(chunk.chunk_id)}
+            for chunk in selected[:limit]
+        ]
+
+    @staticmethod
+    def _sentence_spans(text: str) -> list[tuple[int, int]]:
+        """Sentence spans that do not split decimal numbers such as 7.0."""
+        spans: list[tuple[int, int]] = []
+        start = 0
+        index = 0
+
+        def push(end: int) -> None:
+            span_start, span_end = start, end
+            while span_start < span_end and text[span_start].isspace():
+                span_start += 1
+            while span_end > span_start and text[span_end - 1].isspace():
+                span_end -= 1
+            if span_end > span_start:
+                spans.append((span_start, span_end))
+
+        while index < len(text):
+            char = text[index]
+            if (char == "." and 0 < index < len(text) - 1
+                    and text[index - 1].isdigit() and text[index + 1].isdigit()):
+                index += 1
+                continue
+            if char in ".!?":
+                end = index + 1
+                while end < len(text) and text[end] in ".!?":
+                    end += 1
+                push(end)
+                start = index = end
+                continue
+            if char in ";\n":
+                push(index + 1 if char == ";" else index)
+                start = index = index + 1
+                continue
+            index += 1
+        push(len(text))
+        return spans
+
+    @classmethod
+    def _sentences(cls, text: str) -> list[str]:
+        return [text[start:end] for start, end in cls._sentence_spans(text)]
+
     @staticmethod
     def _best_quote(candidate: _Candidate, spec: RequirementSpec) -> str:
         text = candidate.chunk.text
-        sentences = []
-        for match in re.finditer(r"[^.!?;\n]+(?:[.!?;]+|$)", text):
-            sentence = match.group(0).strip()
-            if sentence:
-                sentences.append(sentence)
+        sentences = DeterministicMatchingEngine._sentences(text)
         if len(sentences) <= 1:
             return text.strip()[:340]
 
@@ -711,14 +858,23 @@ class DeterministicMatchingEngine:
                 1 for term in spec.terms
                 if any(_contains_phrase(normalized, variant) for variant in term.variants)
             )
-            signals = 0
-            if DeterministicMatchingEngine._explicit_years_in(sentence):
-                signals += 1
-            if DeterministicMatchingEngine._degree_level_in(normalized) is not None:
-                signals += 1
-            if re.search(r"ielts|toeic|\b[abc][12]\b", normalized):
-                signals += 1
-            return matched, signals, -len(sentence)
+            has_duration = bool(
+                DeterministicMatchingEngine._explicit_years_in(sentence)
+                or DeterministicMatchingEngine._date_intervals_in(sentence, date.today().year)
+            )
+            has_degree = DeterministicMatchingEngine._degree_level_in(normalized) is not None
+            has_language_level = bool(DeterministicMatchingEngine._language_level_in(sentence))
+            # The quote must prove the rule that fired: a YEARS decision needs
+            # its duration sentence, a DEGREE decision its degree sentence,
+            # and a LANGUAGE decision its level-bearing sentence.
+            if spec.kind == "YEARS":
+                return (1 if has_duration else 0, matched, -len(sentence))
+            if spec.kind == "DEGREE":
+                return (1 if has_degree else 0, matched, -len(sentence))
+            if spec.kind == "LANGUAGE":
+                return (1 if has_language_level else 0, matched, -len(sentence))
+            signals = int(has_duration) + int(has_degree) + int(has_language_level)
+            return (matched, signals, -len(sentence))
 
         return max(sentences, key=sentence_score)
 
@@ -729,6 +885,7 @@ class DeterministicMatchingEngine:
         outcome: str,
         strength: float,
         reasoning: str,
+        quote_override: str | None = None,
     ) -> dict[str, Any]:
         strength = round(min(0.99, max(0.0, strength)), 3)
         return {
@@ -742,7 +899,7 @@ class DeterministicMatchingEngine:
             "evidence_chunk_id": candidate.chunk.chunk_id,
             "reasoning": reasoning,
             "evidence": {
-                "verbatim_quote": DeterministicMatchingEngine._best_quote(candidate, spec),
+                "verbatim_quote": quote_override or DeterministicMatchingEngine._best_quote(candidate, spec),
                 "page_number": candidate.chunk.page_number,
                 "chunk_id": candidate.chunk.chunk_id,
                 "char_start": candidate.chunk.char_start,
@@ -759,8 +916,13 @@ class DeterministicMatchingEngine:
     ) -> dict[str, Any] | None:
         candidates = self._candidates(spec, chunks)
         relevant_ids = {candidate.chunk.chunk_id for candidate in candidates} or None
-        years = self.candidate_years_experience(candidate_profile, chunks, relevant_ids)
+        assessment = self._years_assessment(candidate_profile, chunks, relevant_ids)
+        years = assessment["years"]
         if years is None or spec.min_years is None:
+            return None
+        if years < spec.min_years and not assessment["reliable_total"]:
+            # Quantified fragments below the threshold do not prove the
+            # candidate lacks other relevant experience.
             return None
         evidence_pool = candidates or [
             _Candidate(chunk=chunk, matched_labels=[], coverage=0.0, strength=0.6)
@@ -799,23 +961,35 @@ class DeterministicMatchingEngine:
     ) -> dict[str, Any] | None:
         required = spec.required_degree_level or 3
         education_chunks = [chunk for chunk in chunks if chunk.section == "EDUCATION"]
-        best_chunk: DocumentChunk | None = None
-        highest: int | None = None
-        for pool in (education_chunks, chunks):
+
+        def highest_in(pool: list[DocumentChunk]) -> tuple[int | None, DocumentChunk | None]:
+            best_level: int | None = None
+            best_chunk: DocumentChunk | None = None
             for chunk in pool:
                 level = self._degree_level_in(chunk.normalized)
-                if level is not None and (highest is None or level > highest):
-                    highest, best_chunk = level, chunk
-            if highest is not None:
-                break
+                if level is not None and (best_level is None or level > best_level):
+                    best_level, best_chunk = level, chunk
+            return best_level, best_chunk
+
+        highest, best_chunk = highest_in(education_chunks)
+        # A NO_MATCH is only defensible when an Education section was found
+        # and parsed.  Otherwise a lower mention elsewhere stays unresolved.
+        allow_no_match = bool(education_chunks and highest is not None)
+        if highest is None:
+            highest, best_chunk = highest_in(chunks)
+            allow_no_match = False
+        if highest is None or best_chunk is None:
+            return None
+
         profile_levels = [
             level for value in self._iter_strings((candidate_profile or {}).get("education"))
             if (level := self._degree_level_in(normalize_text(value))) is not None
         ]
-        if profile_levels:
-            highest = max([highest or 0, *profile_levels])
-        if highest is None or best_chunk is None:
+        if profile_levels and max(profile_levels) > highest:
+            # The profile claims more than the CV quote can prove; do not
+            # attach a lower-degree quote to a higher-degree conclusion.
             return None
+
         candidate = _Candidate(
             chunk=best_chunk, matched_labels=self._matched_labels(spec, best_chunk.normalized),
             coverage=1.0, strength=0.9,
@@ -827,6 +1001,8 @@ class DeterministicMatchingEngine:
                 f"Deterministic degree rule: education evidence reaches level {highest}; "
                 f"requirement level is {required}.",
             )
+        if not allow_no_match:
+            return None
         return self._finding(
             spec, candidate, "NO_MATCH", 0.78,
             f"Deterministic degree rule: highest education evidence is level {highest}; "
@@ -836,10 +1012,11 @@ class DeterministicMatchingEngine:
     @staticmethod
     def _language_level_in(text: str) -> dict[str, float | int | str]:
         normalized = normalize_text(text)
+        lowered = str(text or "").lower()
         result: dict[str, float | int | str] = {}
-        ielts = re.search(r"ielts\s*(?:band\s*)?(\d+(?:[.,]\d+)?)", normalized)
-        toeic = re.search(r"toeic\s*(\d{3,4})", normalized)
-        cefr = re.search(r"\b([abc][12])\b", normalized)
+        ielts = re.search(r"ielts[^0-9]{0,30}?(\d+(?:[.,]\d+)?)", lowered)
+        toeic = re.search(r"toeic[^0-9]{0,30}?(\d{3,4})", lowered)
+        cefr = re.search(r"\b([abc][12])\b", lowered)
         if ielts:
             result["ielts"] = float(ielts.group(1).replace(",", "."))
         if toeic:
@@ -862,49 +1039,95 @@ class DeterministicMatchingEngine:
             or any(language in candidate.matched_labels or _contains_phrase(candidate.chunk.normalized, language)
                    for language in spec.required_languages)
         ]
+        # IELTS/TOEIC evidence may appear without repeating the language name
+        # (for example under an Education heading).  Scan those chunks too.
+        known_ids = {candidate.chunk.chunk_id for candidate in candidates}
+        for chunk in chunks:
+            if chunk.chunk_id in known_ids:
+                continue
+            if (self._language_level_in(chunk.text)
+                    or any(marker in chunk.normalized for marker in ("ielts", "toeic", "cefr"))):
+                labels = self._matched_labels(spec, chunk.normalized)
+                candidates.append(_Candidate(
+                    chunk=chunk,
+                    matched_labels=labels,
+                    coverage=1.0 if labels else 0.5,
+                    strength=0.78,
+                ))
         if not candidates:
             return None
-        # Prefer language-section chunks, then chunks carrying a level.
-        def rank(candidate: _Candidate) -> tuple[int, int, float, str]:
-            level = self._language_level_in(candidate.chunk.text)
-            return (
-                1 if candidate.chunk.section == "LANGUAGE" else 0,
-                1 if level else 0,
-                candidate.strength,
-                candidate.chunk.chunk_id,
-            )
-
-        best = max(candidates, key=rank)
-        level = self._language_level_in(best.chunk.text)
         language_text = ", ".join(spec.required_languages) or "the required language"
 
-        comparisons: list[tuple[bool, bool]] = []  # (has_both, satisfied)
-        if spec.required_ielts is not None:
-            comparisons.append(("ielts" in level, bool(level.get("ielts", 0) >= spec.required_ielts) if "ielts" in level else False))
-        if spec.required_toeic is not None:
-            comparisons.append(("toeic" in level, bool(level.get("toeic", 0) >= spec.required_toeic) if "toeic" in level else False))
-        if spec.required_cefr is not None:
-            comparisons.append(("cefr" in level, CEFR_RANK.get(str(level.get("cefr", "")).lower(), 0) >= CEFR_RANK[spec.required_cefr.lower()] if "cefr" in level else False))
-        if spec.required_language_rank is not None:
-            comparisons.append(("rank" in level, int(level.get("rank", 0)) >= spec.required_language_rank if "rank" in level else False))
+        # Collect every stated level, not just the first one in a chunk.
+        # Conflicting levels for the same test stay unresolved: the CV may
+        # list an old and a current score and order alone cannot decide.
+        observations: list[dict[str, Any]] = []
+        for candidate in candidates:
+            for sentence in self._sentences(candidate.chunk.text):
+                levels = self._language_level_in(sentence)
+                for metric, value in levels.items():
+                    observations.append({
+                        "candidate": candidate,
+                        "quote": sentence,
+                        "metric": metric,
+                        "value": value,
+                    })
 
-        if comparisons:
-            if not any(has_both for has_both, _ in comparisons):
-                return None  # A level is required but none is stated: let LLM/HR decide.
-            satisfied = any(satisfied for has_both, satisfied in comparisons if has_both)
-            if satisfied:
-                return self._finding(
-                    spec, best, "MATCH", max(best.strength, 0.86),
-                    f"Deterministic language rule: {language_text} level evidence meets the requirement.",
-                )
+        required: list[tuple[str, float]] = []
+        if spec.required_ielts is not None:
+            required.append(("ielts", float(spec.required_ielts)))
+        if spec.required_toeic is not None:
+            required.append(("toeic", float(spec.required_toeic)))
+        if spec.required_cefr is not None:
+            required.append(("cefr", float(CEFR_RANK[spec.required_cefr.lower()])))
+        if spec.required_language_rank is not None:
+            required.append(("rank", float(spec.required_language_rank)))
+
+        if not required:
+            best = candidates[0]
             return self._finding(
-                spec, best, "NO_MATCH", max(best.strength, 0.78),
-                f"Deterministic language rule: {language_text} level evidence is below the requirement.",
+                spec, best, "MATCH", max(best.strength, 0.8),
+                f"Deterministic language rule: {language_text} is evidenced in the CV.",
             )
-        return self._finding(
-            spec, best, "MATCH", max(best.strength, 0.8),
-            f"Deterministic language rule: {language_text} is evidenced in the CV.",
-        )
+
+        def comparable(observation: dict[str, Any]) -> float:
+            if observation["metric"] == "cefr":
+                return float(CEFR_RANK.get(str(observation["value"]).lower(), 0))
+            return float(observation["value"])
+
+        satisfied: list[dict[str, Any]] = []
+        below: list[dict[str, Any]] = []
+        metrics_with_values: set[str] = set()
+        for metric, threshold in required:
+            metric_observations = [item for item in observations if item["metric"] == metric]
+            if not metric_observations:
+                continue
+            metrics_with_values.add(metric)
+            if len({comparable(item) for item in metric_observations}) > 1:
+                return None  # Conflicting stated levels: HR must verify.
+            observation = metric_observations[0]
+            if comparable(observation) >= threshold:
+                satisfied.append(observation)
+            else:
+                below.append(observation)
+
+        if satisfied:
+            observation = satisfied[0]
+            return self._finding(
+                spec, observation["candidate"], "MATCH",
+                max(observation["candidate"].strength, 0.86),
+                f"Deterministic language rule: {language_text} level evidence meets the requirement.",
+                quote_override=observation["quote"],
+            )
+        if below and len(metrics_with_values) == len(required):
+            observation = below[0]
+            return self._finding(
+                spec, observation["candidate"], "NO_MATCH",
+                max(observation["candidate"].strength, 0.78),
+                f"Deterministic language rule: {language_text} level evidence is below the requirement.",
+                quote_override=observation["quote"],
+            )
+        return None
 
     def _evaluate_generic(
         self,
@@ -932,13 +1155,12 @@ class DeterministicMatchingEngine:
             f"in {best.chunk.section} evidence ({best.chunk.chunk_id}).",
         )
 
-    def evaluate_criterion(
+    def _evaluate_spec(
         self,
-        criterion: dict[str, Any],
+        spec: RequirementSpec,
         chunks: list[DocumentChunk],
         candidate_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        spec = self.build_requirement_spec(criterion)
         if spec.kind == "YEARS":
             return self._evaluate_years(spec, chunks, candidate_profile)
         if spec.kind == "DEGREE":
@@ -946,6 +1168,14 @@ class DeterministicMatchingEngine:
         if spec.kind == "LANGUAGE":
             return self._evaluate_language(spec, chunks)
         return self._evaluate_generic(spec, chunks)
+
+    def evaluate_criterion(
+        self,
+        criterion: dict[str, Any],
+        chunks: list[DocumentChunk],
+        candidate_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return self._evaluate_spec(self.build_requirement_spec(criterion), chunks, candidate_profile)
 
     def evaluate_criteria(
         self,
@@ -957,16 +1187,23 @@ class DeterministicMatchingEngine:
         chunks = self.chunk_document(cv_text or "")
         findings: list[dict[str, Any]] = []
         unresolved: list[str] = []
+        fallback_chunks: dict[str, list[dict[str, Any]]] = {}
+        requirement_specs: dict[str, dict[str, Any]] = {}
         for criterion in criteria:
-            finding = self.evaluate_criterion(criterion, chunks, candidate_profile)
+            spec = self.build_requirement_spec(criterion)
+            requirement_specs[spec.criterion_id] = spec.to_dict()
+            finding = self._evaluate_spec(spec, chunks, candidate_profile)
             if finding:
                 findings.append(finding)
             else:
-                unresolved.append(str(criterion.get("criterion_id") or ""))
+                unresolved.append(spec.criterion_id)
+                fallback_chunks[spec.criterion_id] = self._fallback_chunks(spec, chunks)
         return {
             "findings": findings,
             "unresolved_criterion_ids": unresolved,
             "chunks": [chunk.to_dict() for chunk in chunks],
+            "fallback_chunks": fallback_chunks,
+            "requirement_specs": requirement_specs,
             "candidate_years_experience": self.candidate_years_experience(candidate_profile, chunks),
             "rule_version": RULES_VERSION,
         }

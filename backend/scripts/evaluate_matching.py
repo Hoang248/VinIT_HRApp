@@ -28,8 +28,13 @@ from app.services.evaluation import build_repeatability_report, compare_rankings
 
 
 def _derived_ranking(runs: list[dict[str, Any]], *, latest: bool) -> list[str]:
+    # Runs are ordered explicitly by run_index/created_at before choosing
+    # the first (baseline) or latest (candidate) run per application.  The
+    # raw file order is only a final tie-breaker, never the chronology.
+    from app.services.evaluation import _chronologically_ordered
+
     selected: dict[str, dict[str, Any]] = {}
-    for run in runs:
+    for run in _chronologically_ordered(runs):
         application_id = str(run.get("application_id") or run.get("id") or "")
         if not application_id:
             continue

@@ -52,7 +52,10 @@ def test_years_rule_matches_and_rejects_explicit_evidence():
     not_enough = deterministic_matcher.evaluate_criteria(
         "WORK EXPERIENCE\nBuilt Python tools for 2 years.", criteria, {})
     assert enough["findings"][0]["outcome"] == "STRONG_MATCH"
-    assert not_enough["findings"][0]["outcome"] == "NO_MATCH"
+    # One quantified fragment is not a reliable career total, so the safer
+    # result is unresolved rather than a rule NO_MATCH.
+    assert not_enough["findings"] == []
+    assert not_enough["unresolved_criterion_ids"] == ["c1"]
 
 
 def test_years_rule_can_sum_non_overlapping_date_ranges():
@@ -109,3 +112,88 @@ def test_requirement_spec_detects_measurable_kinds():
     assert (degree.kind, degree.required_degree_level) == ("DEGREE", 4)
     assert cert.kind == "CERTIFICATION"
     assert (language.kind, language.required_ielts) == ("LANGUAGE", 6.0)
+
+
+def test_years_rule_sums_distinct_duration_sentences_and_quotes_duration():
+    criteria = [criterion("c1", "Python experience", "At least 5 years of Python experience")]
+    text = (
+        "WORK EXPERIENCE\n"
+        "Python Engineer at A. Built APIs for 3 years.\n\n"
+        "Python Engineer at B. Built services for 3 years."
+    )
+    result = deterministic_matcher.evaluate_criteria(text, criteria, {})
+    finding = result["findings"][0]
+    assert result["candidate_years_experience"] == 6
+    assert finding["outcome"] in {"MATCH", "STRONG_MATCH"}
+    assert "years" in finding["evidence"]["verbatim_quote"]
+
+
+def test_years_rule_does_not_no_match_from_unreliable_duration_fragment():
+    criteria = [criterion("c1", "Python experience", "At least 5 years of Python experience")]
+    result = deterministic_matcher.evaluate_criteria(
+        "WORK EXPERIENCE\nBuilt Python tools for 2 years. Other work is undated.",
+        criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["c1"]
+
+
+def test_language_rule_is_order_independent_and_conflicts_are_unresolved():
+    criteria = [criterion("lang", "English", "English language, IELTS 7.0 required")]
+    high_first = deterministic_matcher.evaluate_criteria(
+        "LANGUAGES\nEnglish IELTS 7.0. English IELTS 5.5.", criteria, {})
+    low_first = deterministic_matcher.evaluate_criteria(
+        "LANGUAGES\nEnglish IELTS 5.5. English IELTS 7.0.", criteria, {})
+    assert high_first["findings"] == []
+    assert low_first["findings"] == []
+    assert high_first["unresolved_criterion_ids"] == ["lang"]
+    assert low_first["unresolved_criterion_ids"] == ["lang"]
+
+
+def test_language_rule_preserves_decimal_quote_and_uses_level_sentence():
+    criteria = [criterion("lang", "English", "English language, IELTS 7.0 required")]
+    result = deterministic_matcher.evaluate_criteria(
+        "EDUCATION\nPhD in Management.\n\nLANGUAGES\nIELTS 6.5.", criteria, {})
+    finding = result["findings"][0]
+    assert finding["outcome"] == "NO_MATCH"
+    assert finding["evidence"]["verbatim_quote"] == "IELTS 6.5."
+
+
+def test_degree_rule_does_not_use_lower_cv_quote_for_profile_only_match():
+    criteria = [criterion("degree", "Education", "Master degree required")]
+    result = deterministic_matcher.evaluate_criteria(
+        "EDUCATION\nBachelor of Computer Science, Example University.",
+        criteria,
+        {"education": ["Master of Finance"]},
+    )
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["degree"]
+
+
+def test_degree_below_outside_education_section_is_unresolved():
+    criteria = [criterion("degree", "Education", "Master degree required")]
+    result = deterministic_matcher.evaluate_criteria(
+        "WORK EXPERIENCE\nSupported bachelor-level coursework tooling.", criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["degree"]
+
+
+def test_phrase_constituent_token_does_not_satisfy_skill():
+    criteria = [criterion("c1", "Python programming", "Python programming", keywords=["Python programming"])]
+    result = deterministic_matcher.evaluate_criteria(
+        "SKILLS\nProgramming reliable business systems for clients.", criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["c1"]
+    assert result["fallback_chunks"]["c1"]
+
+
+def test_explicit_requirement_spec_overrides_text_inference():
+    item = criterion("c1", "Backend role", "General backend work")
+    item["requirement_spec"] = {
+        "kind": "YEARS",
+        "terms": ["Python"],
+        "min_years": 5,
+    }
+    spec = deterministic_matcher.build_requirement_spec(item)
+    assert spec.kind == "YEARS"
+    assert spec.min_years == 5
+    assert [term.label for term in spec.terms] == ["python"]

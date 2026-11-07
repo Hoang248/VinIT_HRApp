@@ -135,6 +135,37 @@ def runtime_snapshot(runtime: dict[str, Any]) -> dict[str, Any]:
     return public_runtime(runtime)
 
 
+def sanitize_provider_snapshot(
+    snapshot: Any,
+    *,
+    operations_access: bool = False,
+) -> dict[str, Any] | None:
+    """Provider metadata safe for an assessment API response.
+
+    Operations users may see the full public runtime snapshot.  Everyone
+    else gets only model provenance needed to interpret a result: no base
+    URL, provider configuration id, or API-key hint.
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    if operations_access:
+        result = dict(snapshot)
+        runtime = result.get("runtime")
+        if isinstance(runtime, dict):
+            result["runtime"] = public_runtime(runtime)
+        return result
+    runtime = snapshot.get("runtime")
+    if not isinstance(runtime, dict):
+        runtime = {}
+    reduced = {
+        "model_name": runtime.get("model_name"),
+        "provider_returned_model": snapshot.get("provider_returned_model"),
+        "system_fingerprint": snapshot.get("system_fingerprint"),
+    }
+    reduced = {key: value for key, value in reduced.items() if value is not None}
+    return reduced or None
+
+
 def environment_runtime() -> dict[str, Any]:
     return {"source": "environment", "config_id": None, "provider": settings.LLM_PROVIDER,
             "provider_name": settings.LLM_PROVIDER_NAME,

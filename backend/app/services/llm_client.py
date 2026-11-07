@@ -61,6 +61,7 @@ class CandidateProfileSchema(BaseModel):
 class EvidenceSchema(BaseModel):
     verbatim_quote: str = ""
     page_number: Optional[int] = None
+    chunk_id: Optional[str] = None
 
 
 class CriterionFindingSchema(BaseModel):
@@ -262,6 +263,20 @@ class LLMClient:
         if json_schema:
             system_prompt += f"\n\nYou MUST respond with valid JSON that strictly adheres to this schema:\n{json.dumps(json_schema, indent=2)}\nDo not include any explanations, markdown, or text outside the JSON object."
 
+        response_format: Dict[str, Any] = {"type": "json_object"}
+        if json_schema and getattr(settings, "LLM_STRICT_JSON_SCHEMA", False):
+            # Opt-in only: some OpenAI-compatible providers reject the
+            # json_schema response format.  When enabled, the provider is
+            # asked to enforce the schema instead of relying solely on the
+            # client-side Pydantic validation below.
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "structured_response",
+                    "strict": True,
+                    "schema": json_schema,
+                },
+            }
         payload = {
             "model": runtime["model_name"],
             "messages": [
@@ -269,7 +284,7 @@ class LLMClient:
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": temp,
-            "response_format": {"type": "json_object"}
+            "response_format": response_format
         }
         if settings.LLM_SEED is not None:
             payload["seed"] = settings.LLM_SEED
@@ -387,30 +402,114 @@ STRICT PRIVACY & ANTI-BIAS RULES:
         result["_prompt_version"] = PROFILE_PROMPT_VERSION
         return result
 
+    @staticmethod
+    def _matching_json_schema() -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["candidate_identifier", "rubric_version", "findings"],
+            "properties": {
+                "candidate_identifier": {"type": "string"},
+                "rubric_version": {"type": "string"},
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["criterion_id", "outcome", "confidence", "confidence_band", "reasoning", "evidence", "requires_verification"],
+                        "properties": {
+                            "criterion_id": {"type": "string"},
+                            "outcome": {"type": "string", "enum": ["STRONG_MATCH", "MATCH", "UNCLEAR", "NO_MATCH"]},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "confidence_band": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                            "reasoning": {"type": "string"},
+                            "evidence": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["verbatim_quote", "page_number", "chunk_id"],
+                                "properties": {
+                                    "verbatim_quote": {"type": "string"},
+                                    "page_number": {"type": ["integer", "null"]},
+                                    "chunk_id": {"type": ["string", "null"]},
+                                },
+                            },
+                            "requires_verification": {"type": "boolean"},
+                        },
+                    },
+                },
+            },
+        }
+
+    @staticmethod
+    def _parse_findings_individually(
+        result: Any,
+        rubric: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Validate findings one by one.
+
+        A single malformed finding must not fail the whole application: it
+        is downgraded to UNCLEAR for its criterion and flagged for HR
+        verification, while valid sibling findings keep their outcomes.
+        """
+        raw_findings = result.get("findings") if isinstance(result, dict) else None
+        if not isinstance(raw_findings, list):
+            raw_findings = []
+        rubric_ids = {str(criterion.get("criterion_id") or "") for criterion in rubric}
+        parsed: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in raw_findings:
+            if not isinstance(raw, dict):
+                continue
+            criterion_id = str(raw.get("criterion_id") or "")
+            if not criterion_id or criterion_id not in rubric_ids or criterion_id in seen:
+                continue
+            seen.add(criterion_id)
+            try:
+                parsed.append(CriterionFindingSchema.model_validate(raw).model_dump())
+            except ValidationError:
+                parsed.append({
+                    "criterion_id": criterion_id,
+                    "outcome": "UNCLEAR",
+                    "confidence": 0.0,
+                    "confidence_band": "LOW",
+                    "reasoning": "LLM finding failed validation and requires HR verification.",
+                    "evidence": {"verbatim_quote": "", "page_number": None, "chunk_id": None},
+                    "requires_verification": True,
+                })
+        return parsed
+
     async def match_criterion_evidence(
         self,
         cv_text: str,
         candidate_profile: Dict[str, Any],
         rubric: List[Dict[str, Any]],
         candidate_identifier: str,
-        rubric_version: str
+        rubric_version: str,
+        candidate_chunks: Dict[str, List[Dict[str, Any]]] | List[Dict[str, Any]] | None = None
     ) -> Dict[str, Any]:
-        """Task AIC-03: Match each criterion with verbatim evidence quotes from CV"""
+        """Task AIC-03: Match each criterion with evidence from supplied chunks.
+
+        When ``candidate_chunks`` is provided (the worker's rule-first
+        fallback path), the model receives only those chunks, keyed by
+        criterion, and must cite a chunk_id.  It no longer receives the
+        whole CV.  Without chunks, the legacy whole-CV prompt is retained
+        for direct callers.
+        """
         system_prompt = """You are a rigorous, evidence-based Candidate Verification Agent.
 
 EVALUATION RULES:
 1. For each criterion, assign exactly ONE of the following 4 levels:
    - "STRONG_MATCH": Candidate substantially exceeds the requirement with verifiable metrics.
    - "MATCH": Candidate explicitly satisfies the full requirement.
-   - "UNCLEAR": The CV does not mention the requirement, or mentions it ambiguously without verifiable context.
-   - "NO_MATCH": The CV provides explicit evidence contradicting the requirement.
+   - "UNCLEAR": The evidence does not mention the requirement, or mentions it ambiguously without verifiable context.
+   - "NO_MATCH": The evidence provides explicit text contradicting the requirement.
 2. CRITICAL PRINCIPLE: "UNCLEAR" MUST NEVER BE TREATED AS "NO_MATCH". If evidence is absent, you MUST output "UNCLEAR".
 3. EVIDENCE REQUIREMENT:
-   - For "STRONG_MATCH" and "MATCH", you MUST provide an exact, verbatim text quote copied directly from the CV and its page number.
-   - If no verbatim quote exists in the text, you CANNOT assign "MATCH" or "STRONG_MATCH".
+   - For "STRONG_MATCH" and "MATCH", you MUST provide an exact, verbatim text quote copied from the supplied evidence and its chunk_id.
+   - If no verbatim quote exists in the supplied evidence, you CANNOT assign "MATCH" or "STRONG_MATCH".
 4. A NO_MATCH also requires a verbatim quote that explicitly contradicts the criterion; otherwise use UNCLEAR.
 5. Reasoning must be concise, objective, and neutral. Do not assume or extrapolate.
-6. Return JSON with candidate_identifier, rubric_version, and findings (one entry per criterion). Each finding must have criterion_id, outcome, confidence (number 0 to 1), confidence_band (HIGH, MEDIUM, or LOW), reasoning, and evidence: {verbatim_quote, page_number}. Use an empty quote and null page for UNCLEAR when no evidence exists.
+6. Return JSON with candidate_identifier, rubric_version, and findings (one entry per criterion). Each finding must have criterion_id, outcome, confidence (number 0 to 1), confidence_band (HIGH, MEDIUM, or LOW), reasoning, and evidence: {verbatim_quote, page_number, chunk_id}. Use an empty quote, null page and null chunk_id for UNCLEAR when no evidence exists.
 """
 
         # Preserve criterion names, which are job requirements rather than a
@@ -420,30 +519,60 @@ EVALUATION RULES:
             clean = redact_payload(criterion)
             clean["name"] = redact_text(str(criterion.get("name") or ""))
             safe_rubric.append(clean)
-        user_prompt = json.dumps({"candidate_identifier": candidate_identifier, "rubric_version": rubric_version,
-                                  "untrusted_rubric": safe_rubric,
-                                  "untrusted_profile": redact_professional_profile(candidate_profile),
-                                  "untrusted_redacted_cv": redact_text(cv_text, detect_first_line_name=True)},
-                                 ensure_ascii=False)
+
+        prompt_payload: Dict[str, Any] = {
+            "candidate_identifier": candidate_identifier,
+            "rubric_version": rubric_version,
+            "untrusted_rubric": safe_rubric,
+            "untrusted_profile": redact_professional_profile(candidate_profile),
+        }
+        if candidate_chunks is not None:
+            if isinstance(candidate_chunks, dict):
+                chunk_map = candidate_chunks
+            else:
+                chunk_map = {
+                    str(criterion.get("criterion_id") or ""): candidate_chunks
+                    for criterion in rubric
+                }
+            safe_chunks: Dict[str, List[Dict[str, Any]]] = {}
+            for criterion in rubric:
+                criterion_id = str(criterion.get("criterion_id") or "")
+                entries = []
+                for chunk in chunk_map.get(criterion_id, [])[:5]:
+                    if not isinstance(chunk, dict):
+                        continue
+                    entries.append({
+                        "chunk_id": chunk.get("chunk_id"),
+                        "page_number": chunk.get("page_number"),
+                        "section": chunk.get("section"),
+                        "text": redact_text(str(chunk.get("text") or "")),
+                    })
+                safe_chunks[criterion_id] = entries
+            prompt_payload["untrusted_candidate_chunks_by_criterion"] = safe_chunks
+        else:
+            prompt_payload["untrusted_redacted_cv"] = redact_text(
+                cv_text, detect_first_line_name=True)
+        user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
 
         metadata: dict[str, Any] = {}
         result = await self._call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.0,  # Fully deterministic matching
+            json_schema=self._matching_json_schema(),
             metadata_out=metadata,
         )
 
-        try:
-            validated = CriterionFindingsSchema.model_validate(result)
-        except ValidationError as e:
-            logger.error("LLM criterion matching failed schema validation")
-            raise LLMError("Matching results failed validation")
-
         from app.services.matching import matching_engine
 
-        result = validated.model_dump()
-        result["findings"] = matching_engine.canonicalize_findings(rubric, result["findings"])
+        # Parse findings independently: one malformed finding becomes an
+        # UNCLEAR for that criterion instead of failing the application.
+        parsed_findings = self._parse_findings_individually(result, rubric)
+        result = {
+            "candidate_identifier": candidate_identifier,
+            "rubric_version": rubric_version,
+            "findings": matching_engine.canonicalize_findings(rubric, parsed_findings),
+        }
         result = redact_payload(result)
         result["candidate_identifier"] = candidate_identifier
         result["rubric_version"] = rubric_version

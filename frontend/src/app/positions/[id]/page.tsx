@@ -43,7 +43,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { positionsApi, criteriaApi, applicationsApi, operationsApi, authApi, dashboardApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import type { Position, CriteriaVersion, Criterion, JDVersion } from '@/types';
+import type { Position, CriteriaVersion, Criterion, JDVersion, RequirementSpec } from '@/types';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -63,6 +63,19 @@ function TabPanel(props: TabPanelProps) {
       {value === index && <Box sx={{ py: 3 }}>{children}</Box>}
     </div>
   );
+}
+
+function requirementSpecSummary(criterion: Criterion, t: (text: string) => string): string {
+  const spec = criterion.requirement_spec;
+  if (!spec) return t("Chưa có đặc tả yêu cầu cấu trúc; hệ thống sẽ suy luận bản nháp khi HR duyệt.");
+  const details: string[] = [spec.kind];
+  if (spec.min_years != null) details.push(`≥ ${spec.min_years} ${t("năm")}`);
+  if (spec.required_degree_level != null) details.push(`${t("bậc bằng")} ${spec.required_degree_level}`);
+  if (spec.required_ielts != null) details.push(`IELTS ${spec.required_ielts}`);
+  if (spec.required_toeic != null) details.push(`TOEIC ${spec.required_toeic}`);
+  if (spec.required_cefr) details.push(spec.required_cefr);
+  if (spec.terms?.length) details.push(spec.terms.join(', '));
+  return details.join(' · ');
 }
 
 export default function PositionDetailPage() {
@@ -225,6 +238,7 @@ export default function PositionDetailPage() {
       await criteriaApi.updateItem(currentCriteria.criteria_version_id, editingCriterion.criterion_id, {
         name: editingCriterion.name, description: editingCriterion.description,
         weight_in_group: Number(editingCriterion.weight_in_group),
+        requirement_spec: editingCriterion.requirement_spec || null,
       });
       setEditingCriterion(null);
       await loadData();
@@ -508,12 +522,15 @@ export default function PositionDetailPage() {
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
                               <Chip label={`${crit.weight_in_group}%`} size="small" sx={{ height: 20, fontSize: 11, backgroundColor: '#F3EEEE' }} />
                               {isHR && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status) && (
-                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit }); }}>{t("Sửa")}</Button>
+                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit, requirement_spec: crit.requirement_spec || { kind: 'SKILL', terms: crit.expected_evidence_keywords || [], required_languages: [] } }); }}>{t("Sửa")}</Button>
                               )}
                             </Box>
                           </Box>
                           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                             {crit.description}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {t("Đặc tả yêu cầu:")} {requirementSpecSummary(crit, t)}
                           </Typography>
                         </ListItem>
                       ))}
@@ -553,12 +570,15 @@ export default function PositionDetailPage() {
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
                               <Chip label={`${crit.weight_in_group}%`} size="small" sx={{ height: 20, fontSize: 11, backgroundColor: '#F3EEEE' }} />
                               {isHR && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status) && (
-                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit }); }}>{t("Sửa")}</Button>
+                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit, requirement_spec: crit.requirement_spec || { kind: 'SKILL', terms: crit.expected_evidence_keywords || [], required_languages: [] } }); }}>{t("Sửa")}</Button>
                               )}
                             </Box>
                           </Box>
                           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                             {crit.description}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {t("Đặc tả yêu cầu:")} {requirementSpecSummary(crit, t)}
                           </Typography>
                         </ListItem>
                       ))}
@@ -825,6 +845,44 @@ export default function PositionDetailPage() {
             <TextField label={t("Trọng số tương đối trong nhóm (%)")} type="number" value={editingCriterion.weight_in_group}
               onChange={e => setEditingCriterion({ ...editingCriterion, weight_in_group: Number(e.target.value) })}
               inputProps={{ min: 0, max: 100, step: 0.1 }} helperText={t("Đây là trọng số tương đối giữa các tiêu chí trong cùng nhóm.")} />
+            <FormControl fullWidth>
+              <InputLabel id="requirement-kind-label">{t("Loại yêu cầu")}</InputLabel>
+              <Select labelId="requirement-kind-label" label={t("Loại yêu cầu")}
+                value={editingCriterion.requirement_spec?.kind || 'SKILL'}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...(editingCriterion.requirement_spec || { terms: [], required_languages: [] }), kind: e.target.value as RequirementSpec['kind'], terms: editingCriterion.requirement_spec?.terms || [], required_languages: editingCriterion.requirement_spec?.required_languages || [] } })}>
+                <MenuItem value="SKILL">{t("Kỹ năng")}</MenuItem>
+                <MenuItem value="YEARS">{t("Số năm kinh nghiệm")}</MenuItem>
+                <MenuItem value="DEGREE">{t("Bằng cấp")}</MenuItem>
+                <MenuItem value="CERTIFICATION">{t("Chứng chỉ")}</MenuItem>
+                <MenuItem value="LANGUAGE">{t("Ngoại ngữ")}</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField label={t("Thuật ngữ bằng chứng (phân tách bằng dấu phẩy)")} fullWidth
+              value={(editingCriterion.requirement_spec?.terms || []).join(', ')}
+              onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...(editingCriterion.requirement_spec || { kind: 'SKILL', required_languages: [] }), terms: e.target.value.split(',').map(item => item.trim()).filter(Boolean), required_languages: editingCriterion.requirement_spec?.required_languages || [] } })} />
+            {editingCriterion.requirement_spec?.kind === 'YEARS' && (
+              <TextField label={t("Số năm tối thiểu")} type="number" fullWidth value={editingCriterion.requirement_spec.min_years ?? ''}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, min_years: e.target.value === '' ? null : Number(e.target.value) } })}
+                inputProps={{ min: 0, max: 80, step: 0.5 }} />
+            )}
+            {editingCriterion.requirement_spec?.kind === 'DEGREE' && (
+              <TextField label={t("Bậc bằng tối thiểu (1-5)")} type="number" fullWidth value={editingCriterion.requirement_spec.required_degree_level ?? ''}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, required_degree_level: e.target.value === '' ? null : Number(e.target.value) } })}
+                inputProps={{ min: 1, max: 5, step: 1 }} />
+            )}
+            {editingCriterion.requirement_spec?.kind === 'LANGUAGE' && (<>
+              <TextField label={t("Ngôn ngữ (phân tách bằng dấu phẩy)")} fullWidth
+                value={(editingCriterion.requirement_spec.required_languages || []).join(', ')}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, required_languages: e.target.value.split(',').map(item => item.trim()).filter(Boolean) } })} />
+              <TextField label="IELTS" type="number" fullWidth value={editingCriterion.requirement_spec.required_ielts ?? ''}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, required_ielts: e.target.value === '' ? null : Number(e.target.value) } })}
+                inputProps={{ min: 0, max: 9, step: 0.5 }} />
+              <TextField label="TOEIC" type="number" fullWidth value={editingCriterion.requirement_spec.required_toeic ?? ''}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, required_toeic: e.target.value === '' ? null : Number(e.target.value) } })}
+                inputProps={{ min: 0, max: 990, step: 5 }} />
+              <TextField label="CEFR (A1-C2)" fullWidth value={editingCriterion.requirement_spec.required_cefr || ''}
+                onChange={e => setEditingCriterion({ ...editingCriterion, requirement_spec: { ...editingCriterion.requirement_spec!, required_cefr: (e.target.value.toUpperCase() || null) as RequirementSpec['required_cefr'] } })} />
+            </>)}
           </Box>}
         </DialogContent>
         <DialogActions><Button onClick={() => setEditingCriterion(null)} disabled={savingCriterion}>{t("Hủy")}</Button>

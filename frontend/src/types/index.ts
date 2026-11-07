@@ -45,6 +45,18 @@ export interface Position {
   criteria_approved?: boolean;
 }
 
+export interface RequirementSpec {
+  kind: 'SKILL' | 'YEARS' | 'DEGREE' | 'CERTIFICATION' | 'LANGUAGE';
+  terms: string[];
+  min_years?: number | null;
+  required_degree_level?: number | null;
+  required_languages: string[];
+  required_ielts?: number | null;
+  required_toeic?: number | null;
+  required_cefr?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | null;
+  required_language_rank?: number | null;
+}
+
 export interface Criterion {
   criterion_id: string;
   criteria_version_id: string;
@@ -53,6 +65,7 @@ export interface Criterion {
   category: 'MUST_HAVE' | 'NICE_TO_HAVE';
   weight_in_group: number;
   expected_evidence_keywords: string[];
+  requirement_spec?: RequirementSpec | null;
   evidence_guidance?: string;
   jd_reference_text?: string;
   display_order: number;

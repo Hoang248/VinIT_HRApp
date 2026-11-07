@@ -22,7 +22,11 @@ for f in supabase/migrations/00001_initial_schema.sql \
          supabase/migrations/00002_audit_fixes_indexes_rls.sql \
          supabase/migrations/00003_phase1_operation_scope.sql \
          supabase/migrations/00004_recovery_and_privacy.sql \
-         supabase/migrations/00005_account_administration.sql; do
+         supabase/migrations/00005_account_administration.sql \
+         supabase/migrations/00006_openai_compatible_provider_secrets.sql \
+         supabase/migrations/00007_departments_and_position_codes.sql \
+         supabase/migrations/00008_deterministic_assessment_foundation.sql \
+         supabase/migrations/00009_structured_requirement_specs.sql; do
   psql 'postgresql://postgres@127.0.0.1:55432/hra_phase1_test' -v ON_ERROR_STOP=1 -f "$f"
 done
 ```

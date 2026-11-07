@@ -11,6 +11,7 @@ golden set described in doc/MATCHING_STABILITY.md.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -25,6 +26,32 @@ DEFAULT_THRESHOLDS = {
 
 def _run_id(run: Mapping[str, Any]) -> str:
     return str(run.get("application_id") or run.get("candidate_id") or run.get("id") or "")
+
+
+def _run_chronology_key(run: Mapping[str, Any], index: int = 0) -> tuple[int, float, int]:
+    """Explicit run order: run_index/sequence, then created_at, then input order."""
+    for key in ("run_index", "sequence", "attempt"):
+        try:
+            return (0, float(run.get(key)), index)
+        except (TypeError, ValueError):
+            continue
+    raw = run.get("created_at") or run.get("completed_at") or run.get("timestamp")
+    if raw is not None:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            return (1, parsed.timestamp(), index)
+        except ValueError:
+            pass
+    return (2, 0.0, index)
+
+
+def _chronologically_ordered(runs: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        run for _, run in sorted(
+            enumerate(runs),
+            key=lambda item: _run_chronology_key(item[1], item[0]),
+        )
+    ]
 
 
 def _run_score(run: Mapping[str, Any]) -> float | None:
@@ -124,23 +151,41 @@ def compare_assessments(
     }
 
 
-def _ranking_ids(ranking: Iterable[Any]) -> list[str]:
+def _ranking_entries(ranking: Iterable[Any]) -> list[tuple[str, float]]:
+    """(application_id, rank position) pairs, preserving explicit ties."""
     items = list(ranking)
     if all(isinstance(item, str) for item in items):
-        return [str(item) for item in items]
+        return [(str(item), float(index)) for index, item in enumerate(items, start=1)]
     runs = [item for item in items if isinstance(item, Mapping)]
     if any(item.get("rank_number") is not None or item.get("rank") is not None for item in runs):
         runs.sort(key=lambda item: (
             item.get("rank_number") if item.get("rank_number") is not None else item.get("rank"),
             _run_id(item),
         ))
-    return [_run_id(item) for item in runs if _run_id(item)]
+        return [
+            (_run_id(item), float(
+                item.get("rank_number") if item.get("rank_number") is not None else item.get("rank")
+            ))
+            for item in runs if _run_id(item)
+        ]
+    return [(_run_id(item), float(index)) for index, item in enumerate(runs, start=1) if _run_id(item)]
+
+
+def _ranking_ids(ranking: Iterable[Any]) -> list[str]:
+    return [application_id for application_id, _ in _ranking_entries(ranking)]
 
 
 def _rank_positions(ids: list[str]) -> dict[str, float]:
     positions: dict[str, list[int]] = {}
     for index, application_id in enumerate(ids, start=1):
         positions.setdefault(application_id, []).append(index)
+    return {key: sum(value) / len(value) for key, value in positions.items()}
+
+
+def _ranking_positions(ranking: Iterable[Any]) -> dict[str, float]:
+    positions: dict[str, list[float]] = {}
+    for application_id, position in _ranking_entries(ranking):
+        positions.setdefault(application_id, []).append(position)
     return {key: sum(value) / len(value) for key, value in positions.items()}
 
 
@@ -163,8 +208,8 @@ def compare_rankings(
     baseline_ids = _ranking_ids(baseline_ranking)
     candidate_ids = _ranking_ids(candidate_ranking)
     common = sorted(set(baseline_ids) & set(candidate_ids))
-    baseline_rank = _rank_positions(baseline_ids)
-    candidate_rank = _rank_positions(candidate_ids)
+    baseline_rank = _ranking_positions(baseline_ranking)
+    candidate_rank = _ranking_positions(candidate_ranking)
 
     spearman = _pearson(
         [baseline_rank[item] for item in common],
@@ -172,19 +217,34 @@ def compare_rankings(
     )
 
     concordant = discordant = 0
-    ties = 0
+    baseline_ties = candidate_ties = 0
     for index, first in enumerate(common):
         for second in common[index + 1:]:
             baseline_order = baseline_rank[first] - baseline_rank[second]
             candidate_order = candidate_rank[first] - candidate_rank[second]
-            if baseline_order == 0 or candidate_order == 0:
-                ties += 1
-            elif (baseline_order > 0) == (candidate_order > 0):
+            baseline_tied = baseline_order == 0
+            candidate_tied = candidate_order == 0
+            if baseline_tied:
+                baseline_ties += 1
+            if candidate_tied:
+                candidate_ties += 1
+            if baseline_tied or candidate_tied:
+                continue
+            if (baseline_order > 0) == (candidate_order > 0):
                 concordant += 1
             else:
                 discordant += 1
-    pair_count = concordant + discordant + ties
-    kendall = round((concordant - discordant) / pair_count, 6) if pair_count else None
+    # Kendall tau-b: pairs tied in both rankings are excluded from both
+    # tie counts by using the standard n1/n2 correction below.
+    both_ties = 0
+    for index, first in enumerate(common):
+        for second in common[index + 1:]:
+            if baseline_rank[first] == baseline_rank[second] and candidate_rank[first] == candidate_rank[second]:
+                both_ties += 1
+    n1 = baseline_ties - both_ties
+    n2 = candidate_ties - both_ties
+    denominator = math.sqrt((concordant + discordant + n1) * (concordant + discordant + n2))
+    kendall = round((concordant - discordant) / denominator, 6) if denominator else None
 
     top_k: dict[str, float | None] = {}
     for k in (5, 10, 20):
@@ -200,6 +260,7 @@ def compare_rankings(
         "common_applications": len(common),
         "spearman": spearman,
         "kendall_tau": kendall,
+        "kendall_tau_b": kendall,
         "top_k_overlap": top_k,
     }
 
@@ -207,7 +268,7 @@ def compare_rankings(
 def _split_repeats(runs: list[Mapping[str, Any]]) -> tuple[list[Mapping[str, Any]], list[list[Mapping[str, Any]]]]:
     baseline_by_id: dict[str, Mapping[str, Any]] = {}
     repeats_by_id: dict[str, list[Mapping[str, Any]]] = {}
-    for run in runs:
+    for run in _chronologically_ordered(runs):
         application_id = _run_id(run)
         if not application_id:
             continue

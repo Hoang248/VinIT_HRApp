@@ -19,7 +19,8 @@ CV đã redaction
        -> chưa có: chunk CV theo page/section/paragraph/sentence
                     -> requirement spec từ rubric đã duyệt
                     -> deterministic rule engine
-                    -> LLM strict-schema chỉ cho tiêu chí chưa quyết định
+                    -> LLM fallback chỉ cho tiêu chí chưa quyết định,
+                       chỉ với candidate chunks của từng tiêu chí
                     -> hợp nhất findings theo đúng rubric
                     -> verify quote bằng normalized span + page/offset
                     -> score / must-have gate / evidence coverage
@@ -36,7 +37,9 @@ Fingerprint là SHA-256 của:
 - SHA-256 của CV text sau redaction;
 - snapshot runtime AI công khai (không chứa API key/ciphertext);
 - `LLM_SEED` nếu được cấu hình;
-- matching prompt version, matching policy version và deterministic rules version.
+- matching prompt version, matching policy version và deterministic rules version;
+- ranking policy version, ngày đánh giá dùng cho khoảng ngày kết thúc ở hiện tại;
+- trực tiếp các tham số điểm/coverage đang hiệu lực: score map, `MIN_EVIDENCE_COVERAGE`, `MIN_EVIDENCE_STRENGTH`, trọng số hai nhóm và cờ strict JSON Schema. Thay các giá trị này qua môi trường vẫn đổi fingerprint dù quên tăng version string.
 
 Nếu một `COMPLETED` assessment có cùng fingerprint tồn tại, worker bỏ qua application đó. Muốn đánh giá lại có chủ đích, phải tạo thay đổi có version mới — ví dụ HR sửa profile, duyệt rubric mới, hoặc vận hành tăng policy/prompt/rules/model runtime — rồi chạy lại operation. Không sửa trực tiếp kết quả đã lưu.
 
@@ -49,23 +52,25 @@ CV được chia thành chunk có:
 - `char_start`/`char_end` trỏ đúng vào CV text;
 - section suy ra từ heading: `WORK`, `PROJECT`, `SKILL`, `EDUCATION`, `CERTIFICATION`, `LANGUAGE`, `SUMMARY` hoặc `OTHER`.
 
-Requirement spec được suy ra xác định từ tên/mô tả/expected keywords của tiêu chí đã duyệt, gồm loại yêu cầu, term group và alias EN/VI, số năm tối thiểu, cấp bằng, ngôn ngữ và ngưỡng IELTS/TOEIC/CEFR nếu có.
+Requirement spec có dạng cấu trúc (`kind`, `terms`, `min_years`, cấp bằng, ngôn ngữ và ngưỡng IELTS/TOEIC/CEFR) và được lưu trên từng criterion. AI/HR có thể sửa spec trong bản nháp; khi HR duyệt, các spec suy luận còn thiếu được materialize vào rubric để HM duyệt đúng spec sẽ dùng khi đánh giá. Spec đã lưu là nguồn sự thật; engine chỉ suy luận bản nháp khi criterion chưa có spec.
 
 ### 2.3 Rule engine
 
 | Loại | Quyết định xác định khi | Không quyết định khi |
 |---|---|---|
 | Kỹ năng | term/alias xuất hiện trong chunk liên quan với coverage đủ mạnh | chỉ xuất hiện yếu/ngoài ngữ cảnh hoặc không thấy |
-| Số năm | có số năm tường minh, số viết bằng chữ, hoặc khoảng ngày làm việc đủ/không đủ | chỉ thấy kỹ năng nhưng không suy ra được thời lượng |
-| Bằng cấp | section Education/facts cho cấp bằng đạt hoặc thấp hơn yêu cầu | không parse được cấp bằng |
+| Số năm | tổng duration riêng biệt đủ, profile total, hoặc khoảng ngày đã merge đủ/không đủ | tổng duration rời rạc dưới ngưỡng nhưng chưa đáng tin cậy để kết luận thiếu |
+| Bằng cấp | quote trong CV parse được cấp bằng đạt; hoặc section Education đầy đủ cho thấy cấp cao nhất thấp hơn yêu cầu | profile fact cao hơn quote CV, hoặc bằng thấp chỉ xuất hiện ngoài Education |
 | Chứng chỉ | term chứng chỉ xuất hiện trong chunk liên quan | không thấy chứng chỉ |
-| Ngoại ngữ | ngôn ngữ và/hoặc IELTS/TOEIC/CEFR/định tính đạt hoặc thấp hơn yêu cầu | yêu cầu có level nhưng CV chỉ nêu tên ngôn ngữ |
+| Ngoại ngữ | một mức nhất quán đạt hoặc thấp hơn yêu cầu, quote chứa nguyên mức đó | nhiều mức mâu thuẫn cho cùng bài test, hoặc CV chỉ nêu tên ngôn ngữ |
 
-Rule finding có `decision_source=RULE`, `evidence_strength`, `evidence_chunk_id` và `rule_version`. Quote lưu xuống evidence là exact substring lấy từ CV text; worker vẫn verify lại span/page trước khi chấm.
+Rule finding có `decision_source=RULE`, `evidence_strength`, `evidence_chunk_id` và `rule_version`. Token cấu thành của một phrase (ví dụ `programming`) không tự thỏa mãn concept (`Python programming`). Quote lưu xuống evidence là exact substring lấy từ CV text; worker vẫn verify lại span/page trước khi chấm và ưu tiên occurrence thuộc chunk/page được gợi ý khi quote lặp lại.
+
+`HYBRID` hiện là giá trị dành cho quyết định hợp nhất trong tương lai; đường code hiện tại gán từng criterion là `RULE` hoặc `LLM`, không mô tả một finding LLM thường là hybrid.
 
 ### 2.4 LLM fallback
 
-LLM chỉ nhận các tiêu chí mà rule chưa quyết định, cùng CV text đã redaction và rubric con tương ứng. Response phải khớp strict Pydantic schema; findings được canonical hóa theo đúng thứ tự rubric, thiếu/trùng/không hợp lệ thành `UNCLEAR`. Quote không tìm được span trong CV sẽ bị hạ `UNCLEAR`.
+LLM chỉ nhận các tiêu chí mà rule chưa quyết định, rubric con tương ứng và tối đa 5 candidate chunks cho từng criterion. Model phải trích quote từ các chunk đó và trả `evidence.chunk_id`; toàn bộ CV không được gửi trong fallback path. Từng finding được validate độc lập: finding lỗi enum/schema chỉ thành `UNCLEAR` cho criterion đó, không làm fail application. `LLM_STRICT_JSON_SCHEMA=true` mới yêu cầu provider enforce JSON Schema; mặc định vẫn dùng `json_object` và Pydantic validation phía client vì một số endpoint compatible không hỗ trợ strict schema. Quote không tìm được span trong CV sẽ bị hạ `UNCLEAR`.
 
 `temperature=0` và seed tùy chọn chỉ giúp nhà cung cấp ổn định hơn theo cơ chế best-effort; chúng **không** thay thế fingerprint/rule engine.
 
@@ -89,7 +94,7 @@ Module `backend/app/services/evaluation.py` và CLI `backend/scripts/evaluate_ma
 - mean/max/P95 độ lệch điểm;
 - số lượng và tỉ lệ criterion flip;
 - exact application agreement;
-- Spearman, Kendall tau và Top-5/10/20 overlap của ranking;
+- Spearman, Kendall tau-b (có hiệu chỉnh ties) và Top-5/10/20 overlap của ranking;
 - tỉ lệ fingerprint reuse nếu được cung cấp số liệu operation.
 
 ### 4.1 Định dạng snapshot đầu vào
@@ -117,7 +122,9 @@ CLI nhận một list run, hoặc object:
 }
 ```
 
-Các run cùng fingerprint được hiểu là forced rerun: lần xuất hiện đầu của mỗi application là baseline, các lần sau là rerun. Nếu không cung cấp ranking, CLI suy ranking từ score giảm dần, coverage giảm dần, rồi application_id tăng dần.
+Các run cùng fingerprint được hiểu là forced rerun. Thứ tự thời gian được xác định tường minh bằng `run_index`/`sequence`, sau đó `created_at`; thứ tự trong file chỉ là tie-breaker cuối. Run sớm nhất của mỗi application là baseline, các run sau là rerun. Nếu không cung cấp ranking, CLI suy ranking từ score giảm dần, coverage giảm dần, rồi application_id tăng dần.
+
+Exporter chính thức chỉ đọc `backend/scripts/export_matching_snapshot.py` xuất assessment ID, fingerprint, điểm, coverage, outcome và ranking. Exporter không xuất CV text, profile facts, quote bằng chứng hoặc provider snapshot.
 
 ### 4.2 Chạy đo
 
@@ -169,7 +176,8 @@ Chỉ bổ sung semantic retrieval khi golden set chứng minh lexical rule bỏ
 backend/.venv/bin/python -m pytest -q \
   backend/tests/test_deterministic_matching.py \
   backend/tests/test_matching_evaluation.py \
-  backend/tests/test_phase1_unit.py
+  backend/tests/test_phase1_unit.py \
+  backend/tests/test_matching_audit_fixes.py
 ```
 
 Integration test cần PostgreSQL cục bộ dùng một lần theo `backend/tests/README.md`; không chạy chúng trên database production/Supabase thật.

@@ -20,6 +20,7 @@ from app.db.database import SessionLocal
 from sqlalchemy import text
 import json
 from app.services.llm_client import llm_client, LLMError
+from app.services.deterministic_matching import deterministic_matcher
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -34,6 +35,43 @@ def _load_criteria(db, version_id):
         SELECT * FROM app_private.criteria_items WHERE criteria_version_id = :id ORDER BY display_order, criterion_id
     """), {"id": str(version_id)}).mappings().all()]
     return result
+
+
+def _stored_requirement_spec(item: dict) -> dict:
+    """Materialize the engine's inferred draft in the stored JSONB shape."""
+    spec = deterministic_matcher.build_requirement_spec(item)
+    return {
+        "kind": spec.kind,
+        "terms": [term.label for term in spec.terms],
+        "min_years": spec.min_years,
+        "required_degree_level": spec.required_degree_level,
+        "required_languages": list(spec.required_languages),
+        "required_ielts": spec.required_ielts,
+        "required_toeic": spec.required_toeic,
+        "required_cefr": spec.required_cefr,
+        "required_language_rank": spec.required_language_rank,
+    }
+
+
+def _materialize_requirement_specs(db, criteria_version_id: str) -> int:
+    """Store inferred specs for legacy criteria before HR approval."""
+    rows = db.execute(text("""
+        SELECT criterion_id, name, description, category, expected_evidence_keywords, requirement_spec
+        FROM app_private.criteria_items WHERE criteria_version_id = :id
+    """), {"id": criteria_version_id}).mappings().all()
+    materialized = 0
+    for row in rows:
+        item = dict(row)
+        if item.get("requirement_spec"):
+            continue
+        db.execute(text("""
+            UPDATE app_private.criteria_items
+            SET requirement_spec = CAST(:spec AS jsonb)
+            WHERE criterion_id = :criterion_id
+        """), {"spec": json.dumps(_stored_requirement_spec(item)),
+               "criterion_id": str(item["criterion_id"])})
+        materialized += 1
+    return materialized
 
 
 @router.get("/position/{position_id}/versions", response_model=List[CriteriaVersion])
@@ -92,7 +130,13 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
             keywords = criterion.get("expected_evidence_keywords", [])
             if not name or len(name) > 200 or not description or len(description) > 4000 or category not in ("MUST_HAVE", "NICE_TO_HAVE") or not 0 <= weight <= 100 or not isinstance(keywords, list):
                 raise ValueError("Invalid criterion")
-            items.append({"name": name, "description": description, "category": category, "weight": weight, "keywords": keywords})
+            draft_item = {"name": name, "description": description, "category": category,
+                          "weight": weight, "keywords": keywords}
+            draft_item["requirement_spec"] = _stored_requirement_spec({
+                "name": name, "description": description, "category": category,
+                "expected_evidence_keywords": keywords,
+            })
+            items.append(draft_item)
         if not any(c["category"] == "MUST_HAVE" and c["weight"] > 0 for c in items):
             raise ValueError("No weighted mandatory criterion")
         if any(sum(c["weight"] for c in items if c["category"] == category) <= 0
@@ -114,9 +158,11 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
         for index, item in enumerate(items):
             db.execute(text("""
                 INSERT INTO app_private.criteria_items (criteria_version_id, name, description, category, weight_in_group,
-                    expected_evidence_keywords, display_order)
-                VALUES (:id, :name, :description, :category, :weight, CAST(:keywords AS jsonb), :display_order)
-            """), {**item, "id": version_id, "keywords": json.dumps(item["keywords"]), "display_order": index})
+                    expected_evidence_keywords, requirement_spec, display_order)
+                VALUES (:id, :name, :description, :category, :weight, CAST(:keywords AS jsonb),
+                        CAST(:requirement_spec AS jsonb), :display_order)
+            """), {**item, "id": version_id, "keywords": json.dumps(item["keywords"]),
+                    "requirement_spec": json.dumps(item["requirement_spec"]), "display_order": index})
         db.execute(text("""
             INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
             VALUES (:user_id, 'GENERATE_CRITERIA_DRAFT', 'CRITERIA_VERSION', :id, :position, 'SUCCESS')
@@ -223,6 +269,7 @@ async def approve_criteria(
                     or cv["mandatory_weight_total"] + cv["nice_to_have_weight_total"] != 100):
                 raise HTTPException(status_code=400, detail="Trọng số hai nhóm không hợp lệ hoặc không bằng 100%")
         if new_status == "PENDING_HM_APPROVAL":
+            _materialize_requirement_specs(db, cv_id_str)
             groups = db.execute(text("""
                 SELECT category, SUM(weight_in_group) AS total FROM app_private.criteria_items
                 WHERE criteria_version_id = :id GROUP BY category
@@ -338,7 +385,12 @@ async def update_criterion(criteria_version_id: UUID, criterion_id: UUID, update
     """HR may revise a draft; approved and pending versions are immutable."""
     fields = update.model_dump(exclude_unset=True)
     allowed = {key: value for key, value in fields.items()
-               if key in ("name", "description", "weight_in_group") and value is not None}
+               if key in ("name", "description", "weight_in_group", "expected_evidence_keywords")
+               and value is not None}
+    if "requirement_spec" in fields:
+        allowed["requirement_spec"] = (
+            json.dumps(fields["requirement_spec"]) if fields["requirement_spec"] is not None else None
+        )
     if not allowed:
         raise HTTPException(status_code=400, detail="Không có nội dung cần cập nhật")
     for key in ("name", "description"):
@@ -358,7 +410,15 @@ async def update_criterion(criteria_version_id: UUID, criterion_id: UUID, update
             raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể sửa tiêu chí")
         if version["status"] not in ("DRAFT", "PENDING_HR_REVIEW"):
             raise HTTPException(status_code=400, detail="Chỉ có thể sửa tiêu chí ở trạng thái bản nháp")
-        sets = ", ".join(f"{name} = :{name}" for name in allowed)
+        set_parts = []
+        for name in allowed:
+            if name in ("expected_evidence_keywords", "requirement_spec"):
+                set_parts.append(f"{name} = CAST(:{name} AS jsonb)")
+            else:
+                set_parts.append(f"{name} = :{name}")
+        if "expected_evidence_keywords" in allowed:
+            allowed["expected_evidence_keywords"] = json.dumps(allowed["expected_evidence_keywords"])
+        sets = ", ".join(set_parts)
         result = db.execute(text(f"""
             UPDATE app_private.criteria_items SET {sets}
             WHERE criterion_id = :criterion_id AND criteria_version_id = :version_id RETURNING criterion_id

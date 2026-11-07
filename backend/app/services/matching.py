@@ -1,5 +1,4 @@
 from typing import List, Dict, Any, Tuple, Optional
-from collections import defaultdict
 import re
 import math
 import unicodedata
@@ -53,6 +52,7 @@ class MatchingEngine:
                     **evidence,
                     "verbatim_quote": str(evidence.get("verbatim_quote") or ""),
                     "page_number": evidence.get("page_number"),
+                    "chunk_id": evidence.get("chunk_id") or evidence.get("evidence_chunk_id"),
                 },
                 "requires_verification": bool(finding.get("requires_verification")),
             })
@@ -218,11 +218,21 @@ class MatchingEngine:
             origins.pop()
         return "".join(chars), origins
 
-    def find_quote_span(self, quote: str, cv_full_text: str) -> tuple[int, int] | None:
+    def find_quote_span(
+        self,
+        quote: str,
+        cv_full_text: str,
+        *,
+        preferred_page: int | None = None,
+        preferred_start: int | None = None,
+        preferred_end: int | None = None,
+    ) -> tuple[int, int] | None:
         """Locate a quote tolerant to case, accents, punctuation and spacing.
 
         Returns original character offsets so callers can persist the exact
-        CV substring instead of trusting the model's transcription.
+        CV substring instead of trusting the model's transcription.  When a
+        quote repeats, a caller-supplied page or chunk range selects the
+        intended occurrence instead of always taking the first one.
         """
         if not quote or len(quote.strip()) < 10 or not cv_full_text:
             return None
@@ -230,25 +240,55 @@ class MatchingEngine:
         if len(needle) < 8:
             return None
         haystack, origins = self._normalized_with_map(cv_full_text)
-        index = haystack.find(needle)
-        if index < 0:
+        occurrences: list[tuple[int, int]] = []
+        cursor = 0
+        while True:
+            index = haystack.find(needle, cursor)
+            if index < 0:
+                break
+            occurrences.append((origins[index], origins[index + len(needle) - 1] + 1))
+            cursor = index + 1
+        if not occurrences:
             return None
-        return origins[index], origins[index + len(needle) - 1] + 1
+        if preferred_start is not None:
+            range_end = preferred_end if preferred_end is not None else preferred_start
+            for occurrence in occurrences:
+                if occurrence[0] < range_end and occurrence[1] > preferred_start:
+                    return occurrence
+            return min(
+                occurrences,
+                key=lambda item: abs(item[0] - preferred_start),
+            )
+        if preferred_page is not None:
+            for occurrence in occurrences:
+                if self._page_for_span(occurrence, cv_full_text) == preferred_page:
+                    return occurrence
+        return occurrences[0]
 
-    def verify_verbatim_quote(self, quote: str, cv_full_text: str) -> bool:
-        """Verify a quote by locating its normalized span in the CV text."""
-        return self.find_quote_span(quote, cv_full_text) is not None
-
-    def quote_pages(self, quote: str, cv_full_text: str) -> list[int]:
-        """Return the actual PDF page containing the located quote span."""
-        span = self.find_quote_span(quote, cv_full_text)
-        if span is None:
-            return []
+    @staticmethod
+    def _page_for_span(span: tuple[int, int], cv_full_text: str) -> int | None:
         page = None
         for marker in re.finditer(r"--- Page (\d+) ---", cv_full_text):
             if marker.start() > span[0]:
                 break
             page = int(marker.group(1))
+        return page
+
+    def verify_verbatim_quote(self, quote: str, cv_full_text: str) -> bool:
+        """Verify a quote by locating its normalized span in the CV text."""
+        return self.find_quote_span(quote, cv_full_text) is not None
+
+    def quote_pages(
+        self,
+        quote: str,
+        cv_full_text: str,
+        span: tuple[int, int] | None = None,
+    ) -> list[int]:
+        """Return the actual PDF page containing the located quote span."""
+        located = span or self.find_quote_span(quote, cv_full_text)
+        if located is None:
+            return []
+        page = self._page_for_span(located, cv_full_text)
         return [page] if page is not None else []
 
     def rank_applications(

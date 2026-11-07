@@ -620,6 +620,63 @@ def test_group_weights_are_approved_immutable_and_drive_worker_score(client, see
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.audit_events WHERE action_type='UPDATE_CRITERIA_WEIGHTS'")).scalar_one() == 1
 
 
+def test_assessment_reuse_rule_first_and_fallback_chunks(client, seed, tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.workers.processor import worker, llm_client
+    monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path))
+    fallback_criterion = uid()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO app_private.criteria_items(criterion_id,criteria_version_id,name,description,category,weight_in_group,display_order)
+            VALUES (:id,:cv,'Rust','Rust experience','NICE_TO_HAVE',100,2)
+        """), {"id": fallback_criterion, "cv": seed["cv"]})
+    approve = f"/v1/criteria/{seed['cv']}/approve"
+    assert client.post(approve, headers=headers(seed["hr"]), json={"action": "APPROVE"}).status_code == 200
+    assert client.post(approve, headers=headers(seed["hm"]), json={"action": "APPROVE"}).status_code == 200
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.criteria_items WHERE criteria_version_id=:id AND requirement_spec IS NOT NULL"), {"id": seed["cv"]}).scalar_one() == 2
+
+    async def extract(**kwargs):
+        return {"education": [], "work_history": [], "skills": ["Python"], "certifications": []}
+    match_calls = []
+    async def match(**kwargs):
+        match_calls.append(kwargs)
+        chunks = kwargs.get("candidate_chunks") or {}
+        chunk_id = None
+        entries = chunks.get(fallback_criterion) if isinstance(chunks, dict) else None
+        if entries:
+            chunk_id = entries[0].get("chunk_id")
+        return {"findings": [{"criterion_id": fallback_criterion, "outcome": "UNCLEAR", "confidence": 0,
+                              "confidence_band": "LOW", "reasoning": "No Rust evidence in supplied chunks",
+                              "evidence": {"verbatim_quote": "", "page_number": None, "chunk_id": chunk_id}}]}
+    monkeypatch.setattr(llm_client, "extract_candidate_profile", extract)
+    monkeypatch.setattr(llm_client, "match_criterion_evidence", match)
+
+    document = Document()
+    document.add_paragraph("WORK EXPERIENCE")
+    document.add_paragraph("Developed Python systems for five years.")
+    content = io.BytesIO(); document.save(content)
+    upload = client.post(f"/v1/applications/upload-batch/{seed['pos']}", headers=headers(seed["hr"]), files={"files": ("candidate.docx", content.getvalue())})
+    assert upload.status_code == 202, upload.text
+    worker._process_pending_operations()
+
+    assert len(match_calls) == 1
+    assert [item["criterion_id"] for item in match_calls[0]["rubric"]] == [fallback_criterion]
+    assert fallback_criterion in (match_calls[0].get("candidate_chunks") or {})
+    with engine.connect() as conn:
+        sources = dict(conn.execute(text("SELECT criterion_id::text, decision_source FROM app_private.criterion_assessment_results")).all())
+        assert sources[seed["criterion"]] == "RULE"
+        assert sources[fallback_criterion] == "LLM"
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE status='COMPLETED' AND assessment_fingerprint IS NOT NULL")).scalar_one() == 1
+
+    queued = client.post(f"/v1/assessments/run/{seed['pos']}", headers=headers(seed["hr"]))
+    assert queued.status_code == 202
+    worker._process_pending_operations()
+    assert len(match_calls) == 1
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE status='COMPLETED'")).scalar_one() == 1
+
+
 def test_revoked_requester_cannot_read_operation_progress(client, seed):
     op = uid()
     with engine.begin() as conn:

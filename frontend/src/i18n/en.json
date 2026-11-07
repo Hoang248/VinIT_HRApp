@@ -760,5 +760,17 @@
   "Không thể xóa phòng ban đã có vị trí tuyển dụng; hãy tắt trạng thái hoạt động thay vì xóa.": "A department with recruitment positions cannot be deleted; deactivate it instead.",
   "Không tìm thấy đơn vị/phòng ban": "Department not found",
   "Đơn vị/phòng ban đã ngừng hoạt động": "The department is inactive",
-  "Tên vị trí và nội dung JD không được để trống": "Position title and JD content are required"
+  "Tên vị trí và nội dung JD không được để trống": "Position title and JD content are required",
+  "Chưa có đặc tả yêu cầu cấu trúc; hệ thống sẽ suy luận bản nháp khi HR duyệt.": "No structured requirement spec yet; the system will materialize an inferred draft when HR approves.",
+  "năm": "years",
+  "bậc bằng": "degree level",
+  "Đặc tả yêu cầu:": "Requirement spec:",
+  "Loại yêu cầu": "Requirement type",
+  "Số năm kinh nghiệm": "Years of experience",
+  "Ngoại ngữ": "Language",
+  "Thuật ngữ bằng chứng (phân tách bằng dấu phẩy)": "Evidence terms (comma-separated)",
+  "Số năm tối thiểu": "Minimum years",
+  "Bậc bằng tối thiểu (1-5)": "Minimum degree level (1-5)",
+  "Ngôn ngữ (phân tách bằng dấu phẩy)": "Languages (comma-separated)",
+  "CEFR (A1-C2)": "CEFR (A1-C2)"
 }

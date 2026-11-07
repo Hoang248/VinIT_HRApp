@@ -61,16 +61,21 @@ class Settings(BaseSettings):
     # provider explicitly supports `seed`; determinism is still best-effort.
     LLM_SEED: int | None = None
     ALLOW_EXTERNAL_API: bool = False
+    # Opt-in provider-enforced JSON Schema for matching. Some compatible
+    # endpoints reject this response format, so it stays off by default and
+    # client-side validation remains the fallback.
+    LLM_STRICT_JSON_SCHEMA: bool = False
 
     # Matching/Scoring. Bump these versions whenever prompt, scoring or rule
     # behaviour changes; assessment fingerprints include them so old results
     # are never silently mixed with new behaviour.
     ASSESSMENT_POLICY_VERSION: str = "assessment-v2.0"
     MATCHING_POLICY_VERSION: str = "matching-v2.0"
+    RANKING_POLICY_VERSION: str = "ranking-v2.0"
     CRITERIA_PROMPT_VERSION: str = "criteria-prompt-v2.0"
     PROFILE_PROMPT_VERSION: str = "profile-prompt-v2.0"
     MATCHING_PROMPT_VERSION: str = "matching-prompt-v2.0"
-    DETERMINISTIC_RULES_VERSION: str = "deterministic-rules-v1.0"
+    DETERMINISTIC_RULES_VERSION: str = "deterministic-rules-v1.1"
     MANDATORY_CRITERIA_WEIGHT_DEFAULT: float = 0.7
     NICE_TO_HAVE_WEIGHT_DEFAULT: float = 0.3
     MIN_EVIDENCE_COVERAGE: float = 0.7

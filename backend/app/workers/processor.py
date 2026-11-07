@@ -25,7 +25,7 @@ from app.services.redaction import redact_text
 from app.services.ai_config import (
     get_active_runtime, hydrate_runtime_secret, runtime_context, runtime_snapshot,
 )
-from datetime import datetime
+from datetime import date
 
 logger = get_logger(__name__)
 
@@ -632,11 +632,21 @@ class ProcessingWorker:
             raise RuntimeError("Không có bộ tiêu chí đã duyệt cho vị trí này")
         criteria_version_id = str(cv["criteria_version_id"])
         criteria_rows = db.execute(text("""
-            SELECT criterion_id, name, description, category, weight_in_group, expected_evidence_keywords
+            SELECT criterion_id, name, description, category, weight_in_group, expected_evidence_keywords,
+                   requirement_spec
             FROM app_private.criteria_items WHERE criteria_version_id = :criteria_version_id ORDER BY display_order
         """), {"criteria_version_id": criteria_version_id}).mappings().all()
-        criteria_items = [{**dict(row), "criterion_id": str(row["criterion_id"]),
-                           "weight_in_group": float(row["weight_in_group"])} for row in criteria_rows]
+        criteria_items = []
+        for row in criteria_rows:
+            item = {**dict(row), "criterion_id": str(row["criterion_id"]),
+                    "weight_in_group": float(row["weight_in_group"])}
+            spec = item.get("requirement_spec")
+            if isinstance(spec, str):
+                try:
+                    item["requirement_spec"] = json.loads(spec)
+                except (TypeError, ValueError):
+                    item["requirement_spec"] = None
+            criteria_items.append(item)
         if not criteria_items:
             raise RuntimeError("Bộ tiêu chí đã duyệt không có tiêu chí nào")
 
@@ -688,6 +698,8 @@ class ProcessingWorker:
                         "projects": [f["fact_value"] for f in facts if f["fact_type"] == "PROJECT"],
                     }
                     runtime_public = runtime_snapshot(runtime_context.get() or {})
+                    group_weights = {"MUST_HAVE": float(cv["mandatory_weight_total"]) / 100,
+                                     "NICE_TO_HAVE": float(cv["nice_to_have_weight_total"]) / 100}
                     fingerprint_payload = {
                         "version": "assessment-fingerprint-v1",
                         "application_id": application_id,
@@ -706,6 +718,25 @@ class ProcessingWorker:
                         "prompt_version": settings.MATCHING_PROMPT_VERSION,
                         "matching_policy_version": matching_engine.POLICY_VERSION,
                         "deterministic_rules_version": settings.DETERMINISTIC_RULES_VERSION,
+                        "ranking_policy_version": settings.RANKING_POLICY_VERSION,
+                        # Hash the effective scoring parameters themselves, not
+                        # only a human-bumped version string, and pin the
+                        # evaluation date used for "present" date intervals.
+                        "evaluation_date": date.today().isoformat(),
+                        "scoring_parameters": {
+                            "score_map": {
+                                "STRONG_MATCH": settings.STRONG_MATCH_SCORE,
+                                "MATCH": settings.MATCH_SCORE,
+                                "NO_MATCH": settings.NO_MATCH_SCORE,
+                                "UNCLEAR": None,
+                            },
+                            "min_evidence_coverage": settings.MIN_EVIDENCE_COVERAGE,
+                            "min_evidence_strength": matching_engine.MIN_EVIDENCE_STRENGTH,
+                            "group_weights": group_weights,
+                            "mandatory_weight_default": settings.MANDATORY_CRITERIA_WEIGHT_DEFAULT,
+                            "nice_to_have_weight_default": settings.NICE_TO_HAVE_WEIGHT_DEFAULT,
+                            "llm_strict_json_schema": settings.LLM_STRICT_JSON_SCHEMA,
+                        },
                     }
                     assessment_fingerprint = hashlib.sha256(json.dumps(
                         fingerprint_payload, sort_keys=True, ensure_ascii=False, default=str
@@ -764,19 +795,45 @@ class ProcessingWorker:
                             cv_text=cv_text, candidate_profile=candidate_profile,
                             rubric=unresolved_criteria,
                             candidate_identifier=application_id,
-                            rubric_version=criteria_version_id))
+                            rubric_version=criteria_version_id,
+                            candidate_chunks=deterministic_result.get("fallback_chunks", {})))
                         if isinstance(findings, dict):
                             provider_metadata = findings.pop("_provider_metadata", {}) or {}
                             prompt_version = findings.pop(
                                 "_prompt_version", settings.MATCHING_PROMPT_VERSION)
                             raw_findings.extend(findings.get("findings", []))
                     provider_snapshot.update(provider_metadata)
+                    chunk_by_id = {
+                        str(chunk.get("chunk_id")): chunk
+                        for chunk in deterministic_result.get("chunks", [])
+                        if isinstance(chunk, dict) and chunk.get("chunk_id")
+                    }
                     validated = []
                     for finding in matching_engine.canonicalize_findings(
                             criteria_items, raw_findings):
                         evidence = finding.get("evidence") or {}
                         quote = evidence.get("verbatim_quote") or ""
-                        span = matching_engine.find_quote_span(quote, cv_text)
+                        chunk_id = (evidence.get("chunk_id") or evidence.get("evidence_chunk_id")
+                                    or finding.get("evidence_chunk_id"))
+                        chunk = chunk_by_id.get(str(chunk_id)) if chunk_id else None
+                        if chunk is not None:
+                            finding["evidence_chunk_id"] = str(chunk_id)
+                            evidence["chunk_id"] = str(chunk_id)
+                            if not quote:
+                                # The model selected a chunk without quoting it;
+                                # the chunk text itself is the verifiable quote.
+                                quote = str(chunk.get("text") or "")
+                        preferred_start = evidence.get("char_start")
+                        preferred_end = evidence.get("char_end")
+                        if chunk is not None:
+                            preferred_start = chunk.get("char_start", preferred_start)
+                            preferred_end = chunk.get("char_end", preferred_end)
+                        span = matching_engine.find_quote_span(
+                            quote, cv_text,
+                            preferred_page=evidence.get("page_number"),
+                            preferred_start=preferred_start,
+                            preferred_end=preferred_end,
+                        )
                         verified = span is not None
                         finding["evidence_verified"] = verified
                         if verified:
@@ -785,7 +842,7 @@ class ProcessingWorker:
                             evidence["position_in_text"] = span[0]
                         # Page numbers are verified against extracted page text;
                         # DOCX has no reliable page boundaries and remains unpaged.
-                        pages = matching_engine.quote_pages(quote, cv_text) if verified else []
+                        pages = matching_engine.quote_pages(quote, cv_text, span) if verified else []
                         suggested_page = evidence.get("page_number")
                         evidence["page_number"] = suggested_page if suggested_page in pages else (pages[0] if pages else None)
                         finding["evidence"] = evidence
@@ -793,8 +850,6 @@ class ProcessingWorker:
                             finding["outcome"] = "UNCLEAR"
                             finding["requires_verification"] = True
                         validated.append(finding)
-                    group_weights = {"MUST_HAVE": float(cv["mandatory_weight_total"]) / 100,
-                                     "NICE_TO_HAVE": float(cv["nice_to_have_weight_total"]) / 100}
                     score, coverage, match_status, results, _ = matching_engine.calculate_assessment_scores(
                         criteria_items, validated, group_weights=group_weights)
                     db.execute(text("""
@@ -901,9 +956,10 @@ class ProcessingWorker:
         ranking_run_id = db.execute(text("""
             INSERT INTO app_private.ranking_runs
                 (position_id, criteria_version_id, policy_version, operation_id, ai_config_id, status, completed_at)
-            VALUES (:position_id, :criteria_version_id, 'v1.0', :operation_id, :ai_config_id, 'COMPLETED', NOW())
+            VALUES (:position_id, :criteria_version_id, :ranking_policy_version, :operation_id, :ai_config_id, 'COMPLETED', NOW())
             RETURNING ranking_run_id
         """), {"position_id": position_id, "criteria_version_id": str(criteria_version_id),
+                "ranking_policy_version": settings.RANKING_POLICY_VERSION,
                 "operation_id": str(operation_id), "ai_config_id": (runtime_context.get() or {}).get("config_id")}).scalar_one()
         for item in ranked:
             assessment = item["latest_assessment"]
