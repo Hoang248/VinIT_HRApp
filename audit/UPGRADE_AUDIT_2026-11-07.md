@@ -39,7 +39,8 @@
 - **Bằng chứng code:** trong `_load_ltr_model`, worker chỉ từ chối khi stored hash tồn tại và không khớp (`if stored_hash and ...`). Một registry row legacy ở trạng thái `APPROVED` nhưng chưa có hash có thể qua bước này nếu các gate khác đạt.
 - **Tác động hiện tại:** thấp trên project đã kết nối vì chưa có approved LTR model và `LTR_MODE` phải giữ `OFF`/`SHADOW`. Tác động tăng lên trước khi bật ACTIVE ở môi trường có registry cũ.
 - **Khuyến nghị trước ACTIVE:** sửa worker để `ACTIVE` fail-closed khi thiếu `artifact_sha256`; hoặc re-register/re-approve artifact qua governance để luôn có hash. Ghi nhận tại DEP-07 trong `doc/PENDING_DEPLOYMENT.md`.
-- **Trạng thái:** `OPEN — hardening chờ triển khai trước LTR ACTIVE`.
+- **Cập nhật sau audit:** worker đã được sửa trên branch để `ACTIVE` từ chối registry artifact thiếu/rỗng `artifact_sha256` và vẫn từ chối hash không khớp; test bao phủ hash hợp lệ, hash không khớp và hash thiếu. Thay đổi này chưa tự đóng gate vận hành cho tới khi qua CI, được deploy và kiểm chứng ở môi trường đích.
+- **Trạng thái:** `CODE FIXED — CHỜ CI/DEPLOY; VẪN CHẶN LTR ACTIVE TỚI KHI BẢN SỬA ĐƯỢC TRIỂN KHAI`.
 
 ### F-02 — Thấp/vận hành: Audit hash chain là tamper-evidence, không chống DB superuser
 
@@ -52,7 +53,8 @@
 
 - API confirm/cancel chấp nhận trường `reason` cho tương thích workflow nhưng service cố ý không lưu vào DB/audit để tránh vô tình ghi PII/định danh ứng viên. Audit vẫn có actor, thời gian, policy, opaque ID, trạng thái và counts.
 - Nếu governance sau này yêu cầu lý do bắt buộc, nên dùng mã lý do có cấu trúc đã duyệt, không lưu free text.
-- **Trạng thái:** `OPEN_DESIGN_DECISION`, không chặn E2E dữ liệu tổng hợp.
+- **Cập nhật sau audit:** schema API đã đánh dấu `reason` là trường tương thích deprecated, được chấp nhận nhưng cố ý bỏ qua và không bao giờ lưu; test schema khóa rõ hợp đồng này. Chưa áp dụng taxonomy `reason_code` khi Legal/HR chưa duyệt và không cho phép reason thay đổi điều kiện đến hạn/quyền thực thi.
+- **Trạng thái:** `CONTRACT CLARIFIED IN CODE — TAXONOMY CHƯA ÁP DỤNG`, không chặn E2E dữ liệu tổng hợp.
 
 ### F-04 — Ngoài code: Schema remote đã đi trước bằng chứng deploy backend
 

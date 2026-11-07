@@ -397,8 +397,11 @@ def test_worker_ltr_registry_requires_approval_for_active(monkeypatch):
 
     draft = worker._load_ltr_model(_FakeRegistryDb({"artifact": artifact, "status": "DRAFT"}))
     assert draft is None
-    approved = worker._load_ltr_model(
-        _FakeRegistryDb({"artifact": artifact, "status": "APPROVED"}))
+    approved = worker._load_ltr_model(_FakeRegistryDb({
+        "artifact": artifact,
+        "status": "APPROVED",
+        "artifact_sha256": artifact_sha256(artifact),
+    }))
     assert approved is not None
     assert approved.model_version == artifact["model_version"]
 
@@ -417,6 +420,13 @@ def test_ltr_artifact_hash_is_stable_and_worker_rejects_tampered_registry_artifa
     monkeypatch.setattr(settings, "LTR_MODEL_VERSION", artifact["model_version"])
     monkeypatch.setattr(settings, "LTR_MODEL_PATH", None)
     worker = ProcessingWorker.__new__(ProcessingWorker)
+    for missing_hash in (None, "", "   "):
+        loaded = worker._load_ltr_model(_FakeRegistryDb({
+            "artifact": artifact,
+            "status": "APPROVED",
+            "artifact_sha256": missing_hash,
+        }))
+        assert loaded is None
     loaded = worker._load_ltr_model(_FakeRegistryDb({
         "artifact": artifact,
         "status": "APPROVED",

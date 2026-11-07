@@ -25,6 +25,7 @@
 | 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
 | 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Commit `90dd4b2`; GitHub Actions run `42382329761` đạt cả 3 job; chờ DevOps/HR chạy trên staging |
 | 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
+| 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Sửa worker/API + bổ sung test; DEP-01 đang bị chặn bởi mapping môi trường staging |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -259,6 +260,39 @@
 - F-02: Audit hash chain là tamper-evidence, không chống DB superuser; cần kiểm soát DBA và kiểm tra định kỳ.
 - F-03: Retention API không lưu free-text reason để tránh PII; nếu governance yêu cầu lý do, dùng reason code có cấu trúc.
 - F-04/F-05: Chưa có bằng chứng deploy backend đích, E2E staging thật, phê duyệt privacy/egress, BGE golden set hoặc HR gold dataset cho LTR.
+
+### Batch 5.3 — Post-audit hardening theo đánh giá GPT
+
+#### Trạng thái: ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY, CHƯA ĐÓNG DEP-01…DEP-08
+
+#### Đã thay đổi
+
+- `backend/app/workers/processor.py`
+  - F-01: ở `LTR_MODE=ACTIVE`, worker từ chối registry artifact thiếu/rỗng `artifact_sha256`; hash không khớp vẫn bị từ chối ở mọi mode dùng registry.
+- `backend/tests/test_semantic_ltr.py`
+  - Bổ sung bao phủ hash hợp lệ, hash không khớp và hash thiếu/rỗng cho registry artifact.
+- `backend/app/api/retention.py` và `backend/tests/test_retention_audit.py`
+  - F-03: trường `reason` được đánh dấu deprecated trong schema, ghi rõ chỉ để tương thích, được chấp nhận nhưng cố ý bỏ qua và không bao giờ lưu; chưa áp dụng `reason_code` khi Legal/HR chưa duyệt.
+- `doc/PENDING_DEPLOYMENT.md`
+  - Bổ sung bảng mapping môi trường bắt buộc cho DEP-01/DEP-03 và thứ tự Gate A–E.
+  - DEP-01 đổi trạng thái thành `READY_CODE — BLOCKED_ENVIRONMENT_MAPPING`; DEP-03 thành `BLOCKED_ENVIRONMENT_IDENTIFICATION`.
+- `doc/E2E_STAGING_EXECUTION_CHECKLIST.md`
+  - Bổ sung phân loại `CRITICAL`/`CORE_FUNCTIONAL`/`CONDITIONAL`, quy tắc dùng `N/A` và yêu cầu defect ID/severity/owner cho mọi FAIL.
+- `audit/UPGRADE_AUDIT_2026-11-07.md`
+  - Cập nhật trạng thái sau audit của F-01 và F-03.
+
+#### Kiểm chứng
+
+- Targeted LTR tests: **2 passed**.
+- Retention tests: **6 passed**.
+- Full backend local ở cấu hình mặc định: **98 passed, 63 skipped**; các test integration bị skip vì local không cấu hình `TEST_DATABASE_URL`, chờ GitHub CI chạy với PostgreSQL dùng một lần.
+- Ruff `--select F` đúng phạm vi CI cho các bề mặt LTR/retention/worker/test đã sửa: đạt.
+- `git diff --check`: đạt.
+
+#### Blocker còn lại
+
+- **BLOCKER DEP-01/DEP-03:** chưa có thông tin staging/connected runtime gồm URL, Supabase project của staging, backend/frontend commit đang chạy, worker topology, chủ trì và cửa sổ triển khai. Không được mặc định project đã kết nối là staging.
+- Chưa thực thi DEP-01/DEP-02 trên staging; do đó Phase 1 vẫn chưa đóng và Phase 2 vẫn chỉ ở mức plan, chưa triển khai code.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

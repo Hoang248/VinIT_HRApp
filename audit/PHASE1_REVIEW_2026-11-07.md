@@ -63,7 +63,7 @@ Chưa bật `LTR_MODE=ACTIVE` cho tới khi:
 
 - Có HR gold dataset, không chỉ weak labels.
 - Train offline đạt gates và artifact được đăng ký.
-- Governance có artifact hash, người phê duyệt, lý do và audit event — đã bổ sung tại migration 00011/Admin API, còn cần kiểm thử trên staging.
+- Governance có artifact hash, người phê duyệt, lý do và audit event — đã bổ sung tại migration 00011/Admin API; post-audit hardening đã sửa worker để `ACTIVE` từ chối registry artifact thiếu `artifact_sha256`, còn cần CI/deploy và kiểm thử trên staging.
 - Production ACTIVE chỉ dùng registry artifact `APPROVED`; file artifact đã bị chặn ở production từ `57b9072`.
 - SHADOW report chứng minh không có vi phạm mandatory/coverage gate.
 

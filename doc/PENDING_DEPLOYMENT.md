@@ -11,13 +11,32 @@
 - Báo cáo audit chi tiết: [`audit/UPGRADE_AUDIT_2026-11-07.md`](../audit/UPGRADE_AUDIT_2026-11-07.md)
 - Checklist chạy staging: [`doc/E2E_STAGING_EXECUTION_CHECKLIST.md`](E2E_STAGING_EXECUTION_CHECKLIST.md)
 
+### Mapping môi trường bắt buộc trước DEP-01/DEP-03
+
+Không được mặc định project Supabase đã kết nối là staging. Trước khi deploy hoặc
+chạy E2E, DevOps/Release owner phải điền và ký xác nhận bảng sau; các ô chưa có
+bằng chứng là blocker thực thi, không phải chi tiết có thể bổ sung sau.
+
+| Thành phần | Staging cho DEP-01/DEP-02 | Môi trường phục vụ project đã kết nối cho DEP-03 |
+|---|---|---|
+| Mục đích môi trường | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Backend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Frontend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Supabase project ref | `CHƯA XÁC NHẬN — BLOCKER` | `myrymlqdbyqmpynesiwk` |
+| Migration cao nhất đã xác nhận | `CHƯA XÁC NHẬN — BLOCKER` | `20261107142027 retention_audit_integrity` |
+| Backend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Frontend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Worker topology/số instance | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Loại dữ liệu được phép | Chỉ dữ liệu tổng hợp cho DEP-01 | `CHƯA XÁC NHẬN — BLOCKER` |
+| Provider/mode được phép | LLM local/mock đã duyệt; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Theo phê duyệt riêng; không suy từ staging |
+
 ## 1. Danh sách chờ triển khai/thực thi
 
 | ID | Hạng mục chờ | Trạng thái chờ | Phụ thuộc | Chủ trì | Bằng chứng đóng hạng mục |
 |---|---|---|---|---|---|
-| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên staging và chạy E2E bằng dữ liệu tổng hợp | `READY_TO_EXECUTE` | Staging tách biệt, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
+| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên staging và chạy E2E bằng dữ liệu tổng hợp | `READY_CODE — BLOCKED_ENVIRONMENT_MAPPING` | Bảng mapping môi trường đã ký, staging tách biệt, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL/N/A hợp lệ, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
 | DEP-02 | Kiểm chứng retention/audit qua backend staging đã deploy | `READY_TO_EXECUTE` sau DEP-01 | Backend staging trỏ tới DB đã có migration `00012`, tài khoản đúng quyền | DevOps + HR Lead/Admin | `GET /v1/admin/audit/verify` trả `valid=true`; retention due/not-due/confirm/execute có case/job/audit evidence |
-| DEP-03 | Triển khai code tương ứng với schema `00011`/`00012` lên môi trường phục vụ project đã kết nối, nếu môi trường đó đang chạy code cũ | `WAITING_DEPLOYMENT_WINDOW` | Xác nhận topology/process đang chạy, cửa sổ deploy, drain worker, kế hoạch rollback | DevOps/Release owner | Phiên bản deploy thực tế, health checks, smoke test Admin/LTR/retention, xác nhận không chạy mixed-version worker |
+| DEP-03 | Triển khai code tương ứng với schema `00011`/`00012` lên môi trường phục vụ project đã kết nối, nếu môi trường đó đang chạy code cũ | `BLOCKED_ENVIRONMENT_IDENTIFICATION` | Điền cột môi trường đã kết nối trong bảng mapping, xác nhận topology/process đang chạy, cửa sổ deploy, drain worker, kế hoạch rollback | DevOps/Release owner | Phiên bản deploy thực tế, health checks, smoke test Admin/LTR/retention, xác nhận không chạy mixed-version worker |
 | DEP-04 | Đóng legacy Supabase API keys và revoke legacy JWT signing secret | `BLOCKED_MANUAL_OPS` | Kiểm kê mọi client/backend/worker đã chuyển sang key/JWKS mới; restart đồng nhất | Chủ project Supabase | Dashboard/Management API xác nhận legacy disabled, legacy JWT secret revoked, login/JWKS mới hoạt động |
 | DEP-05 | Phê duyệt privacy/egress cho LLM/BGE/OCR dùng dữ liệu thật | `WAITING_APPROVAL` | Provider/region/DPA, loại dữ liệu gửi, retention phía provider, DLP/redaction | IT Security/Legal/HR | Văn bản phê duyệt hoặc ticket bảo mật đã ký; cấu hình endpoint đúng phạm vi phê duyệt |
 | DEP-06 | BGE pilot bằng endpoint thật và golden set HR | `WAITING_ENDPOINT_AND_DATA` | DEP-05, endpoint BGE-M3 1024 chiều có token/quota, HR golden set | IT + HR | Báo cáo Recall@5, false MATCH/NO_MATCH, unresolved rate, latency; quyết định bật/tắt semantic |
@@ -50,7 +69,39 @@ Giới hạn bắt buộc:
 
 ## 3. Thứ tự triển khai khuyến nghị
 
-1. Chốt commit sẽ deploy và cửa sổ triển khai; xác nhận không có worker/API phiên bản cũ đang xử lý job.
+### Gate A — Staging readiness: DEP-01
+
+Chưa bắt đầu nếu bảng mapping môi trường chưa được DevOps/Release owner điền và
+ký xác nhận. Khi đã có staging, deploy bằng dữ liệu tổng hợp, `LTR_MODE=OFF`,
+LLM local/mock đã duyệt; semantic chỉ dùng `OFF` hoặc provider `hash` non-BGE
+cho smoke plumbing.
+
+### Gate B — Data lifecycle acceptance: DEP-02
+
+Kiểm chứng sâu retention, storage purge và audit verify qua backend staging đã
+deploy. DEP-02 dùng cùng staging của Gate A nhưng ký đóng riêng.
+
+### Gate C — Deployment alignment & security: DEP-03, sau đó DEP-04
+
+Đồng bộ code với schema `00011`/`00012` trên môi trường đã kết nối sau khi đã
+xác định rõ môi trường đó. Việc kiểm kê client/deployment cho DEP-04 có thể
+chuẩn bị song song, nhưng chỉ đóng legacy keys/JWT secret sau khi mọi runtime
+đã chuyển sang key/JWKS mới.
+
+### Gate D — AI privacy & quality: DEP-05 → DEP-06 → DEP-07
+
+Chỉ dùng dữ liệu/model thật sau phê duyệt privacy/egress. BGE pilot và LTR
+SHADOW/ACTIVE là các gate độc lập; không suy chất lượng từ fixture tổng hợp.
+
+### Gate E — Production readiness: DEP-08
+
+Branch protection, monitoring/alerting, worker topology, backup/restore và DR
+drill. Việc chuẩn bị backup/monitoring có thể bắt đầu trước DEP-03; chỉ đóng
+Gate E khi có bằng chứng vận hành đầy đủ.
+
+### Thứ tự chi tiết
+
+1. Điền bảng mapping môi trường, chốt commit sẽ deploy và cửa sổ triển khai; xác nhận không có worker/API phiên bản cũ đang xử lý job.
 2. Deploy staging theo DEP-01; ghi commit SHA, cấu hình provider ở mức không lộ secret và migration versions.
 3. Chạy checklist E2E bằng dữ liệu tổng hợp; hoàn thành DEP-02 cho audit/retention.
 4. Nếu môi trường phục vụ project đã kết nối còn code cũ, lên lịch DEP-03 sau khi staging đạt; không để mixed-version worker.

@@ -826,7 +826,13 @@ class ProcessingWorker:
                 if isinstance(artifact, str):
                     artifact = json.loads(artifact)
                 stored_hash = row.get("artifact_sha256") if hasattr(row, "get") else None
-                if stored_hash and str(stored_hash) != artifact_sha256(artifact):
+                stored_hash_normalized = str(stored_hash).strip().lower() if stored_hash else ""
+                if not stored_hash_normalized:
+                    if mode == "ACTIVE":
+                        logger.warning(
+                            "LTR registry artifact is missing artifact_sha256; ranking unchanged")
+                        return None
+                elif stored_hash_normalized != artifact_sha256(artifact):
                     logger.warning("LTR artifact hash does not match registry; ranking unchanged")
                     return None
                 model = LTRModel.from_artifact(artifact)

@@ -44,7 +44,8 @@ Không ghi mật khẩu, API key, access token hoặc service-role key vào chec
 - [ ] Đã tạo các tài khoản trong manifest: Admin, HR Lead, HR Recruiter, Hiring Manager, Outsider.
 - [ ] Backend staging dùng code chứa Batch 5 (`cce75b5` hoặc mới hơn) cho API `/v1/retention` và `/v1/admin/audit/verify`.
 - [ ] `LTR_MODE=OFF` cho vòng E2E chức năng đầu tiên.
-- [ ] Nếu chưa có phê duyệt privacy/egress: LLM/BGE dùng endpoint local/mock đã được phép trong staging; không gửi CV thật ra ngoài.
+- [ ] Đã khóa phân loại `CRITICAL`/`CORE_FUNCTIONAL`/`CONDITIONAL` ở Mục 5.1 và phạm vi được phép `N/A` trước khi chạy.
+- [ ] Nếu chưa có phê duyệt privacy/egress: LLM dùng endpoint local/mock đã được phép trong staging; semantic dùng `OFF` hoặc provider `hash` non-BGE cho smoke plumbing; không gửi CV thật ra ngoài.
 - [ ] Log của API/worker trong thời gian test được kiểm tra để bảo đảm không có CV text, prompt đầy đủ, API key hoặc access token.
 
 ## 4. Chuẩn bị dữ liệu trong ứng dụng
@@ -85,6 +86,25 @@ Không ghi mật khẩu, API key, access token hoặc service-role key vào chec
 | E2E-15 | Semantic/BGE smoke (nếu thuộc vòng) | Bật cấu hình BGE đã duyệt; kiểm tra semantic health và embeddings | Không ở `MISCONFIGURED`; có diagnostics/cache hợp lý; semantic chỉ bổ sung candidate chunks, không tự đổi rule outcome |  |
 | E2E-16 | Worker recovery (nếu môi trường cho phép) | Tạo job tổng hợp, restart worker/API theo quy trình staging, theo dõi job | Job phục hồi at-least-once hoặc fail rõ; không mất mát âm thầm; không tuyên bố exactly-once |  |
 
+### 5.1. Phân loại kết quả và quy tắc dùng `N/A`
+
+Trước khi chạy, Điều phối staging, HR Lead và Release owner phải khóa phạm vi
+và phân loại dưới đây trong biên bản vòng chạy. Không đổi phân loại sau khi đã
+thấy kết quả để biến FAIL thành `N/A`.
+
+| Nhóm | Kịch bản | Quy tắc ký duyệt |
+|---|---|---|
+| `CRITICAL` | E2E-01, E2E-02, E2E-03, E2E-09, E2E-10, E2E-11, E2E-12, E2E-13 và kiểm tra log không lộ secret/CV text | Bất kỳ FAIL nào cũng chặn ký PASS toàn vòng. Không được `N/A`, không được bù bằng tỷ lệ các kịch bản khác. |
+| `CORE_FUNCTIONAL` | E2E-04, E2E-05, E2E-06, E2E-07, E2E-08 | FAIL phải có defect ID, severity, owner và quyết định xử lý. Chỉ ký PASS khi đã sửa/retest hoặc phạm vi tương ứng được loại bỏ chính thức trước khi ký. |
+| `CONDITIONAL` | E2E-14, E2E-15, E2E-16 | Chỉ được `N/A` nếu ngoài phạm vi đã khóa từ preflight và ghi lý do, người duyệt, hệ quả chưa được kiểm chứng. Nếu tính năng thuộc phạm vi công bố của vòng chạy thì xử lý như `CORE_FUNCTIONAL` hoặc `CRITICAL` theo tác động. |
+
+Quy tắc bắt buộc:
+
+- Mỗi kịch bản phải có đúng một kết quả `PASS`, `FAIL` hoặc `N/A` hợp lệ; không để trống.
+- Không dùng tỷ lệ kiểu “15/16 PASS” để ký toàn vòng nếu kịch bản FAIL thuộc `CRITICAL`.
+- Mọi FAIL phải ghi defect ID, mức độ, bước tái hiện, owner, hạn xử lý và quyết định: sửa/retest, chặn phát hành hoặc chấp nhận rủi ro bởi người có thẩm quyền.
+- `N/A` cho E2E-15 không được hiểu là BGE đã đạt; `N/A` cho E2E-14 không được hiểu là OCR production đã đạt; `N/A` cho E2E-16 không được hiểu là worker recovery đã được chứng minh.
+
 ## 6. Mẫu bằng chứng cần nộp
 
 Sau khi chạy, đính kèm hoặc liên kết:
@@ -95,12 +115,14 @@ Sau khi chạy, đính kèm hoặc liên kết:
 - Provider/model LLM/BGE đã dùng (không ghi secret), hoặc ghi rõ đã dùng mock/local.
 - Kết quả `GET /v1/admin/audit/verify` từ Admin staging.
 - Với retention: case ID, trạng thái trước/sau, deletion job status, audit verify sau execute. Không đính kèm CV thật.
-- Danh sách defect: mức độ, bước tái hiện, log liên quan, người phụ trách, quyết định chặn hay chấp nhận rủi ro.
+- Danh sách defect cho mọi `FAIL`: defect ID, mức độ, bước tái hiện, log liên quan, người phụ trách, hạn xử lý, quyết định chặn hay chấp nhận rủi ro và người có thẩm quyền ký quyết định.
 
 ## 7. Điều kiện ký duyệt vòng E2E
 
 Chỉ ký PASS vòng staging khi:
 
+- Không còn FAIL thuộc nhóm `CRITICAL`; không dùng tỷ lệ PASS của các kịch bản khác để bù.
+- Mọi FAIL thuộc nhóm còn lại đã có defect ID, severity, owner và quyết định xử lý; mọi `N/A` đã được khóa từ preflight theo Mục 5.1.
 - Không có rò rỉ position scope, CV hoặc assessment evidence ngoài quyền.
 - Không có UNCLEAR bị tính như NO_MATCH trong status/score.
 - Không có quote không hợp lệ được tính điểm.

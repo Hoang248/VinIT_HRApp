@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 import app.db.supabase as supabase_module
+from app.api.retention import RetentionActionRequest
 from app.core.config import settings
 from app.services.retention import (
     RetentionError,
@@ -11,6 +12,13 @@ from app.services.retention import (
     delete_storage_objects,
     extracted_storage_paths,
 )
+
+
+def test_retention_reason_is_deprecated_and_declared_never_stored():
+    reason_schema = RetentionActionRequest.model_json_schema()["properties"]["reason"]
+
+    assert reason_schema["deprecated"] is True
+    assert "never stored" in reason_schema["description"]
 
 
 def test_application_opaque_id_is_stable_and_not_the_application_id():

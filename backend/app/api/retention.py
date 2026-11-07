@@ -29,9 +29,18 @@ router = APIRouter()
 
 class RetentionActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # Accepted for operator UX/audit workflow compatibility, but never stored:
-    # free-text reasons can accidentally contain candidate identifiers.
-    reason: str | None = Field(default=None, max_length=500)
+    # Deprecated compatibility field. It is accepted so older clients do not
+    # break, but it is intentionally ignored and never stored: free-text
+    # reasons can accidentally contain candidate identifiers.
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        deprecated=True,
+        description=(
+            "Deprecated compatibility field; accepted but intentionally "
+            "ignored and never stored. Do not include candidate identifiers."
+        ),
+    )
 
 
 def _raise(error: RetentionError) -> None:
