@@ -252,6 +252,27 @@ def test_worker_ltr_registry_requires_approval_for_active(monkeypatch):
     assert approved.model_version == artifact["model_version"]
 
 
+def test_worker_ltr_file_artifact_is_blocked_for_active_in_production(monkeypatch, tmp_path):
+    import json
+
+    from app.core.config import settings
+
+    artifact = train_ltr_model(
+        _ltr_examples(group_count=20), min_examples=30, min_groups=5, epochs=80)
+    artifact_path = tmp_path / "ltr.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr(settings, "LTR_MODE", "ACTIVE")
+    monkeypatch.setattr(settings, "LTR_MODEL_VERSION", None)
+    monkeypatch.setattr(settings, "LTR_MODEL_PATH", str(artifact_path))
+    worker = ProcessingWorker.__new__(ProcessingWorker)
+
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    assert worker._load_ltr_model() is None
+
+    monkeypatch.setattr(settings, "APP_ENV", "staging")
+    assert worker._load_ltr_model() is not None
+
+
 def test_ltr_training_and_group_holdout_metrics():
     artifact = train_ltr_model(_ltr_examples(), min_examples=30, min_groups=5, epochs=80)
     assert artifact["training"]["examples"] == 48

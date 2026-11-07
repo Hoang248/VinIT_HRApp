@@ -760,6 +760,11 @@ class ProcessingWorker:
                     artifact = json.loads(artifact)
                 model = LTRModel.from_artifact(artifact)
             elif settings.LTR_MODEL_PATH:
+                if mode == "ACTIVE" and (settings.APP_ENV or "").strip().lower() == "production":
+                    logger.warning(
+                        "LTR file artifacts are not allowed for ACTIVE in production; "
+                        "use an APPROVED registry artifact")
+                    return None
                 model = LTRModel.load(settings.LTR_MODEL_PATH)
             else:
                 return None

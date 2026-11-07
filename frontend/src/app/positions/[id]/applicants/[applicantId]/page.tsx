@@ -329,7 +329,7 @@ export default function ApplicantDetailPage() {
           <Grid item xs={12} sm={4}>
             <Card>
               <CardContent sx={{ textAlign: 'center' }}>
-                <Typography variant="caption" color="text.secondary">{t("Điểm matching tổng hợp")}</Typography>
+                <Typography variant="caption" color="text.secondary">{t("Điểm trên tiêu chí đã có bằng chứng")}</Typography>
                 <Typography
                   variant="h3"
                   sx={{

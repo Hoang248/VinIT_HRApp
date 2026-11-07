@@ -276,7 +276,7 @@ LTR không được:
 
 | Feature | Ý nghĩa |
 |---|---|
-| `matching_score` | Điểm matching tổng, chuẩn hoá 0-1 |
+| `matching_score` | Điểm trên các tiêu chí đã có bằng chứng, chuẩn hoá 0-1 theo `matching-v2.1` |
 | `evidence_coverage` | Độ bao phủ bằng chứng |
 | `strong_match_rate` | Tỷ lệ criterion STRONG_MATCH |
 | `match_rate` | Tỷ lệ criterion MATCH |
@@ -305,7 +305,7 @@ Worker `_load_ltr_model` hoạt động như sau:
 - `LTR_MODE=OFF`: không load model.
 - `SHADOW`: load model để ghi điểm nhưng không đổi thứ tự.
 - `ACTIVE`: chỉ load artifact registry có `status=APPROVED`; artifact `REJECTED` bị chặn ở mọi mode.
-- Nếu dùng `LTR_MODEL_PATH`, artifact file vẫn phải qua quality gates; tuy nhiên production nên dùng registry + approval để truy vết.
+- Nếu dùng `LTR_MODEL_PATH`, artifact file vẫn phải qua quality gates ở môi trường non-production. Từ vòng nâng cấp sau review lần 2, `ACTIVE` với `APP_ENV=production` bị chặn nếu nạp bằng file; production ACTIVE chỉ dùng artifact registry đã `APPROVED`.
 - Nếu artifact không đạt gate, worker bỏ qua LTR và giữ nguyên ranking hiện tại.
 
 Quality gates mặc định trong cấu hình:

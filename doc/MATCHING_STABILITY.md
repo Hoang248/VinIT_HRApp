@@ -75,6 +75,16 @@ LLM chỉ nhận các tiêu chí mà rule chưa quyết định, rubric con tư�
 
 `temperature=0` và seed tùy chọn chỉ giúp nhà cung cấp ổn định hơn theo cơ chế best-effort; chúng **không** thay thế fingerprint/rule engine.
 
+### 2.5 Công thức điểm và độ phủ từ `matching-v2.1`
+
+Từ `MATCHING_POLICY_VERSION=matching-v2.1`, ba chỉ số có ý nghĩa tách bạch:
+
+- `matching_score`: trung bình có trọng số **chỉ trên các tiêu chí đã đủ bằng chứng để tính điểm**. `UNCLEAR` bị loại khỏi cả tử số và mẫu số, không bị tính như 0. Nếu chưa có tiêu chí nào tính được điểm, score là `null`.
+- `evidence_coverage`: trọng số đã tính được điểm chia cho tổng trọng số tiêu chí áp dụng. Đây là chỉ số cho biết mức độ đầy đủ của bằng chứng.
+- `matching_status`: gate bắt buộc và nhu cầu HR xác minh. Coverage dưới ngưỡng hoặc mandatory `UNCLEAR` vẫn đưa hồ sơ sang `NEEDS_HR_VERIFICATION`; mandatory `NO_MATCH` đã có bằng chứng vẫn có thể tạo `POSSIBLE_MISMATCH`.
+
+Ví dụ hai tiêu chí có trọng số hiệu dụng 50/50, một `STRONG_MATCH` và một `UNCLEAR`: `matching_score=100`, `evidence_coverage=0.5`, hồ sơ vẫn cần HR xác minh vì coverage dưới ngưỡng. Giao diện phải hiển thị điểm cùng độ phủ; không diễn giải score cao là hồ sơ đã đầy đủ bằng chứng. Các artifact LTR đã train với score theo policy cũ không được coi là tương thích với `matching-v2.1` cho tới khi train/đánh giá lại.
+
 ## 3. Version phải tăng khi nào
 
 | Thay đổi | Version cần tăng |

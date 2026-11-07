@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # behaviour changes; assessment fingerprints include them so old results
     # are never silently mixed with new behaviour.
     ASSESSMENT_POLICY_VERSION: str = "assessment-v2.0"
-    MATCHING_POLICY_VERSION: str = "matching-v2.0"
+    MATCHING_POLICY_VERSION: str = "matching-v2.1"
     RANKING_POLICY_VERSION: str = "ranking-v2.0"
     CRITERIA_PROMPT_VERSION: str = "criteria-prompt-v2.0"
     PROFILE_PROMPT_VERSION: str = "profile-prompt-v2.0"

@@ -172,11 +172,16 @@ class MatchingEngine:
                            "effective_weight": effective_weight}
             augmented_findings.append(aug_finding)
 
-        # Calculate final scores
+        # Calculate final scores. UNCLEAR means "not enough evidence to
+        # judge", not zero attainment: it is excluded from both the score
+        # numerator and denominator. Evidence coverage separately reports
+        # how much of the applicable rubric was scored, and the mandatory
+        # status/coverage gates keep low-coverage cases out of the normal
+        # MEETS_MANDATORY review tier.
         if total_scored_weight == 0:
             matching_score = None
         else:
-            matching_score = round((weighted_score_sum / total_applicable_weight) * 100, 1) if total_applicable_weight > 0 else None
+            matching_score = round((weighted_score_sum / total_scored_weight) * 100, 1)
 
         # The DB stores two decimal places. Round down conservatively before
         # applying the threshold so 69.9% cannot be stored as 70% and ranked.
