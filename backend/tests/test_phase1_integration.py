@@ -550,6 +550,46 @@ def test_position_scoped_hr_lead_has_hr_access_only_on_assigned_position(client,
     assert client.post(f"/v1/criteria/{seed['cv']}/approve", headers=headers(seed["hm"]), json={"action": "APPROVE"}).json()["status"] == "APPROVED"
 
 
+def test_rbac_matrix_position_scope_and_admin_surfaces(client, seed):
+    """Role/position matrix for the surfaces most likely to leak scope."""
+    position_cases = [
+        ("hr", [seed["pos"]]),
+        ("hm", [seed["pos"]]),
+        ("hr2", [seed["pos2"]]),
+        ("other", []),
+    ]
+    for user_key, expected_positions in position_cases:
+        response = client.get("/v1/positions", headers=headers(seed[user_key]))
+        assert response.status_code == 200, (user_key, response.text)
+        assert [row["position_id"] for row in response.json()] == expected_positions
+
+    # Application/dashboard access follows position assignment, not merely
+    # possessing an authenticated account or a global HM role.
+    assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["hr"])).status_code == 200
+    assert client.get(f"/v1/applications/{seed['app2']}", headers=headers(seed["hr"])).status_code == 403
+    assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["hm"])).status_code == 403
+    assert client.get(f"/v1/applications/{seed['app']}", headers=headers(seed["other"])).status_code == 403
+    assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["hr"])).status_code == 200
+    assert client.get(f"/v1/dashboard/position/{seed['pos']}", headers=headers(seed["hm"])).status_code == 403
+    assert client.get(f"/v1/dashboard/position/{seed['pos2']}", headers=headers(seed["hr"])).status_code == 403
+
+    # New semantic/LTR admin surfaces are ADMIN-only.  The unassigned user
+    # is promoted only after the non-admin cases have been exercised.
+    for route in ("/v1/admin/semantic/health", "/v1/admin/ltr/models", "/v1/admin/worker/health"):
+        for user_key in ("hr", "hm", "other"):
+            assert client.get(route, headers=headers(seed[user_key])).status_code == 403, (route, user_key)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id,role_code) VALUES (:id,'ADMIN')"),
+                     {"id": seed["other"]})
+    semantic = client.get("/v1/admin/semantic/health", headers=headers(seed["other"]))
+    assert semantic.status_code == 200, semantic.text
+    assert semantic.json()["state"] in {
+        "DISABLED", "MISCONFIGURED", "READY_UNVERIFIED", "OPERATIONAL",
+        "OPERATIONAL_IN_MEMORY_PGVECTOR_UNAVAILABLE", "DEGRADED_FALLBACK",
+    }
+    assert client.get("/v1/admin/ltr/models", headers=headers(seed["other"])).status_code == 200
+
+
 def test_private_schema_and_public_views_are_backend_only_after_migration():
     with engine.connect() as conn:
         for role in ("anon", "authenticated"):
