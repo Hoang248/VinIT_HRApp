@@ -36,6 +36,8 @@ Preflight trước 00010 (07/11/2026): project đang ở 9 migration, chưa có 
 
 Preflight trước 00011 (07/11/2026): registry LTR chưa có artifact hash hoặc review history. Đã áp thành công ở version `20261107133211`; postflight xác nhận `ltr_model_versions` có `artifact_sha256`, `registered_by`, `reviewed_by`, `reviewed_at`, `review_reason`, bảng `app_private.ltr_model_review_events` tồn tại và RLS đang bật trên cả hai bảng. Backend/API phê duyệt LTR mới phụ thuộc 00011; không rollout API admin LTR lên database chưa có migration này.
 
+Migration `00012_retention_audit_integrity.sql` đã có trong repository và đã kiểm chứng trên PostgreSQL local sạch, nhưng **chưa áp lên project `myrymlqdbyqmpynesiwk`** tại thời điểm ghi nhận Batch 5. Không rollout API `/v1/retention` hoặc endpoint `/v1/admin/audit/verify` lên database chưa có `00012`. Quy trình áp dụng và vận hành nằm ở mục “Retention và audit integrity (migration 00012)” bên dưới.
+
 Schema ban đầu trên project này có một số cột AI đã tồn tại trước 00004; không giả định nội dung mọi version remote byte-for-byte giống file local. Không chạy `supabase db push`/reset mù quáng: version remote là timestamp, khác tiền tố file local. Với project/môi trường khác, đối chiếu migration thực tế, xin phê duyệt và làm staging/drain riêng theo checklist dưới đây. Hướng dẫn dựng VPS Ubuntu với Docker Compose, Nginx, TLS và vận hành: [doc/VPS_DEPLOYMENT.md](doc/VPS_DEPLOYMENT.md).
 
 ## Checklist khi áp 00004 vào môi trường khác hoặc triển khai worker mới
@@ -62,7 +64,7 @@ SELECT has_schema_privilege('authenticated', 'app_private', 'USAGE') AS authenti
 - Giữ `cv-originals` và `cv-extracted-text` **private**; upload/download đi qua backend kiểm tra quyền. Không cấp policy trực tiếp cho HM chỉ dựa trên assignment: có thể bỏ qua `allow_cv_view=false`. Kiểm tra và xử lý policy cũ theo phạm vi được phê duyệt. Link CV đã ký có thể dùng đến 10 phút sau thu hồi.
 - CV gốc vẫn được lưu để người có quyền xem. Trước mỗi cuộc gọi AI, code che theo regex các identifier/thuộc tính nhạy cảm phổ biến, hạn chế profile có cấu trúc và thêm system guardrails; extracted text mới cũng lưu bản đã che. Đây là **best effort, không phải ẩn danh hoặc bảo đảm không rò rỉ**: tên không nhãn, địa chỉ, dữ liệu nhạy cảm viết tự do, OCR và biến thể ngôn ngữ có thể bị bỏ sót; che nhầm cũng có thể làm mất bằng chứng. Prompt không bảo đảm loại bỏ prompt injection hoặc bias.
 - Cần đánh giá DLP/NER, chính sách retention, hợp đồng xử lý dữ liệu, kiểm thử bảo mật/bias và kiểm soát mạng độc lập trước khi xử lý hồ sơ thật. Chỉ gửi dữ liệu tới dịch vụ/model đã được phê duyệt; ưu tiên local. Ghi chú riêng HR không được truyền vào profile/prompt, nhưng không thay thế chính sách truy cập/log của toàn hệ thống.
-- SQLAlchemy ẩn bound parameters, worker tránh ghi CV/prompt/exception raw, nhưng hệ điều hành, proxy, model provider, OCR và dịch vụ khác vẫn cần được rà soát logging, quyền, mã hóa và backup. Audit hiện chưa bất biến; workflow retention/xác nhận xóa chưa hoàn tất.
+- SQLAlchemy ẩn bound parameters, worker tránh ghi CV/prompt/exception raw, nhưng hệ điều hành, proxy, model provider, OCR và dịch vụ khác vẫn cần được rà soát logging, quyền, mã hóa và backup. Từ Batch 5, code đã có workflow retention/xác nhận xóa và audit hash chain/append-only trigger; trên project đã kết nối, các cơ chế này chỉ được coi là đang hoạt động sau khi migration `00012` được áp và postflight đạt.
 
 ## Cấu hình AI và egress
 
@@ -81,6 +83,27 @@ SELECT has_schema_privilege('authenticated', 'app_private', 'USAGE') AS authenti
 - Worker ghi embedding theo `document_id + chunk_id + chunk_text_sha256 + embedding_model + index_version`, không lưu thêm raw CV text trong bảng embedding. Lỗi BGE hoặc pgvector được ghi log theo loại lỗi và tự fallback lexical/in-memory; không coi log im lặng là bằng chứng BGE đang hoạt động. Trước khi bật, phải smoke test endpoint bằng CV tổng hợp, kiểm tra số row/index trong `app_private.cv_chunk_embeddings` và đo unresolved/false-match trên golden set.
 - LTR chỉ train offline bằng `backend/scripts/export_ltr_dataset.py`, `train_ltr.py` và `register_ltr_model.py`. Dataset exporter hiện tạo **weak label** từ trạng thái ứng tuyển, không phải HR gold label. Artifact đăng ký luôn là `DRAFT`; chỉ chuyển `APPROVED` sau review metrics/holdout và phê duyệt vận hành. `SHADOW` ghi `ltr_score` nhưng không đổi thứ hạng; `ACTIVE` chỉ reorder trong cùng mandatory status/coverage gate. Không có HR labelled dataset đủ lớn thì giữ `LTR_MODE=OFF` hoặc `SHADOW` phục vụ đánh giá.
 - Rollback code trước 00010 không yêu cầu drop bảng/cột mới; giữ schema để tránh mất embedding/registry. Nếu rollback worker, vẫn không chạy mixed-version worker và phải drain job như checklist migration chung.
+
+## Retention và audit integrity (migration 00012)
+
+### Trước khi áp migration
+
+1. Xác nhận môi trường đích đã có các migration tới `00011`, extension `pgcrypto` khả dụng và không có operation `PENDING`/`PROCESSING` cần drain theo checklist migration chung.
+2. Sao lưu database và thử restore trên staging; ghi lại số lượng `app_private.audit_events`, retention cases, deletion jobs/events hiện có. Migration sẽ backfill hash chain cho audit events hiện hữu theo `created_at, event_id`, vì vậy cần cửa sổ bảo trì và thời gian tỉ lệ với số audit rows.
+3. Không dùng dữ liệu/CV thật để smoke test nếu EXT-1/EXT-2 chưa đóng. Chuẩn bị dữ liệu tổng hợp: một position đã đóng quá hạn, một application có CV/extracted text/profile/assessment, một Admin và một HR Lead/HR có grant `CONFIRM_DELETION`.
+
+### Sau khi áp migration
+
+1. Đối chiếu lịch sử migration của môi trường và xác nhận các cột `chain_sequence`, `previous_event_hash`, `event_hash` trên `app_private.audit_events`; các cột `position_id`, `application_opaque_id` trên retention/deletion tables; trigger `audit_events_set_hash`, `audit_events_append_only`; RLS/grant chỉ cấp cho `service_role` qua public views.
+2. Gọi `GET /v1/admin/audit/verify` bằng tài khoản Admin. Kỳ vọng `valid=true`; endpoint chỉ trả số lượng và mã sự kiện lỗi đầu tiên, không trả metadata audit. Nếu `valid=false`, dừng rollout retention, giữ nguyên hiện trạng và điều tra bằng quyền DBA; không sửa tay audit row để “làm xanh”.
+3. Smoke test retention bằng dữ liệu tổng hợp theo thứ tự: tạo case cho position đã đóng quá hạn → xác nhận bởi người có quyền → execute một case → kiểm tra file gốc, `extracted.txt`, `pages.json`, profile/assessment/evidence/ranking/shortlist/embeddings/notes đã bị xóa hoặc unlink; retention case/deletion job/event còn lại chỉ chứa opaque ID và counts.
+4. Kiểm tra các trường hợp âm tính: hồ sơ chưa đến hạn không xác nhận được; người chỉ có quyền xem không xác nhận/execute được; storage lỗi thì job `FAILED` và database chưa bị purge; update một audit row qua application/service role bị trigger chặn.
+
+### Vận hành hằng ngày
+
+- Không có job tự động xóa hàng loạt. HR tạo case khi position đã qua hạn; người có thẩm quyền xác nhận và thực thi từng case. Case đã hủy có thể được tạo lại khi chạy generate lần nữa; case đang mở hoặc đã xóa không tạo trùng.
+- Audit hash chain là cơ chế **tamper-evidence**, không phải bằng chứng chống DB superuser: người có quyền hạ tầng vẫn có thể disable trigger, truncate hoặc restore backup cũ. Bù lại bằng phân quyền DBA tối thiểu, backup/WORM log ngoài hệ thống nếu pháp chế yêu cầu và kiểm tra `audit/verify` định kỳ.
+- Nếu storage đã xóa nhưng DB purge lỗi, job được đánh dấu `FAILED`; retry coi file thiếu là đã vắng. Không sửa trực tiếp DB để đánh dấu hoàn tất; khảo sát lỗi, bảo đảm case vẫn `SCHEDULED_FOR_DELETION`, rồi execute lại qua API.
 
 ## Phục hồi worker và giám sát
 

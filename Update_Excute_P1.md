@@ -22,7 +22,7 @@
 | 2 | Embedding cache + semantic diagnostics | ĐÃ LÀM | Commit `ccd9141`; semantic/LTR tests đạt |
 | 3 | LTR governance: artifact hash, review events, Admin approve/reject API | ĐÃ LÀM ở code + project Supabase đã kết nối | Commit `eb674d7`; migration `00011` remote version `20261107133211` |
 | 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
-| 5 | Retention/deletion workflow + audit integrity | CHƯA LÀM | Xem mục 6 |
+| 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + test local — CHƯA ÁP MIGRATION REMOTE/CHƯA CÓ CI CHO BATCH 5 | Targeted Batch 5: **9 passed**; full backend local: **158 passed**; migration sạch local áp đủ `00001`–`00012` |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -143,13 +143,52 @@
 
 ## 6. Batch 5 — Retention/deletion + audit integrity
 
-### Trạng thái: CHƯA LÀM
+### Trạng thái: ĐÃ LÀM ở code + test local — CHƯA ÁP MIGRATION `00012` LÊN SUPABASE, CHƯA CÓ CI XANH CHO RIÊNG BATCH 5
 
-### Phạm vi dự kiến
+### Phạm vi đã chốt cho Phase 1
 
-- Dùng các bảng retention/deletion đã có trong schema để xây workflow: tạo case đến hạn, HR xác nhận, thực thi xóa CV gốc/extracted text/profile/assessment/evidence/embeddings/shortlist artifacts, ghi deletion event không chứa PII.
-- Tăng cường audit integrity: hạn chế UPDATE/DELETE audit events đối với application role, bổ sung cơ chế kiểm chứng toàn vẹn và áp dụng cho role changes, criteria approval, AI config activation, LTR approval.
-- Cập nhật closure review và tài liệu vận hành sau khi có test.
+- Chỉ tạo retention case cho vị trí `CLOSED` khi đã qua thời hạn lưu trữ theo policy đã phê duyệt (`v1.0-12month`: 12 tháng kể từ `positions.closed_at`).
+- Không xóa tự động hàng loạt. HR có quyền xem tạo danh sách case; Admin/HR Lead toàn cục, HR Lead được gán vị trí hoặc người có grant `CONFIRM_DELETION`/`RETENTION_CONFIRM` mới được xác nhận/hủy/thực thi từng case.
+- Không triển khai trong Phase 1 các yêu cầu thuộc Phase 2 F2.07 như phê duyệt Legal, OTP/chữ ký điện tử hoặc retention exception hold. “Hủy case” chỉ hủy case hiện tại; khi HR chạy tạo case lại, hồ sơ chưa bị xóa có thể được tạo case mới, còn case đang mở/`DELETED` không bị tạo trùng.
+
+### Đã thay đổi
+
+- `supabase/migrations/00012_retention_audit_integrity.sql`
+  - Bổ sung `position_id`, `application_opaque_id` cho `application_retention_cases`; đổi FK application sang `ON DELETE SET NULL` để case còn lại dưới dạng bằng chứng ẩn danh sau purge.
+  - Bổ sung opaque ID cho `deletion_jobs`, partial unique index cho case đang mở, index theo position/status/due date và refresh các public view/grant chỉ cho `service_role`.
+  - Audit: thêm sequence-backed `chain_sequence`, `previous_event_hash`, `event_hash`; backfill SHA-256 hash chain; trigger BEFORE INSERT dùng advisory transaction lock để hạn chế fork; trigger BEFORE UPDATE/DELETE chặn sửa/xóa `audit_events`.
+  - Giới hạn trung thực: đây là tamper-evidence ở mức ứng dụng/DB row. Không có BEFORE TRUNCATE vì harness test dùng `TRUNCATE ... CASCADE`; không tuyên bố chống được DB superuser cố ý vô hiệu hóa trigger/hạ tầng.
+- `backend/app/services/retention.py`
+  - Sinh opaque ID bằng SHA-256 có domain separator; tính due date bằng cộng tháng lịch từ ngày đóng vị trí.
+  - Workflow generate/list/confirm/cancel/execute từng case; confirm và execute đều chặn case chưa đến hạn.
+  - Execute xóa storage trước (local hoặc Supabase, gồm cả extracted `pages.json` cùng thư mục), sau đó mới purge DB theo thứ tự FK: shortlist feedback/items, ranking items, duplicate signals, embeddings, assessments (cascade results/evidence), profiles/facts, private notes, identity, status events, documents/processing runs.
+  - `cv_batch_items` được unlink và đổi tên file thành `[DELETED]`; retention case/deletion job/event/audit chỉ giữ opaque ID + counts, không ghi tên/email/tên file/quote/CV text vào summary hoặc audit metadata.
+  - Nếu storage lỗi, không purge DB; deletion job ghi `FAILED` với mã lỗi đã làm sạch. Với Supabase Storage, số object đã xóa được đếm theo danh sách provider xác nhận.
+- `backend/app/api/retention.py` + `backend/app/api/__init__.py`
+  - Thêm router `/v1/retention`: list/generate case theo position và confirm/cancel/execute theo case.
+  - Quyền xem: Admin/HR Lead toàn cục hoặc assignment HR_RECRUITER/HR_LEAD. Quyền confirm/cancel/execute chặt hơn: Admin/HR Lead toàn cục, assignment HR_LEAD hoặc grant xác nhận xóa.
+- `backend/app/services/audit_integrity.py` + `backend/app/api/admin.py`
+  - Thêm `GET /v1/admin/audit/verify` cho Admin; đối chiếu linkage và tính lại hash, chỉ trả trạng thái tổng hợp, không lộ metadata audit.
+- `.github/workflows/ci.yml`
+  - Bổ sung `retention.py`, `audit_integrity.py`, `api/retention.py` vào Ruff scope của job backend-unit.
+- Tests:
+  - `backend/tests/test_retention_audit.py`: opaque ID ổn định/không bằng application ID, cộng tháng qua năm/tháng ngắn, extracted paths, Supabase remove counts và sanitised provider errors.
+  - `backend/tests/test_phase1_integration.py`: purge đầu-cuối trên PostgreSQL thật (file local, documents, profiles/facts, assessments/results/evidence, ranking, shortlist/feedback, embeddings, notes, batch items), RBAC confirm/execute, chưa đến hạn không confirm được, storage lỗi không xóa DB, audit append-only + phát hiện tamper khi bypass trigger, case đã hủy được tạo lại và case đang mở không bị tạo trùng.
+
+### Kiểm chứng
+
+- Ruff phạm vi Batch 5: đạt.
+- Targeted Batch 5 trên PostgreSQL local: **9 passed** (5 unit + 4 integration).
+- Full backend trên PostgreSQL dùng một lần tại local: **158 passed**.
+- Dựng database local mới và áp migration theo thứ tự `00001`–`00012`: đạt; targeted Batch 5 trên database mới: **9 passed**. PostgreSQL nhúng local thiếu `digest()` của pgcrypto nên chỉ tạo wrapper trong database local; Supabase/CI dùng pgcrypto thật.
+- GitHub Actions run `42379810795` cho commit tài liệu `9cf1d43` của Batch 4 đã hoàn tất `success` ở cả 3 job. Đây không phải bằng chứng CI cho code Batch 5.
+
+### Còn lại sau Batch 5
+
+- Commit/push Batch 5 và chờ GitHub Actions xanh cho chính commit chứa migration `00012` + retention/audit code.
+- Sau preflight (số audit events, operations đang chạy, storage backend, backup/rollback), mới áp `00012` lên Supabase `myrymlqdbyqmpynesiwk` và postflight kiểm tra migration version, hash-chain verify, RLS/grant và smoke test bằng dữ liệu tổng hợp.
+- Chạy retention workflow trên staging thật với Supabase Auth/Storage; chưa dùng CV thật.
+- F1.10 chưa đóng hoàn toàn cho tới khi migration remote + staging evidence hoàn tất; EXT-1 legacy keys vẫn `BLOCKED – manual ops`.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

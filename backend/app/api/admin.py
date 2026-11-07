@@ -27,6 +27,7 @@ from app.services.ai_secrets import (
     encryption_ready,
     normalize_api_key,
 )
+from app.services.audit_integrity import verify_audit_chain
 from app.services.llm_client import LLMError, llm_client
 from app.services.ltr import LTRError, LTRModel, artifact_sha256
 from app.services.semantic_diagnostics import get_semantic_diagnostics
@@ -322,6 +323,16 @@ async def get_semantic_health(current_user: dict = Depends(require_admin_role)):
     candidates because the provider failed.
     """
     return get_semantic_diagnostics()
+
+
+@router.get("/audit/verify")
+async def verify_audit_integrity(current_user: dict = Depends(require_admin_role)):
+    """Verify the audit hash chain without exposing audit metadata."""
+    db = SessionLocal()
+    try:
+        return verify_audit_chain(db)
+    finally:
+        db.close()
 
 
 @router.get("/ltr/models")

@@ -45,8 +45,11 @@ jobs:
           backend/app/services/semantic_diagnostics.py
           backend/app/services/ltr.py
           backend/app/services/matching.py
+          backend/app/services/retention.py
+          backend/app/services/audit_integrity.py
           backend/app/workers/processor.py
           backend/app/api/admin.py
+          backend/app/api/retention.py
           backend/scripts
           backend/tests
 
