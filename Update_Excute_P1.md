@@ -129,7 +129,10 @@
 
 - Local không có `TEST_DATABASE_URL`: full backend đạt **90 passed, 59 skipped**; test RBAC mới sẽ được thực thi trong job CI integration dùng PostgreSQL/pgvector dùng một lần.
 - Ruff phạm vi các bề mặt đã nâng cấp đạt.
-- YAML của `.github/workflows/ci.yml` đã parse thành công; cần theo dõi lần chạy GitHub Actions đầu tiên sau push để xác nhận runner/service và frontend checks.
+- YAML của `.github/workflows/ci.yml` đã parse thành công.
+- Các lần chạy GitHub Actions đầu tiên cho thấy backend-unit và frontend đạt, nhưng backend-integration thất bại ở 6 test worker. Truy vết bằng JUnit/annotations và tái hiện cục bộ cho thấy nguyên nhân không phải RBAC mới: `backend/tests/test_accounts.py::reset_disposable_database()` truncate `auth.users CASCADE`, làm mất policy `assessment-v2.0` do migration `00008` seed, nhưng chỉ khôi phục policy cũ `v1.0`. Khi worker ghi `assessment_runs.policy_version='assessment-v2.0'`, PostgreSQL trả FK violation.
+- Đã sửa harness test để reset khôi phục cả `assessment-v2.0` đúng nội dung migration `00008`.
+- Sau sửa, chạy full backend trên PostgreSQL dùng một lần tại local đạt **149 passed**; chờ GitHub Actions xác nhận lại trên PostgreSQL/pgvector 17.
 
 ### Còn lại sau Batch 4
 

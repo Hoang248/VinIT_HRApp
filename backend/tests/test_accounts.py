@@ -122,7 +122,10 @@ def reset_disposable_database():
         conn.exec_driver_sql("""INSERT INTO app_private.assessment_policy_versions
             (policy_version,score_mapping,min_evidence_coverage,confidence_thresholds,ranking_rules,status)
             VALUES ('v1.0', '{"STRONG_MATCH":100,"MATCH":80,"NO_MATCH":0,"UNCLEAR":null}'::jsonb,
-                    0.70, '{"HIGH":0.8,"MEDIUM":0.6,"LOW":0.0}'::jsonb, 'synthetic', 'APPROVED')
+                    0.70, '{"HIGH":0.8,"MEDIUM":0.6,"LOW":0.0}'::jsonb, 'synthetic', 'APPROVED'),
+                   ('assessment-v2.0', '{"STRONG_MATCH":100,"MATCH":80,"NO_MATCH":0,"UNCLEAR":null}'::jsonb,
+                    0.70, '{"min_evidence_strength":0.35}'::jsonb,
+                    'must-have gate, matching score, evidence coverage, application_id', 'APPROVED')
             ON CONFLICT (policy_version) DO NOTHING""")
         conn.execute(text("""INSERT INTO app_private.retention_policy_versions
             (policy_version,retention_months,trigger_event,status) VALUES ('v1.0-12month',12,'POSITION_CLOSED','APPROVED')
