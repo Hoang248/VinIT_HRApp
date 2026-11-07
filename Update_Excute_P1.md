@@ -22,7 +22,7 @@
 | 2 | Embedding cache + semantic diagnostics | ĐÃ LÀM | Commit `ccd9141`; semantic/LTR tests đạt |
 | 3 | LTR governance: artifact hash, review events, Admin approve/reject API | ĐÃ LÀM ở code + project Supabase đã kết nối | Commit `eb674d7`; migration `00011` remote version `20261107133211` |
 | 4 | RBAC test matrix + CI độc lập + khung E2E staging | ĐÃ LÀM ở code/CI — CHƯA CHẠY E2E THẬT | Commit `3d68ba2`, sửa harness `3105045`; GitHub Actions run `42379643837` đạt cả 3 job |
-| 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + test local — CHƯA ÁP MIGRATION REMOTE/CHƯA CÓ CI CHO BATCH 5 | Targeted Batch 5: **9 passed**; full backend local: **158 passed**; migration sạch local áp đủ `00001`–`00012` |
+| 5 | Retention/deletion workflow + audit integrity | ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ STAGING EVIDENCE | Commit `cce75b5`; GitHub Actions run `42380974685` đạt cả 3 job; migration `00012` remote version `20261107142027` |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -143,7 +143,7 @@
 
 ## 6. Batch 5 — Retention/deletion + audit integrity
 
-### Trạng thái: ĐÃ LÀM ở code + test local — CHƯA ÁP MIGRATION `00012` LÊN SUPABASE, CHƯA CÓ CI XANH CHO RIÊNG BATCH 5
+### Trạng thái: ĐÃ LÀM ở code + CI + project Supabase đã kết nối — CHƯA CÓ BẰNG CHỨNG STAGING
 
 ### Phạm vi đã chốt cho Phase 1
 
@@ -181,14 +181,16 @@
 - Targeted Batch 5 trên PostgreSQL local: **9 passed** (5 unit + 4 integration).
 - Full backend trên PostgreSQL dùng một lần tại local: **158 passed**.
 - Dựng database local mới và áp migration theo thứ tự `00001`–`00012`: đạt; targeted Batch 5 trên database mới: **9 passed**. PostgreSQL nhúng local thiếu `digest()` của pgcrypto nên chỉ tạo wrapper trong database local; Supabase/CI dùng pgcrypto thật.
-- GitHub Actions run `42379810795` cho commit tài liệu `9cf1d43` của Batch 4 đã hoàn tất `success` ở cả 3 job. Đây không phải bằng chứng CI cho code Batch 5.
+- GitHub Actions run `42379810795` cho commit tài liệu `9cf1d43` của Batch 4 đã hoàn tất `success` ở cả 3 job.
+- Commit Batch 5 `cce75b5` đã push; GitHub Actions run `42380974685` đạt cả Backend unit tests, Frontend checks và Backend integration (disposable PostgreSQL + pgvector). URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42380974685
+- Preflight Supabase `myrymlqdbyqmpynesiwk`: project `ACTIVE_HEALTHY`, migration mới nhất trước Batch 5 là `20261107133211`, có 21 audit events, 0 retention/deletion rows, 0 operation `PENDING`/`PROCESSING`, đã có `pgcrypto`, chưa có cột/trigger của `00012`.
+- Đã áp migration `00012_retention_audit_integrity` lên project đã kết nối; remote version `20261107142027`. Postflight: đủ 3 cột hash audit, 2 cột retention mới, 2 trigger audit, RLS bật trên 4 bảng liên quan, 21/21 audit events có hash và 0 broken event theo cùng thuật toán của `verify_audit_chain`, 0 operation đang chạy.
 
 ### Còn lại sau Batch 5
 
-- Commit/push Batch 5 và chờ GitHub Actions xanh cho chính commit chứa migration `00012` + retention/audit code.
-- Sau preflight (số audit events, operations đang chạy, storage backend, backup/rollback), mới áp `00012` lên Supabase `myrymlqdbyqmpynesiwk` và postflight kiểm tra migration version, hash-chain verify, RLS/grant và smoke test bằng dữ liệu tổng hợp.
-- Chạy retention workflow trên staging thật với Supabase Auth/Storage; chưa dùng CV thật.
-- F1.10 chưa đóng hoàn toàn cho tới khi migration remote + staging evidence hoàn tất; EXT-1 legacy keys vẫn `BLOCKED – manual ops`.
+- Chạy retention workflow trên staging thật với Supabase Auth/Storage và backend đã deploy code Batch 5; chưa dùng CV thật.
+- Kiểm chứng `GET /v1/admin/audit/verify` qua backend staging (postflight SQL trên project đã kết nối hiện đạt 0 broken event, nhưng chưa thay thế smoke test qua API đã deploy).
+- F1.10 chưa đóng hoàn toàn cho tới khi có staging evidence; EXT-1 legacy keys vẫn `BLOCKED – manual ops`.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

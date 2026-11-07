@@ -17,10 +17,10 @@
 
 | Hạng mục | Bằng chứng | Trạng thái |
 |---|---|---|
-| Migration trên project Supabase đã kết nối | Đã kiểm tra danh sách migration: initial schema, audit fixes, operation scope, recovery/privacy, account administration, OpenAI-compatible provider secrets, departments/position codes, deterministic foundation, structured requirement specs, pgvector/BGE/LTR, LTR governance `00011` | `PASS` cho project đã kết nối tới `00011`; migration `00012` mới có ở local, chưa áp remote |
-| Backend automated tests | Local full backend trên PostgreSQL dùng một lần đạt **158 passed** sau Batch 5; CI integration trên PostgreSQL/pgvector 17 đạt tại run `42379643837` cho code trước Batch 5 | `PARTIAL` — cần CI xanh cho Batch 5 và bằng chứng staging riêng |
-| GitHub CI | Đã bổ sung `.github/workflows/ci.yml` gồm backend unit, frontend checks và backend integration với PostgreSQL/pgvector dùng một lần; run `42379643837` tại commit `3105045` và run tài liệu `42379810795` đạt cả 3 job | `PARTIAL` — còn branch protection và CI cho Batch 5 |
-| Retention/audit Batch 5 | Đã triển khai retention workflow từng hồ sơ, audit SHA-256 hash chain/append-only trigger và `GET /v1/admin/audit/verify`; targeted **9 passed**, full backend local **158 passed**, migration sạch local `00001`–`00012` áp đạt | `PARTIAL` — chưa áp `00012` remote, chưa chạy staging Supabase Auth/Storage |
+| Migration trên project Supabase đã kết nối | Đã kiểm tra danh sách migration tới retention/audit integrity `00012`, remote version `20261107142027` | `PASS` cho project đã kết nối; môi trường đích khác vẫn `NOT TESTED` |
+| Backend automated tests | Local full backend trên PostgreSQL dùng một lần đạt **158 passed** sau Batch 5; CI tại run `42380974685` cho commit `cce75b5` đạt cả 3 job | `PARTIAL` — vẫn cần bằng chứng staging riêng |
+| GitHub CI | Đã bổ sung `.github/workflows/ci.yml` gồm backend unit, frontend checks và backend integration với PostgreSQL/pgvector dùng một lần; run `42380974685` đạt cả 3 job | `PARTIAL` — còn branch protection nếu quy trình phát hành yêu cầu |
+| Retention/audit Batch 5 | Đã triển khai retention workflow từng hồ sơ, audit SHA-256 hash chain/append-only trigger và `GET /v1/admin/audit/verify`; targeted **9 passed**, full backend local **158 passed**, migration sạch local `00001`–`00012` áp đạt; postflight remote xác nhận 21/21 audit events có hash và 0 broken event | `PARTIAL` — chưa chạy workflow qua staging Supabase Auth/Storage và backend đã deploy |
 | Supabase Auth/Storage thật | Chưa có E2E staging được ghi nhận đầy đủ | `NOT TESTED` |
 | OCR scan thật | Có code và unit test mô phỏng; chưa có bộ hồ sơ scan thật được nghiệm thu | `NOT TESTED` |
 | LLM/BGE thật | Có provider và cấu hình; chưa có báo cáo golden set HR trên model/endpoint thật | `NOT TESTED` |
@@ -39,7 +39,7 @@
 | F1.07 | Cảnh báo trùng | duplicate detection theo email/phone | duplicate signals | Có tín hiệu trong cùng position, không tự gộp/xóa | `PARTIAL` | Test các trường hợp đổi identifier và dữ liệu thiếu |
 | F1.08 | Trạng thái và lịch sử | application status API | status events/audit events | HR cập nhật theo transition, lý do khi loại, AI không tự đổi trạng thái | `PARTIAL` | RBAC matrix và audit integrity |
 | F1.09 | Shortlist, feedback, ghi chú HR | shortlist API/UI | shortlist shares/items/feedback | Có chia sẻ HM, quyền xem CV, feedback, thu hồi; ghi chú append-only qua API | `PARTIAL` | Kiểm thử chia sẻ/thu hồi trên staging và quyền HM |
-| F1.10 | RBAC, audit, retention | admin/account APIs, audit events, Admin LTR review API, retention API `/v1/retention`, `GET /v1/admin/audit/verify` | RBAC tables, audit events, retention/deletion tables, LTR governance tại 00011, retention/audit integrity tại 00012 (local) | Có quản lý role/trạng thái; LTR approve/reject đã có hash/actor/reason/audit; RBAC integration theo position đã xanh trước Batch 5. Batch 5 đã có workflow tạo case đến hạn, xác nhận/hủy/thực thi từng hồ sơ, purge storage+DB không ghi PII vào bằng chứng, audit hash chain/append-only và test phát hiện tamper/storage failure/chưa đến hạn/case hủy được tạo lại trên PostgreSQL local | `BLOCKED` | Đóng legacy key; áp migration `00012` remote sau preflight; CI xanh cho Batch 5; chạy RBAC/retention matrix trên staging với Supabase Auth/Storage |
+| F1.10 | RBAC, audit, retention | admin/account APIs, audit events, Admin LTR review API, retention API `/v1/retention`, `GET /v1/admin/audit/verify` | RBAC tables, audit events, retention/deletion tables, LTR governance tại 00011, retention/audit integrity tại 00012 remote `20261107142027` | Có quản lý role/trạng thái; LTR approve/reject đã có hash/actor/reason/audit; RBAC integration theo position và CI Batch 5 đã xanh. Batch 5 đã có workflow tạo case đến hạn, xác nhận/hủy/thực thi từng hồ sơ, purge storage+DB không ghi PII vào bằng chứng, audit hash chain/append-only và test phát hiện tamper/storage failure/chưa đến hạn/case hủy được tạo lại; postflight remote 0 broken audit event | `BLOCKED` | Đóng legacy key; chạy RBAC/retention matrix và audit verify qua backend staging với Supabase Auth/Storage |
 | F1.11 | Cấu hình AI, privacy | Admin AI config, LLM/embedding providers, `GET /v1/admin/semantic/health` | AI config versions, provider secret encryption, pgvector embeddings | Có allowlist, mã hóa API key, redaction best effort; đã bổ sung embedding cache và semantic diagnostics phân biệt DISABLED/MISCONFIGURED/READY/OPERATIONAL/DEGRADED | `BLOCKED` cho CV thật | Phê duyệt privacy/egress; E2E model thật; đánh giá bias/prompt injection |
 | F1.12 | Việt–Anh | frontend i18n | Không áp dụng | Có VI/EN, mặc định VI, test i18n | `PARTIAL` | HR review nội dung nghiệp vụ và các nhãn mới theo policy điểm |
 | F1.13 | Dashboard, worker | dashboard API, worker health | operations, recovery events | Worker thread trong API, advisory lock/fencing/heartbeat/recovery; at-least-once; đã thêm RBAC integration test cho dashboard position scope | `PARTIAL` | Chỉ định một worker-enabled instance hoặc tách worker; monitoring/alerting; E2E recovery trên staging |
@@ -52,7 +52,7 @@ Chưa dùng CV thật ở quy mô pilot cho tới khi:
 
 - Legacy Supabase keys/JWT secret được đóng và kiểm chứng.
 - Privacy/egress được phê duyệt cho LLM/BGE/OCR endpoints.
-- Retention/deletion workflow đã có code/test local; phải áp migration `00012`, thực thi và đối soát được trên staging.
+- Retention/deletion workflow đã có code/test và migration remote; phải thực thi và đối soát được qua backend staging.
 - RBAC matrix và E2E Auth/Storage đạt trên staging.
 
 ### Gate LTR ACTIVE
@@ -72,7 +72,7 @@ Chưa tuyên bố production scale cho tới khi:
 - CI đã có workflow độc lập và checks xanh tại run `42379643837`; còn cấu hình branch protection nếu quy trình phát hành yêu cầu.
 - Worker được triển khai có chủ đích cho nhiều replicas hoặc tách process.
 - Có monitoring/alerting, backup/restore và DR drill.
-- Audit trail đã có hash chain/append-only trigger ở code + migration local `00012`; phải áp remote và kiểm chứng `GET /v1/admin/audit/verify` trên môi trường đích.
+- Audit trail đã có hash chain/append-only trigger và migration `00012` đã áp lên project đã kết nối với postflight 0 broken event; vẫn cần kiểm chứng `GET /v1/admin/audit/verify` qua backend staging đã deploy.
 
 ## 5. Thứ tự nâng cấp đang thực hiện
 
@@ -82,5 +82,5 @@ Chưa tuyên bố production scale cho tới khi:
 4. Embedding cache và semantic diagnostics — đã bổ sung ở mức code; cần kiểm thử với endpoint/pgvector thật trên staging.
 5. LTR governance migration/API — đã bổ sung và áp migration `00011` lên project đã kết nối; còn thiếu kiểm thử API trên staging và UI phê duyệt.
 6. RBAC test matrix và CI — đã bổ sung và CI xanh tại run `42379643837`; runbook E2E staging tại `doc/E2E_STAGING.md`, còn cần chạy thật trên staging có Auth/Storage/OCR/LLM/BGE.
-7. Retention/deletion workflow và audit integrity — đã triển khai ở code + test local; còn áp migration `00012` remote, CI Batch 5 và staging evidence.
+7. Retention/deletion workflow và audit integrity — đã triển khai ở code, CI xanh và migration `00012` đã áp lên project đã kết nối; còn staging evidence qua Supabase Auth/Storage/backend đã deploy.
 8. Đánh giá BGE bằng golden set; xây HR gold dataset và chạy LTR SHADOW trước ACTIVE.
