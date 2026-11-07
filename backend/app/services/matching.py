@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
 import re
 import math
+import unicodedata
 from app.core.config import settings
 from app.schemas.criteria import CriterionRating, CriteriaCategory
 
@@ -17,6 +18,67 @@ class MatchingEngine:
         CriterionRating.NO_MATCH: settings.NO_MATCH_SCORE,
         CriterionRating.UNCLEAR: None  # Does not count towards score or coverage
     }
+    POLICY_VERSION = settings.MATCHING_POLICY_VERSION
+    MIN_EVIDENCE_STRENGTH = 0.35
+    _BAND_STRENGTH = {"HIGH": 0.9, "MEDIUM": 0.75, "LOW": 0.5}
+
+    @staticmethod
+    def canonicalize_findings(
+        criteria: list[dict[str, Any]],
+        findings: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return exactly one finding per rubric criterion, in rubric order."""
+        by_id: dict[str, dict[str, Any]] = {}
+        for finding in findings or []:
+            if not isinstance(finding, dict):
+                continue
+            criterion_id = str(finding.get("criterion_id") or "")
+            if criterion_id and criterion_id not in by_id:
+                by_id[criterion_id] = finding
+        canonical = []
+        valid_outcomes = {rating.value for rating in CriterionRating}
+        for criterion in criteria:
+            criterion_id = str(criterion.get("criterion_id") or "")
+            finding = dict(by_id.get(criterion_id) or {})
+            outcome = str(finding.get("outcome") or CriterionRating.UNCLEAR.value).upper()
+            if outcome not in valid_outcomes:
+                outcome = CriterionRating.UNCLEAR.value
+            evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+            canonical.append({
+                **finding,
+                "criterion_id": criterion_id,
+                "outcome": outcome,
+                "reasoning": str(finding.get("reasoning") or ""),
+                "evidence": {
+                    **evidence,
+                    "verbatim_quote": str(evidence.get("verbatim_quote") or ""),
+                    "page_number": evidence.get("page_number"),
+                },
+                "requires_verification": bool(finding.get("requires_verification")),
+            })
+        return canonical
+
+    @classmethod
+    def _evidence_strength(cls, finding: dict[str, Any]) -> float:
+        """Best available evidence strength without a hard confidence cliff."""
+        if "evidence_strength" in finding:
+            try:
+                strength = float(finding.get("evidence_strength"))
+                if math.isfinite(strength):
+                    return min(1.0, max(0.0, strength))
+            except (TypeError, ValueError):
+                pass
+            return 0.0
+        if "confidence" in finding:
+            try:
+                confidence = float(finding.get("confidence"))
+                if math.isfinite(confidence) and 0 <= confidence <= 1:
+                    return confidence
+            except (TypeError, ValueError):
+                pass
+            return 0.0
+        band = str(finding.get("confidence_band") or "").strip().upper()
+        return cls._BAND_STRENGTH.get(band, 0.0)
 
     def calculate_criterion_weight(
         self,
@@ -54,55 +116,59 @@ class MatchingEngine:
         needs_verification = False
         augmented_findings = []
 
-        # Map findings by criterion_id
-        findings_map = {f["criterion_id"]: f for f in findings}
+        findings = self.canonicalize_findings(criteria, findings)
 
         for crit in criteria:
-            crit_id = crit["criterion_id"]
+            crit_id = str(crit["criterion_id"])
             effective_weight = self.calculate_criterion_weight(crit, criteria, group_weights)
             total_applicable_weight += effective_weight
 
-            finding = findings_map.get(crit_id, {})
-            outcome = finding.get("outcome", CriterionRating.UNCLEAR.value)
-            if outcome not in {rating.value for rating in CriterionRating}:
-                outcome = CriterionRating.UNCLEAR.value
-            try:
-                confidence = float(finding.get("confidence", 0.5))
-            except (TypeError, ValueError):
-                confidence = 0.0
-            confidence = confidence if math.isfinite(confidence) and 0 <= confidence <= 1 else 0.0
+            finding = next(item for item in findings if item["criterion_id"] == crit_id)
+            outcome = finding["outcome"]
+            evidence_strength = self._evidence_strength(finding)
+            confidence = evidence_strength
             confidence_band = str(finding.get("confidence_band") or "LOW").strip().upper()
             if confidence_band not in {"HIGH", "MEDIUM", "LOW"}:
                 confidence_band = "LOW"
 
-            # A low/invalid confidence or explicit review flag is not a reliable
-            # finding, even when the model claimed MATCH or NO_MATCH.
-            is_reliable = (
+            # No hard 0.6/band cliff: a non-UNCLEAR outcome is scored once it
+            # has a minimum evidence strength. An explicit review request or
+            # very weak evidence remains UNCLEAR for scoring.
+            is_scored = (
                 outcome != CriterionRating.UNCLEAR.value
-                and confidence >= 0.6
-                and confidence_band in {"MEDIUM", "HIGH"}
+                and evidence_strength >= self.MIN_EVIDENCE_STRENGTH
                 and not finding.get("requires_verification")
             )
-            if not is_reliable:
+            if not is_scored:
                 outcome = CriterionRating.UNCLEAR.value
 
-            if is_reliable:
-                point_value = self.SCORE_MAP.get(CriterionRating(outcome), None)
+            point_value = None
+            if is_scored:
+                raw_score = finding.get("score")
+                try:
+                    point_value = float(raw_score) if raw_score is not None else None
+                    if point_value is not None and not math.isfinite(point_value):
+                        point_value = None
+                except (TypeError, ValueError):
+                    point_value = None
+                if point_value is None:
+                    point_value = self.SCORE_MAP.get(CriterionRating(outcome), None)
                 if point_value is not None:
+                    point_value = min(100.0, max(0.0, point_value))
+                    if outcome == CriterionRating.NO_MATCH.value:
+                        point_value = 0.0
                     weighted_score_sum += (point_value / 100) * effective_weight
                     total_scored_weight += effective_weight
-
                     if outcome == CriterionRating.NO_MATCH.value and crit["category"] == CriteriaCategory.MUST_HAVE.value:
                         has_mandatory_mismatch = True
-            else:
-                # Unclear or low confidence
-                if crit["category"] == CriteriaCategory.MUST_HAVE.value:
-                    needs_verification = True
+            elif crit["category"] == CriteriaCategory.MUST_HAVE.value:
+                needs_verification = True
 
-            # Augment finding with effective weight
             aug_finding = {**finding, "criterion_id": crit_id, "outcome": outcome,
                            "confidence": confidence, "confidence_band": confidence_band,
-                           "requires_verification": bool(finding.get("requires_verification")) or not is_reliable,
+                           "evidence_strength": evidence_strength,
+                           "score": point_value if is_scored else None,
+                           "requires_verification": bool(finding.get("requires_verification")) or not is_scored,
                            "effective_weight": effective_weight}
             augmented_findings.append(aug_finding)
 
@@ -133,18 +199,57 @@ class MatchingEngine:
 
         return matching_score, evidence_coverage, matching_status, augmented_findings, needs_verification
 
+    @staticmethod
+    def _normalized_with_map(value: str) -> tuple[str, list[int]]:
+        chars: list[str] = []
+        origins: list[int] = []
+        for index, char in enumerate(value or ""):
+            decomposed = unicodedata.normalize("NFKD", char)
+            base = "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+            for normalized_char in base:
+                if normalized_char.isalnum():
+                    chars.append(normalized_char)
+                    origins.append(index)
+                elif chars and chars[-1] != " ":
+                    chars.append(" ")
+                    origins.append(index)
+        while chars and chars[-1] == " ":
+            chars.pop()
+            origins.pop()
+        return "".join(chars), origins
+
+    def find_quote_span(self, quote: str, cv_full_text: str) -> tuple[int, int] | None:
+        """Locate a quote tolerant to case, accents, punctuation and spacing.
+
+        Returns original character offsets so callers can persist the exact
+        CV substring instead of trusting the model's transcription.
+        """
+        if not quote or len(quote.strip()) < 10 or not cv_full_text:
+            return None
+        needle, _ = self._normalized_with_map(quote)
+        if len(needle) < 8:
+            return None
+        haystack, origins = self._normalized_with_map(cv_full_text)
+        index = haystack.find(needle)
+        if index < 0:
+            return None
+        return origins[index], origins[index + len(needle) - 1] + 1
+
     def verify_verbatim_quote(self, quote: str, cv_full_text: str) -> bool:
-        """Verify an exact quote after whitespace/case normalization, not a fuzzy guess."""
-        if not quote or len(quote) < 10:
-            return False
-        normalize = lambda value: " ".join(value.lower().split())
-        return normalize(quote) in normalize(cv_full_text)
+        """Verify a quote by locating its normalized span in the CV text."""
+        return self.find_quote_span(quote, cv_full_text) is not None
 
     def quote_pages(self, quote: str, cv_full_text: str) -> list[int]:
-        """Return actual PDF page markers containing the quote; DOCX has no page markers."""
-        parts = re.split(r"--- Page (\d+) ---", cv_full_text)
-        return [int(parts[index]) for index in range(1, len(parts) - 1, 2)
-                if self.verify_verbatim_quote(quote, parts[index + 1])]
+        """Return the actual PDF page containing the located quote span."""
+        span = self.find_quote_span(quote, cv_full_text)
+        if span is None:
+            return []
+        page = None
+        for marker in re.finditer(r"--- Page (\d+) ---", cv_full_text):
+            if marker.start() > span[0]:
+                break
+            page = int(marker.group(1))
+        return [page] if page is not None else []
 
     def rank_applications(
         self,
@@ -174,7 +279,8 @@ class MatchingEngine:
             return (
                 status_order.get(status, 99),
                 -score,  # Negative for descending sort
-                -coverage
+                -coverage,
+                str(item.get("application_id") or item.get("id") or ""),
             )
 
         sorted_items = sorted(applications_with_assessments, key=sort_key)

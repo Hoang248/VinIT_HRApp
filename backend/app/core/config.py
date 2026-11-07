@@ -57,9 +57,20 @@ class Settings(BaseSettings):
     LLM_ALLOWED_API_BASES: list[str] = []
     LLM_ALLOWED_MODELS: list[str] = []
     LLM_TEMPERATURE_DEFAULT: float = 0.1
+    # Optional provider seed. Leave unset unless the selected OpenAI-compatible
+    # provider explicitly supports `seed`; determinism is still best-effort.
+    LLM_SEED: int | None = None
     ALLOW_EXTERNAL_API: bool = False
 
-    # Matching/Scoring
+    # Matching/Scoring. Bump these versions whenever prompt, scoring or rule
+    # behaviour changes; assessment fingerprints include them so old results
+    # are never silently mixed with new behaviour.
+    ASSESSMENT_POLICY_VERSION: str = "assessment-v2.0"
+    MATCHING_POLICY_VERSION: str = "matching-v2.0"
+    CRITERIA_PROMPT_VERSION: str = "criteria-prompt-v2.0"
+    PROFILE_PROMPT_VERSION: str = "profile-prompt-v2.0"
+    MATCHING_PROMPT_VERSION: str = "matching-prompt-v2.0"
+    DETERMINISTIC_RULES_VERSION: str = "deterministic-rules-v1.0"
     MANDATORY_CRITERIA_WEIGHT_DEFAULT: float = 0.7
     NICE_TO_HAVE_WEIGHT_DEFAULT: float = 0.3
     MIN_EVIDENCE_COVERAGE: float = 0.7

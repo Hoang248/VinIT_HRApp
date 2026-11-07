@@ -4,7 +4,7 @@ import socket
 import time
 from urllib.parse import urlsplit
 import httpx
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -31,6 +31,11 @@ Output only the requested JSON. A qualified human must independently review ever
 """
 
 
+CRITERIA_PROMPT_VERSION = settings.CRITERIA_PROMPT_VERSION
+PROFILE_PROMPT_VERSION = settings.PROFILE_PROMPT_VERSION
+MATCHING_PROMPT_VERSION = settings.MATCHING_PROMPT_VERSION
+
+
 class LLMError(Exception):
     """Base exception for LLM operations"""
     pass
@@ -53,10 +58,25 @@ class CandidateProfileSchema(BaseModel):
     projects: List[Dict[str, Any] | str] = Field(default_factory=list)
 
 
+class EvidenceSchema(BaseModel):
+    verbatim_quote: str = ""
+    page_number: Optional[int] = None
+
+
+class CriterionFindingSchema(BaseModel):
+    criterion_id: str
+    outcome: Literal["STRONG_MATCH", "MATCH", "UNCLEAR", "NO_MATCH"]
+    confidence: float = Field(ge=0, le=1)
+    confidence_band: Literal["HIGH", "MEDIUM", "LOW"]
+    reasoning: str = ""
+    evidence: EvidenceSchema = Field(default_factory=EvidenceSchema)
+    requires_verification: bool = False
+
+
 class CriterionFindingsSchema(BaseModel):
     candidate_identifier: str
     rubric_version: str
-    findings: List[Dict[str, Any]]
+    findings: List[CriterionFindingSchema]
 
 
 class LLMClient:
@@ -204,7 +224,8 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         temperature: Optional[float] = None,
-        json_schema: Optional[Dict] = None
+        json_schema: Optional[Dict] = None,
+        metadata_out: dict[str, Any] | None = None
     ) -> Dict[str, Any]:
         """Make LLM API call with retry logic"""
         runtime = runtime_context.get()
@@ -250,6 +271,8 @@ class LLMClient:
             "temperature": temp,
             "response_format": {"type": "json_object"}
         }
+        if settings.LLM_SEED is not None:
+            payload["seed"] = settings.LLM_SEED
 
         headers = {
             "Content-Type": "application/json"
@@ -269,6 +292,11 @@ class LLMClient:
                 )
                 response.raise_for_status()
                 data = response.json()
+                if metadata_out is not None:
+                    metadata_out.update({
+                        "provider_returned_model": data.get("model"),
+                        "system_fingerprint": data.get("system_fingerprint"),
+                    })
 
                 content = data["choices"][0]["message"]["content"]
                 # Parse and validate JSON
@@ -304,10 +332,12 @@ RULES:
         user_prompt = json.dumps({"requisition_id": requisition_id, "job_title": redact_text(job_title),
                                   "untrusted_job_description": redact_text(jd_text)}, ensure_ascii=False)
 
+        metadata: dict[str, Any] = {}
         result = await self._call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            temperature=None  # Runtime default; extraction/matching remain deterministic.
+            temperature=0.0,
+            metadata_out=metadata,
         )
 
         # Validate against schema
@@ -317,6 +347,8 @@ RULES:
             logger.error("LLM criteria output failed schema validation")
             raise LLMError("Generated criteria failed validation")
 
+        result["_provider_metadata"] = metadata
+        result["_prompt_version"] = CRITERIA_PROMPT_VERSION
         return result
 
     async def extract_candidate_profile(self, cv_text: str, candidate_identifier: str) -> Dict[str, Any]:
@@ -335,10 +367,12 @@ STRICT PRIVACY & ANTI-BIAS RULES:
                                   "untrusted_redacted_cv": redact_text(cv_text, detect_first_line_name=True)},
                                  ensure_ascii=False)
 
+        metadata: dict[str, Any] = {}
         result = await self._call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            temperature=0.0  # Deterministic parsing
+            temperature=0.0,  # Deterministic parsing
+            metadata_out=metadata,
         )
 
         try:
@@ -349,6 +383,8 @@ STRICT PRIVACY & ANTI-BIAS RULES:
 
         result = redact_professional_profile(result)
         result["candidate_identifier"] = candidate_identifier
+        result["_provider_metadata"] = metadata
+        result["_prompt_version"] = PROFILE_PROMPT_VERSION
         return result
 
     async def match_criterion_evidence(
@@ -390,21 +426,29 @@ EVALUATION RULES:
                                   "untrusted_redacted_cv": redact_text(cv_text, detect_first_line_name=True)},
                                  ensure_ascii=False)
 
+        metadata: dict[str, Any] = {}
         result = await self._call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            temperature=0.0  # Fully deterministic matching
+            temperature=0.0,  # Fully deterministic matching
+            metadata_out=metadata,
         )
 
         try:
-            CriterionFindingsSchema.model_validate(result)
+            validated = CriterionFindingsSchema.model_validate(result)
         except ValidationError as e:
             logger.error("LLM criterion matching failed schema validation")
             raise LLMError("Matching results failed validation")
 
+        from app.services.matching import matching_engine
+
+        result = validated.model_dump()
+        result["findings"] = matching_engine.canonicalize_findings(rubric, result["findings"])
         result = redact_payload(result)
         result["candidate_identifier"] = candidate_identifier
         result["rubric_version"] = rubric_version
+        result["_provider_metadata"] = metadata
+        result["_prompt_version"] = MATCHING_PROMPT_VERSION
         return result
 
 

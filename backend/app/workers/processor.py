@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import re
+import hashlib
 from typing import Optional
 from uuid import UUID, uuid4
 from sqlalchemy import text
@@ -448,14 +449,24 @@ class ProcessingWorker:
                         )
                     )
 
+                    provider_metadata = candidate_profile.pop("_provider_metadata", {})
+                    profile_prompt_version = candidate_profile.pop(
+                        "_prompt_version", settings.PROFILE_PROMPT_VERSION)
+                    extraction_config = {
+                        "prompt_version": profile_prompt_version,
+                        "provider_metadata": provider_metadata,
+                        "cv_text_sha256": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
+                        "extractor": "llm-profile",
+                    }
                     # Create profile version
                     profile_ver_result = db.execute(text("""
                         INSERT INTO app_private.profile_versions
                         (application_id, source_document_id, version_number, extraction_config, status, created_at)
                         VALUES
-                        (:application_id, :document_id, 1, '{}'::jsonb, 'COMPLETED', NOW())
+                        (:application_id, :document_id, 1, CAST(:extraction_config AS jsonb), 'COMPLETED', NOW())
                         RETURNING profile_version_id
-                    """), {"application_id": application_id, "document_id": document_id})
+                    """), {"application_id": application_id, "document_id": document_id,
+                            "extraction_config": json.dumps(extraction_config)})
                     profile_version_id = profile_ver_result.fetchone()[0]
 
                     # Extract basic contact signals locally; never infer a name from the
@@ -646,11 +657,6 @@ class ProcessingWorker:
             WHERE a.position_id = :position_id AND d.document_type = 'CV'
               AND d.file_processing_status = 'COMPLETED'
               AND a.application_status IN ('NEW', 'IN_REVIEW', 'SHORTLIST')
-              AND NOT EXISTS (
-                  SELECT 1 FROM app_private.assessment_runs ar
-                  WHERE ar.application_id = a.application_id AND ar.criteria_version_id = :criteria_version_id
-                    AND ar.profile_version_id = profile.profile_version_id AND ar.status = 'COMPLETED'
-              )
             ORDER BY a.application_id, d.created_at DESC
         """), {"position_id": position_id, "criteria_version_id": criteria_version_id}).mappings().all()
         failed_count = 0
@@ -666,18 +672,6 @@ class ProcessingWorker:
                     # before both the AI call and exact-quote verification.
                     cv_text = redact_text(self._load_extracted_text(app["extracted_text_storage_path"]),
                                           detect_first_line_name=True)
-                    assessment_id = db.execute(text("""
-                        INSERT INTO app_private.assessment_runs
-                            (position_id, application_id, jd_version_id, criteria_version_id, profile_version_id,
-                             policy_version, operation_id, ai_config_id, status)
-                        VALUES (:position_id, :application_id, :jd_version_id, :criteria_version_id,
-                                :profile_version_id, 'v1.0', :operation_id, :ai_config_id, 'PROCESSING')
-                        RETURNING assessment_id
-                    """), {"position_id": position_id, "application_id": application_id,
-                            "jd_version_id": str(cv["jd_version_id"]), "criteria_version_id": criteria_version_id,
-                            "profile_version_id": str(app["profile_version_id"]), "operation_id": str(operation_id),
-                            "ai_config_id": (runtime_context.get() or {}).get("config_id")}).scalar_one()
-                    db.commit()
                     facts = db.execute(text("""
                         SELECT fact_type, fact_value FROM app_private.profile_facts
                         WHERE profile_version_id = :profile_version_id
@@ -692,15 +686,80 @@ class ProcessingWorker:
                         "languages": [f["fact_value"] for f in facts if f["fact_type"] == "LANGUAGE"],
                         "projects": [f["fact_value"] for f in facts if f["fact_type"] == "PROJECT"],
                     }
+                    runtime_public = runtime_snapshot(runtime_context.get() or {})
+                    fingerprint_payload = {
+                        "version": "assessment-fingerprint-v1",
+                        "application_id": application_id,
+                        "position_id": position_id,
+                        "jd_version_id": str(cv["jd_version_id"]),
+                        "criteria_version_id": criteria_version_id,
+                        "rubric": criteria_items,
+                        "profile_version_id": str(app["profile_version_id"]),
+                        "profile_facts": sorted(
+                            ({"fact_type": f["fact_type"], "fact_value": f["fact_value"]} for f in facts),
+                            key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False, default=str),
+                        ),
+                        "cv_text_sha256": hashlib.sha256(cv_text.encode("utf-8")).hexdigest(),
+                        "ai_runtime": runtime_public,
+                        "llm_seed": settings.LLM_SEED,
+                        "prompt_version": settings.MATCHING_PROMPT_VERSION,
+                        "matching_policy_version": matching_engine.POLICY_VERSION,
+                        "deterministic_rules_version": settings.DETERMINISTIC_RULES_VERSION,
+                    }
+                    assessment_fingerprint = hashlib.sha256(json.dumps(
+                        fingerprint_payload, sort_keys=True, ensure_ascii=False, default=str
+                    ).encode("utf-8")).hexdigest()
+                    existing_assessment = db.execute(text("""
+                        SELECT assessment_id FROM app_private.assessment_runs
+                        WHERE assessment_fingerprint = :fingerprint AND status = 'COMPLETED'
+                        LIMIT 1
+                    """), {"fingerprint": assessment_fingerprint}).scalar_one_or_none()
+                    if existing_assessment:
+                        continue
+                    provider_snapshot = {
+                        "runtime": runtime_public,
+                        "provider_returned_model": None,
+                        "system_fingerprint": None,
+                    }
+                    assessment_id = db.execute(text("""
+                        INSERT INTO app_private.assessment_runs
+                            (position_id, application_id, jd_version_id, criteria_version_id, profile_version_id,
+                             policy_version, operation_id, ai_config_id, status, assessment_fingerprint,
+                             matching_policy_version, prompt_version, provider_model_snapshot)
+                        VALUES (:position_id, :application_id, :jd_version_id, :criteria_version_id,
+                                :profile_version_id, :policy_version, :operation_id, :ai_config_id, 'PROCESSING',
+                                :fingerprint, :matching_policy_version, :prompt_version,
+                                CAST(:provider_snapshot AS jsonb))
+                        RETURNING assessment_id
+                    """), {"position_id": position_id, "application_id": application_id,
+                            "jd_version_id": str(cv["jd_version_id"]), "criteria_version_id": criteria_version_id,
+                            "profile_version_id": str(app["profile_version_id"]),
+                            "policy_version": settings.ASSESSMENT_POLICY_VERSION,
+                            "operation_id": str(operation_id),
+                            "ai_config_id": (runtime_context.get() or {}).get("config_id"),
+                            "fingerprint": assessment_fingerprint,
+                            "matching_policy_version": matching_engine.POLICY_VERSION,
+                            "prompt_version": settings.MATCHING_PROMPT_VERSION,
+                            "provider_snapshot": json.dumps(provider_snapshot)}).scalar_one()
+                    db.commit()
                     findings = loop.run_until_complete(llm_client.match_criterion_evidence(
                         cv_text=cv_text, candidate_profile=candidate_profile, rubric=criteria_items,
                         candidate_identifier=application_id, rubric_version=criteria_version_id))
+                    provider_metadata = findings.pop("_provider_metadata", {}) if isinstance(findings, dict) else {}
+                    prompt_version = findings.pop("_prompt_version", settings.MATCHING_PROMPT_VERSION) if isinstance(findings, dict) else settings.MATCHING_PROMPT_VERSION
+                    provider_snapshot.update(provider_metadata or {})
                     validated = []
-                    for finding in findings.get("findings", []):
+                    for finding in matching_engine.canonicalize_findings(
+                            criteria_items, findings.get("findings", []) if isinstance(findings, dict) else []):
                         evidence = finding.get("evidence") or {}
                         quote = evidence.get("verbatim_quote") or ""
-                        verified = bool(quote and matching_engine.verify_verbatim_quote(quote, cv_text))
+                        span = matching_engine.find_quote_span(quote, cv_text)
+                        verified = span is not None
                         finding["evidence_verified"] = verified
+                        if verified:
+                            quote = cv_text[span[0]:span[1]]
+                            evidence["verbatim_quote"] = quote
+                            evidence["position_in_text"] = span[0]
                         # Page numbers are verified against extracted page text;
                         # DOCX has no reliable page boundaries and remains unpaged.
                         pages = matching_engine.quote_pages(quote, cv_text) if verified else []
@@ -718,32 +777,44 @@ class ProcessingWorker:
                     db.execute(text("""
                         UPDATE app_private.assessment_runs
                         SET status = 'COMPLETED', matching_status = :matching_status, matching_score = :score,
-                            evidence_coverage = :coverage, completed_at = NOW()
+                            evidence_coverage = :coverage, completed_at = NOW(),
+                            prompt_version = :prompt_version,
+                            provider_model_snapshot = CAST(:provider_snapshot AS jsonb)
                         WHERE assessment_id = :assessment_id
                     """), {"assessment_id": assessment_id, "matching_status": match_status,
-                            "score": score, "coverage": coverage})
+                            "score": score, "coverage": coverage, "prompt_version": prompt_version,
+                            "provider_snapshot": json.dumps(provider_snapshot)})
                     for result in results:
                         result_id = db.execute(text("""
                             INSERT INTO app_private.criterion_assessment_results
                                 (assessment_id, criterion_id, outcome, score, confidence, confidence_band,
-                                 requires_hr_verification, reasoning)
+                                 requires_hr_verification, reasoning, decision_source, evidence_strength,
+                                 evidence_chunk_id, rule_version)
                             VALUES (:assessment_id, :criterion_id, :outcome, :score, :confidence, :confidence_band,
-                                    :requires_verification, :reasoning) RETURNING result_id
+                                    :requires_verification, :reasoning, :decision_source, :evidence_strength,
+                                    :evidence_chunk_id, :rule_version) RETURNING result_id
                         """), {"assessment_id": assessment_id, "criterion_id": result["criterion_id"],
                                 "outcome": result["outcome"],
-                                "score": matching_engine.SCORE_MAP.get(result["outcome"]),
+                                "score": result.get("score"),
                                 "confidence": result.get("confidence", 0),
                                 "confidence_band": result.get("confidence_band", "LOW"),
                                 "requires_verification": result.get("requires_verification", result["outcome"] == "UNCLEAR"),
-                                "reasoning": result.get("reasoning")}).scalar_one()
+                                "reasoning": result.get("reasoning"),
+                                "decision_source": result.get("decision_source") or "LLM",
+                                "evidence_strength": result.get("evidence_strength"),
+                                "evidence_chunk_id": result.get("evidence_chunk_id"),
+                                "rule_version": result.get("rule_version")}).scalar_one()
                         evidence = result.get("evidence") or {}
                         if evidence.get("verbatim_quote"):
                             db.execute(text("""
                                 INSERT INTO app_private.evidence_items
-                                    (criterion_result_id, source_document_id, verbatim_quote, page_number, verification_status)
-                                VALUES (:result_id, :document_id, :quote, :page_number, :verification_status)
+                                    (criterion_result_id, source_document_id, verbatim_quote, page_number,
+                                     position_in_text, verification_status)
+                                VALUES (:result_id, :document_id, :quote, :page_number, :position_in_text,
+                                        :verification_status)
                             """), {"result_id": result_id, "document_id": document_id,
                                     "quote": evidence["verbatim_quote"], "page_number": evidence.get("page_number"),
+                                    "position_in_text": evidence.get("position_in_text"),
                                     "verification_status": "VERIFIED" if result.get("evidence_verified") else "FAILED"})
                     db.commit()
                 except LostOwnership:
