@@ -148,7 +148,7 @@ jobs:
           done
 
       - name: Run backend tests against disposable database
-        run: python -m pytest backend/tests -q --junitxml=integration-results.xml
+        run: python -m pytest backend/tests -q --junitxml=integration-results.xml -o junit_logging=all
 
       - name: Upload integration test report
         if: always()
@@ -172,18 +172,24 @@ jobs:
           def escape(value: str) -> str:
               return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
+          root = ET.parse(report).getroot()
           failures = []
-          for testcase in ET.parse(report).getroot().iter("testcase"):
+          for testcase in root.iter("testcase"):
               for tag in ("failure", "error"):
                   node = testcase.find(tag)
                   if node is not None:
                       failures.append((testcase, node))
 
+          global_captured = "\n".join(filter(None, [
+              *(node.text for node in root.iter("system-out")),
+              *(node.text for node in root.iter("system-err")),
+          ]))
           for testcase, node in failures[:10]:
               title = f"{testcase.get('classname')}::{testcase.get('name')}"
               captured = "\n".join(filter(None, [
                   testcase.findtext("system-out"),
                   testcase.findtext("system-err"),
+                  global_captured,
               ]))
               detail = ((node.get("message") or "") + "\n" + (node.text or "") + "\nCAPTURED:\n" + captured)[-6000:]
               print(f"::error title=Integration failure::{escape(title + chr(10) + detail)}")
