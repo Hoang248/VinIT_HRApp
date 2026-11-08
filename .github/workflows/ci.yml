@@ -5,7 +5,14 @@ on:
     branches:
       - main
       - "arena/**"
+    # Documentation-only pushes do not change runtime behaviour. Mixed
+    # pushes still run CI because GitHub only skips when every changed
+    # file matches paths-ignore.
+    paths-ignore:
+      - "**.md"
   pull_request:
+    paths-ignore:
+      - "**.md"
 
 permissions:
   contents: read

@@ -26,6 +26,7 @@
 | 5.1 | Chuẩn bị thực thi gate staging: bộ dữ liệu tổng hợp + checklist E2E chi tiết | ĐÃ CHUẨN BỊ — CHƯA CHẠY E2E THẬT | Commit `90dd4b2`; GitHub Actions run `42382329761` đạt cả 3 job; chờ DevOps/HR chạy trên staging |
 | 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
 | 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Commit `c862700`; GitHub Actions run `42385930996` đạt cả 3 job; DEP-01 đang bị chặn bởi mapping môi trường staging |
+| 5.4 | Chẩn đoán thông báo CI cũ và giảm nhiễu cho thay đổi chỉ gồm Markdown | ĐÃ XỬ LÝ | Run lỗi `42379094324` thuộc commit cũ `479e391`; nguyên nhân đã sửa ở `3105045`; CI tại HEAD `072c7e2` đạt cả 3 job |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -294,6 +295,17 @@
 
 - **BLOCKER DEP-01/DEP-03:** chưa có thông tin staging/connected runtime gồm URL, Supabase project của staging, backend/frontend commit đang chạy, worker topology, chủ trì và cửa sổ triển khai. Không được mặc định project đã kết nối là staging.
 - Chưa thực thi DEP-01/DEP-02 trên staging; do đó Phase 1 vẫn chưa đóng và Phase 2 vẫn chỉ ở mức plan, chưa triển khai code.
+
+### Batch 5.4 — Chẩn đoán thông báo CI cũ và giảm nhiễu CI
+
+#### Trạng thái: ĐÃ XỬ LÝ — LỖI TRONG EMAIL LÀ RUN CŨ, KHÔNG PHẢI HEAD HIỆN TẠI
+
+- Email báo run `42379094324` thất bại thuộc commit cũ `479e391` (`ci: trích đoạn chẩn đoán lỗi worker`, 2026-11-07 13:54 UTC), trước commit sửa lỗi.
+- Job Backend integration thất bại ở 6 test worker. Annotations cho thấy `IntegrityError` khi worker ghi assessment; nguyên nhân gốc là test harness reset database làm mất policy `assessment-v2.0` nhưng chỉ khôi phục policy cũ `v1.0`.
+- Đã sửa ở commit `3105045` (`test: khôi phục assessment policy sau reset database`). GitHub Actions run `42379643837` tại commit sửa lỗi đã đạt cả 3 job.
+- Các run từ `9cf1d43` về sau đều đạt; tại HEAD `072c7e2`, GitHub Actions run `42386051678` đạt cả Backend unit tests, Frontend checks và Backend integration.
+- Nguyên nhân cảm giác “báo lỗi liên tục”: nhiều commit chẩn đoán được push liên tiếp trong khoảng 13:43–13:54 UTC trước khi sửa, mỗi run lỗi tạo một thông báo riêng; một số email đến/trưng bày sau khi code đã được sửa.
+- `.github/workflows/ci.yml` đã bổ sung `paths-ignore: ["**.md"]` cho push/pull request để thay đổi chỉ gồm tài liệu Markdown không chạy toàn bộ CI. Push hỗn hợp có code/migration/frontend/staging vẫn chạy CI như trước.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 
