@@ -306,6 +306,7 @@
 - Các run từ `9cf1d43` về sau đều đạt; tại HEAD `072c7e2`, GitHub Actions run `42386051678` đạt cả Backend unit tests, Frontend checks và Backend integration.
 - Nguyên nhân cảm giác “báo lỗi liên tục”: nhiều commit chẩn đoán được push liên tiếp trong khoảng 13:43–13:54 UTC trước khi sửa, mỗi run lỗi tạo một thông báo riêng; một số email đến/trưng bày sau khi code đã được sửa.
 - `.github/workflows/ci.yml` đã bổ sung `paths-ignore: ["**.md"]` cho push/pull request để thay đổi chỉ gồm tài liệu Markdown không chạy toàn bộ CI. Push hỗn hợp có code/migration/frontend/staging vẫn chạy CI như trước.
+- Commit `e49c346` đã push; GitHub Actions run `42454397160` đạt cả Backend unit tests, Frontend checks và Backend integration. URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42454397160
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 
