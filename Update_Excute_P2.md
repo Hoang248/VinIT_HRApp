@@ -16,6 +16,7 @@
 | P2-2 | Lập plan triển khai chi tiết batch đầu | HOÀN THÀNH — CHỜ DUYỆT PLAN | `doc/PHASE2_IMPLEMENTATION_PLAN.md` |
 | P2-2.1 | Chốt quyết định nghiệp vụ D-01…D-10 trong plan batch đầu | CHỜ HR/HR LEAD DUYỆT | Mục 3 của plan chi tiết |
 | P2-3 | Triển khai/test/CI batch Workflow Core | CHƯA BẮT ĐẦU | Chỉ thực hiện sau khi plan và D-01…D-10 được duyệt |
+| UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH — CHỜ DUYỆT, CHƯA CODE | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -86,6 +87,13 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 - Chưa thay đổi code tính năng, schema/migration, API hoặc frontend; triển khai chỉ bắt đầu sau khi plan và D-01…D-10 được duyệt.
 - Commit plan: `ffc8043` (`docs: lập plan batch đầu Phase 2`), đã push lên `arena/ea6e2570-vinit-hrapp`.
 
+### 3.8. Plan UI/UX bổ sung — Recruitment Workspace
+
+- Đã tạo `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` để đánh giá và lập lộ trình cho đề xuất UI/UX ngày 2026-11-08.
+- Quyết định trong plan: ưu tiên Position Workspace + Workflow Stepper/Next Best Action, My Work Queue, Applicant Review theo hàng đợi và nâng cấp Candidate Review; CV Intake làm panel trong Position Workspace; Global Search, PDF text highlight và overall confidence để backlog/không làm cho tới khi có contract phù hợp.
+- Plan khóa UX-0 contract/baseline trước UX-1…UX-4, nêu API work-queue/workspace, queue model, file dự kiến, kiểm thử, usability và gate triển khai.
+- Chưa thay đổi code frontend/backend, schema/migration hoặc API. Triển khai UX-1 trở đi chờ duyệt plan và vẫn phụ thuộc DEP-01 đạt hoặc có chấp nhận rủi ro bằng văn bản theo quyết định hiện hành.
+
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 
 ### 4.1. Quyết định phạm vi đã chốt ngày 2026-11-07
@@ -125,6 +133,7 @@ Các quyết định D-01…D-10 tại Mục 3 của `doc/PHASE2_IMPLEMENTATION_
 | P2-B06 | SSO | TẠM TREO | Chỉ mở lại khi người dùng yêu cầu |
 | P2-B07 | F2.07 Retention automation | LOẠI KHỎI VÒNG NÀY | Chỉ xét lại khi có quyết định mới; quyết định Legal về hold/OTP/chữ ký vẫn cần nếu mở lại |
 | P2-B08 | Candidate Rediscovery | ĐỂ CUỐI PHASE 2 | Chỉ lập plan sau khi chốt consent, retention và quyền tái sử dụng CV |
+| P2-B09 | Triển khai UI/UX Recruitment Workspace | CHỜ DUYỆT PLAN + GATE TRIỂN KHAI | Duyệt `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` và UX-D01…UX-D07; UX-1 trở đi cần DEP-01 đạt hoặc chấp nhận rủi ro bằng văn bản |
 
 ## 6. Quy ước cập nhật file này
 
