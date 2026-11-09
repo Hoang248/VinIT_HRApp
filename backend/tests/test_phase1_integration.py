@@ -98,6 +98,32 @@ def test_position_scope_and_dashboard_counts(client, seed):
     assert r.status_code == 403
 
 
+def test_workspace_and_work_queue_are_position_scoped(client, seed):
+    workspace = client.get(f"/v1/positions/{seed['pos']}/workspace", headers=headers(seed["hr"]))
+    assert workspace.status_code == 200, workspace.text
+    body = workspace.json()
+    assert body["viewer"]["is_hr"] is True
+    assert body["criteria"]["current_status"] == "DRAFT"
+    assert body["counts"]["total"] == 1
+    assert body["counts"]["not_assessed"] == 1
+    assert body["workflow"]["next_action"]["code"] == "REVIEW_CRITERIA_HR"
+
+    queue = client.get("/v1/dashboard/work-queue", headers=headers(seed["hr"]))
+    assert queue.status_code == 200, queue.text
+    items = queue.json()["items"]
+    assert [(item["type"], item["position_id"]) for item in items] == [("CRITERIA_PENDING_HR", seed["pos"])]
+    assert queue.json()["summary"]["criteria_pending_action"] == 1
+
+    hm_queue = client.get("/v1/dashboard/work-queue", headers=headers(seed["hm"]))
+    assert hm_queue.status_code == 200, hm_queue.text
+    assert hm_queue.json()["items"] == []
+    assert hm_queue.json()["summary"]["files_needing_review"] == 0
+
+    assert client.get(f"/v1/positions/{seed['pos']}/workspace", headers=headers(seed["other"])).status_code == 403
+    other_queue = client.get("/v1/dashboard/work-queue", headers=headers(seed["other"]))
+    assert other_queue.status_code == 200 and other_queue.json()["items"] == []
+
+
 def test_dual_approval_changes_and_immutable_approved_rubric(client, seed):
     base = f"/v1/criteria/{seed['cv']}"
     decision = lambda user, action, comment=None: client.post(base + "/approve", headers=headers(seed[user]), json={"action": action, "comment": comment})

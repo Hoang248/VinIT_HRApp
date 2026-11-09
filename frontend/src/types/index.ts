@@ -45,6 +45,109 @@ export interface Position {
   criteria_approved?: boolean;
 }
 
+export type WorkQueueItemType =
+  | 'POSITION_SETUP'
+  | 'CRITERIA_PENDING_HR'
+  | 'CRITERIA_PENDING_HM'
+  | 'FILE_REVIEW'
+  | 'PROCESSING'
+  | 'NEEDS_VERIFICATION'
+  | 'DUPLICATE_PENDING'
+  | 'POSSIBLE_MISMATCH'
+  | 'NOT_ASSESSED'
+  | 'SHARE_WITHOUT_FEEDBACK';
+
+export interface WorkQueueItem {
+  item_id: string;
+  type: WorkQueueItemType;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  position_id: string;
+  position_code?: string;
+  position_title?: string;
+  position_status?: string;
+  count: number;
+  target: { pathname: string; search?: string };
+}
+
+export interface WorkQueueResponse {
+  generated_at: string;
+  summary: {
+    positions_needing_attention: number;
+    files_needing_review: number;
+    applications_needing_verification: number;
+    duplicate_alerts: number;
+    criteria_pending_action: number;
+    shares_without_feedback: number;
+  };
+  items: WorkQueueItem[];
+}
+
+export type WorkflowStepCode = 'JD' | 'CRITERIA' | 'CV_INTAKE' | 'HR_REVIEW' | 'SHORTLIST';
+export type WorkflowStepStatus = 'COMPLETED' | 'CURRENT' | 'NOT_STARTED' | 'BLOCKED';
+
+export interface PositionWorkspace {
+  position: {
+    position_id: string;
+    position_code?: string;
+    title?: string;
+    status?: string;
+    department_name?: string;
+  };
+  jd: { latest_version_id: string | null; version_number?: number | null };
+  criteria: {
+    current_version_id: string | null;
+    current_status: string | null;
+    version_number?: number | null;
+    approved_for_latest_jd: boolean;
+    is_stale_for_latest_jd: boolean;
+  };
+  counts: {
+    total: number;
+    assessed: number;
+    processing: number;
+    file_review: number;
+    not_assessed: number;
+    needs_verification: number;
+    possible_mismatch: number;
+    meets_mandatory: number;
+    duplicate_pending: number;
+    shortlisted: number;
+  };
+  active_operation: { operation_id: string; status?: string; stage?: string } | null;
+  workflow: {
+    current_step: WorkflowStepCode;
+    steps: Array<{ code: WorkflowStepCode; status: WorkflowStepStatus }>;
+    next_action: {
+      code: string;
+      blocked_reason_code: string | null;
+      target: { pathname: string; search?: string };
+    };
+  };
+  viewer: {
+    is_hr: boolean;
+    is_hm: boolean;
+    position_roles: string[];
+    system_roles: string[];
+  };
+}
+
+export interface OperationProgress {
+  total: number;
+  processed: number;
+  failed: number;
+  percent_complete: number;
+  invalid_files?: Array<{ original_filename: string; error_code?: string }>;
+}
+
+export interface OperationStatus {
+  operation_id: string;
+  status?: string;
+  stage?: string;
+  capability?: string;
+  progress?: OperationProgress;
+  error_message?: string;
+}
+
 export interface RequirementSpec {
   kind: 'SKILL' | 'YEARS' | 'DEGREE' | 'CERTIFICATION' | 'LANGUAGE';
   terms: string[];
@@ -112,6 +215,7 @@ export interface RankingItem {
   has_duplicate_warning?: boolean;
   is_shortlisted?: boolean;
   application_status?: string;
+  created_at?: string;
 }
 
 export interface UserSummary {

@@ -14,13 +14,24 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 const DRAWER_WIDTH = 260;
-const menuItems = [
-  { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
-  { text: 'Shortlist chia sẻ', icon: <PeopleIcon />, href: '/shortlist' },
-  { text: 'Bảng điều khiển', icon: <BarChartIcon />, href: '/dashboard' },
-  { text: 'Quản trị AI', icon: <SettingsIcon />, href: '/admin', adminOnly: true },
-  { text: 'Quản lý tài khoản', icon: <ManageAccountsIcon />, href: '/admin/users', adminOnly: true },
-  { text: 'Quản lý phòng ban', icon: <ApartmentIcon />, href: '/admin/departments', adminOnly: true },
+const menuGroups = [
+  {
+    label: 'Công việc tuyển dụng',
+    items: [
+      { text: 'Tổng quan công việc', icon: <BarChartIcon />, href: '/dashboard' },
+      { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
+      { text: 'Shortlist & phản hồi', icon: <PeopleIcon />, href: '/shortlist' },
+    ],
+  },
+  {
+    label: 'Quản trị',
+    adminOnly: true,
+    items: [
+      { text: 'Quản trị AI', icon: <SettingsIcon />, href: '/admin' },
+      { text: 'Quản lý tài khoản', icon: <ManageAccountsIcon />, href: '/admin/users' },
+      { text: 'Quản lý phòng ban', icon: <ApartmentIcon />, href: '/admin/departments' },
+    ],
+  },
 ];
 
 export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean }) {
@@ -36,17 +47,27 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: 
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.12)' }} />
       <List sx={{ pt: 2 }} component="nav" aria-label={t("Điều hướng chính")}>
-        {menuItems.filter(item => !('adminOnly' in item) || isAdmin).map(item => (
-          <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
-            <ListItemButton component={Link} href={item.href} onClick={onClose} selected={item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href)}
-              aria-current={(item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href)) ? 'page' : undefined}
-              sx={{ mx: 1, borderRadius: 2, minHeight: 46, transition: 'background-color .18s ease',
-                '&.Mui-selected': { backgroundColor: '#941616', '&:hover': { backgroundColor: '#7a1212' }, '& .MuiListItemIcon-root': { color: 'white' } },
-                '&:hover': { backgroundColor: 'rgba(255,255,255,.08)' } }}>
-              <ListItemIcon sx={{ color: 'rgba(255,255,255,.75)', minWidth: 40 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={t(item.text)} primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }} />
-            </ListItemButton>
-          </ListItem>
+        {menuGroups.filter(group => !group.adminOnly || isAdmin).map(group => (
+          <React.Fragment key={group.label}>
+            <Typography variant="overline" sx={{ display: 'block', px: 3, pt: 1.5, pb: 0.75, color: 'rgba(255,255,255,.62)', fontSize: 10 }}>
+              {t(group.label)}
+            </Typography>
+            {group.items.map(item => {
+              const selected = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+              return (
+                <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
+                  <ListItemButton component={Link} href={item.href} onClick={onClose} selected={selected}
+                    aria-current={selected ? 'page' : undefined}
+                    sx={{ mx: 1, borderRadius: 2, minHeight: 46, transition: 'background-color .18s ease',
+                      '&.Mui-selected': { backgroundColor: '#941616', '&:hover': { backgroundColor: '#7a1212' }, '& .MuiListItemIcon-root': { color: 'white' } },
+                      '&:hover': { backgroundColor: 'rgba(255,255,255,.08)' } }}>
+                    <ListItemIcon sx={{ color: 'rgba(255,255,255,.75)', minWidth: 40 }}>{item.icon}</ListItemIcon>
+                    <ListItemText primary={t(item.text)} primaryTypographyProps={{ fontSize: 14, fontWeight: 500 }} />
+                  </ListItemButton>
+                </ListItem>
+              );
+            })}
+          </React.Fragment>
         ))}
       </List>
       <Box sx={{ flexGrow: 1 }} />

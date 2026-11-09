@@ -3,9 +3,19 @@
 > Ngày lập plan: 2026-11-08  
 > Branch: `arena/ea6e2570-vinit-hrapp`  
 > Mốc rà soát: `1d03ff4` (sau commit CI `e49c346` được GPT đối chiếu)  
-> Trạng thái: **PLAN — CHỜ DUYỆT, CHƯA TRIỂN KHAI CODE**  
+> Trạng thái: **ĐÃ TRIỂN KHAI UX-0…UX-4 Ở CODE — CHỜ STAGING/USABILITY GATE**
 > Nguồn đề xuất: Review UI/UX Frontend của GPT ngày 2026-11-08.  
 > Phạm vi: tổ chức lại trải nghiệm làm việc của HR/HM trên nền frontend/API hiện tại. Không thay đổi matching engine, BGE, LTR, tiêu chí phê duyệt hoặc quyền quyết định nghiệp vụ.
+
+## 0. Trạng thái triển khai
+
+- **UX-0:** đã khóa contract qua `backend/app/services/workspace.py`, `GET /v1/dashboard/work-queue` và `GET /v1/positions/{position_id}/workspace`; có unit test và integration test theo RBAC/scope.
+- **UX-1:** đã triển khai My Work Queue trên `/dashboard`, Position Summary, Workflow Stepper và Next Best Action trên `/positions/[id]`; Sidebar được phân nhóm và Header dùng profile từ AppLayout.
+- **UX-2:** đã triển khai Applicant Review queue chips/sort/URL state/sticky table/bulk share bar, Candidate Review sticky bar, prev/next theo hàng đợi, EvidenceCard và CVDocumentViewer.
+- **UX-3:** đã triển khai CV Intake Panel trong Position Workspace và OperationProgressPanel dùng chung; không có retry từng file vì backend chưa có contract retry.
+- **UX-4:** đã bổ sung PageHeader, EmptyState, StickyActionBar, i18n cho nhãn mới và kiểm tra lint/type-check/build.
+- **UX-5:** chưa triển khai Global Search, PDF text highlight, server-side pagination, retry file hoặc overall confidence; các hạng mục này vẫn cần contract/đánh giá riêng.
+- **Gate còn lại:** chưa chạy usability test HR/HM trên staging và chưa đóng DEP-01; không dùng dữ liệu thật cho kiểm thử khi chưa có phê duyệt.
 
 ## 1. Kết luận tiếp nhận đề xuất
 

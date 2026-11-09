@@ -2,7 +2,7 @@
 
 > File này ghi lại quá trình rà soát, lập plan và triển khai Phase 2 theo quy ước giống `Update_Excute_P1.md`: trạng thái tổng quan, thay đổi file/code/migration, test đã chạy và kết quả, commit hash sau khi push, blocker và điều kiện mở khóa.
 >
-> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng Phase 2; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt.**
+> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng nghiệp vụ Phase 2 F2.01/F2.02; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt. Lộ trình UI/UX Recruitment Workspace UX-0…UX-4 đã được triển khai ở code và kiểm chứng tự động; usability/staging vẫn là gate riêng.**
 >
 > **F2.08 SSO: TẠM TREO** theo quyết định của người dùng; không đưa vào plan ở vòng này.
 
@@ -16,7 +16,8 @@
 | P2-2 | Lập plan triển khai chi tiết batch đầu | HOÀN THÀNH — CHỜ DUYỆT PLAN | `doc/PHASE2_IMPLEMENTATION_PLAN.md` |
 | P2-2.1 | Chốt quyết định nghiệp vụ D-01…D-10 trong plan batch đầu | CHỜ HR/HR LEAD DUYỆT | Mục 3 của plan chi tiết |
 | P2-3 | Triển khai/test/CI batch Workflow Core | CHƯA BẮT ĐẦU | Chỉ thực hiện sau khi plan và D-01…D-10 được duyệt |
-| UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH — CHỜ DUYỆT, CHƯA CODE | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
+| UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
+| UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -94,6 +95,16 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 - Plan khóa UX-0 contract/baseline trước UX-1…UX-4, nêu API work-queue/workspace, queue model, file dự kiến, kiểm thử, usability và gate triển khai.
 - Chưa thay đổi code frontend/backend, schema/migration hoặc API. Triển khai UX-1 trở đi chờ duyệt plan và vẫn phụ thuộc DEP-01 đạt hoặc có chấp nhận rủi ro bằng văn bản theo quyết định hiện hành.
 
+### 3.9. Triển khai UI/UX Recruitment Workspace — UX-0…UX-4
+
+- Người dùng đã yêu cầu triển khai code UI/UX theo lộ trình; batch này không triển khai nghiệp vụ Phase 2 F2.01/F2.02, không thay schema/migration và không thay matching/BGE/LTR.
+- Backend: tạo `backend/app/services/workspace.py`; bổ sung `GET /v1/dashboard/work-queue` trong `backend/app/api/dashboard.py` và `GET /v1/positions/{position_id}/workspace` trong `backend/app/api/positions.py`. Workflow/next-action/queue dùng cùng helper, scope theo assignment/share như dashboard; HR mới nhận việc rà soát hồ sơ, HM không nhận việc HR và summary không cộng chỉ số HR cho HM.
+- Frontend: Dashboard thành Tổng quan công việc + My Work Queue; Position Workspace có summary/stepper/next-action và CV Intake Panel; Applicants có queue chips, sort, URL state, sticky table và bulk share bar; Candidate Review có sticky bar, prev/next theo hàng đợi, EvidenceCard/CVDocumentViewer; Sidebar/Header/AppLayout được phân nhóm và bỏ lần gọi profile trùng.
+- UX-5 vẫn chưa làm: Global Search, highlight chữ trong PDF, server-side pagination, retry từng file và overall confidence.
+- Kiểm chứng đã chạy: backend unit/integration-selected `5 passed, 50 skipped` cho workspace + integration file ở môi trường không có `TEST_DATABASE_URL`; backend full `103 passed, 64 skipped`; Ruff phạm vi mới đạt. Frontend `test:unit` 3 passed, `test:i18n` 3 passed, `type-check`, `lint` và `build` đạt.
+- Chưa chạy synthetic UI E2E vì cần backend testing + DB tổng hợp dùng một lần theo guard của test; chỉ cập nhật kỳ vọng link Sidebar từ `Dashboard` sang `Work overview`. Chưa chạy usability HR/HM trên staging.
+- Commit triển khai: sẽ ghi sau khi push ở mục cập nhật tiếp theo.
+
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 
 ### 4.1. Quyết định phạm vi đã chốt ngày 2026-11-07
@@ -133,7 +144,7 @@ Các quyết định D-01…D-10 tại Mục 3 của `doc/PHASE2_IMPLEMENTATION_
 | P2-B06 | SSO | TẠM TREO | Chỉ mở lại khi người dùng yêu cầu |
 | P2-B07 | F2.07 Retention automation | LOẠI KHỎI VÒNG NÀY | Chỉ xét lại khi có quyết định mới; quyết định Legal về hold/OTP/chữ ký vẫn cần nếu mở lại |
 | P2-B08 | Candidate Rediscovery | ĐỂ CUỐI PHASE 2 | Chỉ lập plan sau khi chốt consent, retention và quyền tái sử dụng CV |
-| P2-B09 | Triển khai UI/UX Recruitment Workspace | CHỜ DUYỆT PLAN + GATE TRIỂN KHAI | Duyệt `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` và UX-D01…UX-D07; UX-1 trở đi cần DEP-01 đạt hoặc chấp nhận rủi ro bằng văn bản |
+| P2-B09 | Triển khai UI/UX Recruitment Workspace | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Đẩy commit và theo dõi CI; usability HR/HM chỉ thực hiện trên staging với dữ liệu tổng hợp sau khi DEP-01/điều kiện dữ liệu cho phép. UX-5 cần contract/đánh giá riêng |
 
 ## 6. Quy ước cập nhật file này
 

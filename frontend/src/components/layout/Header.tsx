@@ -4,22 +4,24 @@ import { useI18n } from '@/i18n/I18nProvider';
 import LanguageSwitcher from '@/i18n/LanguageSwitcher';
 
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppBar, Avatar, Box, Divider, IconButton, Menu, MenuItem, Toolbar, Tooltip, Typography } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useRouter } from 'next/navigation';
-import { authApi } from '@/lib/api';
 import { DRAWER_WIDTH } from './Sidebar';
 
 const APPBAR_HEIGHT = 64;
 
-export default function Header({ onOpenMenu }: { onOpenMenu: () => void }) {
+interface HeaderProps {
+  onOpenMenu: () => void;
+  profile?: { display_name?: string; email?: string } | null;
+}
+
+export default function Header({ onOpenMenu, profile }: HeaderProps) {
   const { t } = useI18n();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const [profile, setProfile] = useState<{ display_name?: string; email?: string } | null>(null);
   const router = useRouter();
-  useEffect(() => { authApi.me().then(res => setProfile(res.data)).catch(() => {}); }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('hra_access_token');

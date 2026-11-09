@@ -17,6 +17,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [systemRoles, setSystemRoles] = useState<string[]>([]);
+  const [profile, setProfile] = useState<{ display_name?: string; email?: string } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -33,7 +34,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         if (active && response.data.must_change_password) {
           setAuthenticated(false); router.replace('/change-password'); return;
         }
-        if (active) { setSystemRoles(response.data.system_roles || []); setAuthenticated(true); setAuthError(null); }
+        if (active) { setProfile(response.data); setSystemRoles(response.data.system_roles || []); setAuthenticated(true); setAuthError(null); }
       } catch (err: any) {
         if (active && err.response?.status !== 401) {
           setAuthenticated(false);
@@ -65,7 +66,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} isAdmin={systemRoles.includes('ADMIN')} />
-      <Header onOpenMenu={() => setMobileOpen(true)} />
+      <Header onOpenMenu={() => setMobileOpen(true)} profile={profile} />
       <Box component="main" sx={{ flexGrow: 1, minWidth: 0, backgroundColor: '#F8FAFC', minHeight: '100vh' }}>
         <Box sx={{ mt: `${APPBAR_HEIGHT}px`, p: { xs: 2, sm: 3, lg: 4 } }}>{children}</Box>
       </Box>

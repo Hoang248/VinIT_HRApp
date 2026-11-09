@@ -63,6 +63,7 @@ export const positionsApi = {
   },
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
+  getWorkspace: (id: string) => apiClient.get(`/positions/${id}/workspace`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
   getJdVersions: (id: string) => apiClient.get(`/positions/${id}/jd-versions`),
   createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
@@ -165,6 +166,7 @@ export const shortlistApi = {
 
 export const dashboardApi = {
   getSummary: () => apiClient.get('/dashboard/summary'),
+  getWorkQueue: () => apiClient.get('/dashboard/work-queue'),
   getPosition: (id: string) => apiClient.get(`/dashboard/position/${id}`),
 };
 

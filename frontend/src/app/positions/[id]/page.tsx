@@ -26,7 +26,6 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  LinearProgress,
   FormControl,
   InputLabel,
   MenuItem,
@@ -39,11 +38,17 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { positionsApi, criteriaApi, applicationsApi, operationsApi, authApi, dashboardApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import type { Position, CriteriaVersion, Criterion, JDVersion, RequirementSpec } from '@/types';
+import WorkflowStepper from '@/components/workflow/WorkflowStepper';
+import NextActionCard from '@/components/workflow/NextActionCard';
+import PositionSummary from '@/components/workflow/PositionSummary';
+import OperationProgressPanel from '@/components/workflow/OperationProgressPanel';
+import CVIntakePanel from '@/components/positions/CVIntakePanel';
+import { validateIntakeFiles } from '@/lib/intake';
+import type { Position, CriteriaVersion, Criterion, JDVersion, RequirementSpec, PositionWorkspace } from '@/types';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -81,6 +86,7 @@ function requirementSpecSummary(criterion: Criterion, t: (text: string) => strin
 export default function PositionDetailPage() {
   const { t, dateLocale, locale } = useI18n();
   const params = useParams();
+  const router = useRouter();
   const positionId = params.id as string;
 
   const [position, setPosition] = useState<Position | null>(null);
@@ -98,7 +104,7 @@ export default function PositionDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [workspace, setWorkspace] = useState<PositionWorkspace | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [operationStatus, setOperationStatus] = useState<any>(null);
@@ -154,6 +160,13 @@ export default function PositionDetailPage() {
         catch { setApprovalHistory([]); }
       } else setApprovalHistory([]);
       setError(null);
+      try {
+        const workspaceRes = await positionsApi.getWorkspace(positionId);
+        setWorkspace(workspaceRes.data);
+        if (initial && workspaceRes.data.active_operation) {
+          setOperationStatus((previous: any) => previous || { operation_id: workspaceRes.data.active_operation.operation_id, status: workspaceRes.data.active_operation.status, stage: workspaceRes.data.active_operation.stage, capability: workspaceRes.data.active_operation.stage });
+        }
+      } catch { setWorkspace(null); }
       const myRoles = meRes.data.position_assignments?.filter((p: any) => p.position_id === positionId).map((p: any) => p.position_role) || [];
       const hr = myRoles.includes('HR_RECRUITER') || myRoles.includes('HR_LEAD') || meRes.data.system_roles?.some((r: string) => r === 'ADMIN' || r === 'HR_LEAD');
       // Show workflow statistics only to HR; an HM uses the shared shortlist.
@@ -175,6 +188,17 @@ export default function PositionDetailPage() {
   }, [positionId, updateCounts, t]);
 
   useEffect(() => { loadData(true); }, [loadData]);
+
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    const tab = search.get('tab');
+    const tabIndex = { criteria: 0, applications: 1, shortlist: 2, jd: 3 }[tab || ''];
+    if (tabIndex != null) setActiveTab(tabIndex);
+    if (search.get('intake') === '1') {
+      const timer = window.setTimeout(() => document.getElementById('cv-intake')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
+      return () => window.clearTimeout(timer);
+    }
+  }, []);
 
   const isOperationRunning = !!operationStatus && !['COMPLETED', 'FAILED'].includes(operationStatus.status);
   const operationId = isOperationRunning ? operationStatus.operation_id : null;
@@ -296,16 +320,21 @@ export default function PositionDetailPage() {
   const isHM = myPositionRoles.has('HIRING_MANAGER');
   const isSameApprover = !!currentCriteria?.approved_by_hr && currentCriteria.approved_by_hr === me?.user_id;
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const handleFilesSelected = (files: File[]) => {
     setSelectedFiles(files);
-    const total = files.reduce((sum, file) => sum + file.size, 0);
-    if (files.length > 50) setUploadError(t("Mỗi lô tối đa 50 tệp."));
-    else if (files.some(file => file.size > 10_000_000 || file.size === 0)) setUploadError(t("Mỗi tệp phải có dung lượng từ 1 byte đến 10 MB."));
-    else if (total > 250_000_000) setUploadError(t("Tổng dung lượng lô không được vượt quá 250 MB."));
-    else if (files.some(file => !/\.(pdf|docx)$/i.test(file.name))) setUploadError(t("Chỉ hỗ trợ tệp PDF hoặc DOCX."));
-    else setUploadError(null);
+    setUploadError(validateIntakeFiles(files).batchError);
   };
+
+  const handleRemoveFile = (index: number) => {
+    const next = selectedFiles.filter((_, itemIndex) => itemIndex !== index);
+    setSelectedFiles(next);
+    setUploadError(validateIntakeFiles(next).batchError);
+  };
+
+  const scrollToIntake = useCallback(() => {
+    setActiveTab(1);
+    window.setTimeout(() => document.getElementById('cv-intake')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }, []);
 
   const handleUpload = async () => {
     if (!selectedFiles.length || uploadError) return;
@@ -313,11 +342,31 @@ export default function PositionDetailPage() {
       setUploading(true); setUploadProgress(0); setUploadError(null);
       const res = await applicationsApi.uploadBatch(positionId, selectedFiles, setUploadProgress);
       setOperationStatus({ operation_id: res.data.operation_id, status: 'PENDING', capability: 'CV_PROCESSING' });
-      setUploadOpen(false); setSelectedFiles([]);
+      setSelectedFiles([]);
       await updateCounts();
     } catch (err: any) {
       setUploadError(err.response?.data?.detail || t("Tải lên không thành công"));
     } finally { setUploading(false); }
+  };
+
+  const handleNextAction = (action: PositionWorkspace['workflow']['next_action']) => {
+    if (action.code === 'GENERATE_CRITERIA' || action.code === 'REGENERATE_CRITERIA') {
+      void handleGenerateCriteria();
+      return;
+    }
+    if (action.code === 'UPLOAD_CV') {
+      scrollToIntake();
+      return;
+    }
+    const href = `${action.target.pathname}${action.target.search ? `?${action.target.search}` : ''}`;
+    if (action.target.pathname !== `/positions/${positionId}`) {
+      router.push(href);
+      return;
+    }
+    const search = new URLSearchParams(action.target.search || '');
+    const tabIndex = { criteria: 0, applications: 1, shortlist: 2, jd: 3 }[search.get('tab') || ''];
+    if (tabIndex != null) setActiveTab(tabIndex);
+    if (search.get('intake') === '1') scrollToIntake();
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -381,7 +430,7 @@ export default function PositionDetailPage() {
             variant="contained"
             color="secondary"
             startIcon={<UploadFileIcon />}
-            onClick={() => setUploadOpen(true)}
+            onClick={scrollToIntake}
             disabled={!approvedCriteria || !isHR || position.status !== 'OPEN' || isOperationRunning}
           >{t("Tải lên CV")}</Button>
         </Box>
@@ -393,30 +442,17 @@ export default function PositionDetailPage() {
         </Alert>
       )}
 
-      {/* Processing status — operation progress */}
+      {workspace && (
+        <>
+          <PositionSummary workspace={workspace} />
+          <WorkflowStepper workspace={workspace} />
+          <NextActionCard workspace={workspace} onAction={handleNextAction} />
+        </>
+      )}
+
+      {/* Processing status — shared operation progress */}
       {operationStatus && operationStatus.status !== 'COMPLETED' && operationStatus.status !== 'FAILED' && (
-        <Card sx={{ mb: 3, borderLeft: '4px solid #2599DC' }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-              <CircularProgress size={18} sx={{ mr: 2 }} />
-              <Typography variant="body2" fontWeight={500}>
-                {operationStatus.stage === 'ASSESSMENT' || operationStatus.capability === 'ASSESSMENT' || operationStatus.capability === 'RANKING'
-                  ? t("Đang đánh giá và tạo xếp hạng…") : t("Đang xử lý CV…")}
-              </Typography>
-            </Box>
-            {operationStatus.progress && (
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="caption" color="text.secondary">{t("                  Đã xử lý")} {operationStatus.progress.processed}/{operationStatus.progress.total} {t("tệp")}{operationStatus.progress.failed > 0 && t(" ({0} lỗi)", operationStatus.progress.failed)}
-                </Typography>
-                <LinearProgress
-                  variant="determinate"
-                  value={operationStatus.progress.percent_complete}
-                  sx={{ mt: 1, height: 6, borderRadius: 3 }}
-                />
-              </Box>
-            )}
-          </CardContent>
-        </Card>
+        <OperationProgressPanel operation={operationStatus} processingCount={appCounts?.processing} />
       )}
 
       {/* Background CV processing (no single operation, worker still parsing files) */}
@@ -695,6 +731,18 @@ export default function PositionDetailPage() {
 
       {/* Tab 2: Applications — link to dedicated ranking page + stats */}
       <TabPanel value={activeTab} index={1}>
+        {isHR && (
+          <CVIntakePanel
+            files={selectedFiles}
+            onFiles={handleFilesSelected}
+            onRemove={handleRemoveFile}
+            onUpload={handleUpload}
+            uploading={uploading}
+            uploadProgress={uploadProgress}
+            disabled={!approvedCriteria || position.status !== 'OPEN' || isOperationRunning}
+            error={uploadError}
+          />
+        )}
         {isHR ? <Grid container spacing={3}>
           <Grid item xs={12} sm={6} md={3}>
             <Card>
@@ -736,7 +784,7 @@ export default function PositionDetailPage() {
                   <Button
                     variant="outlined"
                     startIcon={<UploadFileIcon />}
-                    onClick={() => setUploadOpen(true)}
+                    onClick={scrollToIntake}
                     disabled={!approvedCriteria || !isHR || position.status !== 'OPEN' || isOperationRunning}
                     sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
                   >{t("Tải lên CV ứng viên")}</Button>
@@ -902,69 +950,6 @@ export default function PositionDetailPage() {
             onClick={() => approvalAction && handleApprove(approvalAction, approvalComment.trim())}>{t("Xác nhận")}</Button></DialogActions>
       </Dialog>
 
-      {/* Upload CV Dialog */}
-      <Dialog open={uploadOpen} onClose={() => { if (!uploading) setUploadOpen(false); }} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ color: '#0A2B57' }}>{t("Tải lên hồ sơ CV")}</DialogTitle>
-        <DialogContent dividers>
-          {uploadError && <Alert severity="error" sx={{ mb: 2 }}>{t(uploadError)}</Alert>}
-          <Box
-            sx={{
-              border: '2px dashed #E2E8F0',
-              borderRadius: 2,
-              p: 4,
-              textAlign: 'center',
-              backgroundColor: '#F8FAFC',
-            }}
-          >
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              onChange={handleFileSelect}
-              style={{ display: 'none' }}
-              id="cv-file-input"
-            />
-            <label htmlFor="cv-file-input">
-              <Button component="span" variant="outlined" sx={{ mb: 2 }}>{t("Chọn tệp CV")}</Button>
-            </label>
-            <Typography variant="body2" color="text.secondary" sx={{ display: 'block', mb: 1 }}>{t("Hỗ trợ PDF, DOCX (tiếng Anh)")}</Typography>
-            <Typography variant="caption" color="text.disabled">{t("Tối đa 50 file, mỗi file ≤ 10MB, tổng lô ≤ 250MB")}</Typography>
-
-            {selectedFiles.length > 0 && (
-              <Box sx={{ mt: 3, textAlign: 'left' }}>
-                <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>{t("                  Đã chọn")} {selectedFiles.length} {t("tệp:")}</Typography>
-                {selectedFiles.slice(0, 5).map((file, i) => (
-                  <Typography key={i} variant="caption" display="block" color="text.secondary">
-                    • {file.name} ({(file.size / 1_000_000).toFixed(2)} MB)
-                  </Typography>
-                ))}
-                {selectedFiles.length > 5 && (
-                  <Typography variant="caption" color="text.disabled">{t("                    ...và")} {selectedFiles.length - 5} {t("tệp khác")}</Typography>
-                )}
-              </Box>
-            )}
-
-            {uploading && (
-              <Box sx={{ mt: 3, width: '100%' }}>
-                <LinearProgress variant="determinate" value={uploadProgress} />
-                <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>{t("                  Đang tải lên:")} {uploadProgress}%
-                </Typography>
-              </Box>
-            )}
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setUploadOpen(false)} disabled={uploading}>{t("Hủy")}</Button>
-          <Button
-            onClick={handleUpload}
-            variant="contained"
-            color="secondary"
-            disabled={selectedFiles.length === 0 || uploading || !!uploadError}
-          >
-            {uploading ? t("Đang tải...") : t("Bắt đầu xử lý")}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 }
