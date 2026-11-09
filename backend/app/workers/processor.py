@@ -434,9 +434,26 @@ class ProcessingWorker:
                 content = self._read_file_content(doc)
 
                 # Process document: extract text
-                raw_text, raw_pages, doc_type = loop.run_until_complete(
-                    document_processor.process_document(content, doc["original_filename"], doc["mime_type"])
-                )
+                with observability.span(
+                    "hra.cv.document_extraction",
+                    metadata={
+                        "operation_id": str(operation_id),
+                        "batch_id": str(batch_id),
+                        "position_id": str(position_id),
+                        "document_id": document_id,
+                        "application_id": application_id,
+                        "mime_type": doc["mime_type"],
+                        "size_bytes": doc["size_bytes"],
+                    },
+                ) as document_observation:
+                    raw_text, raw_pages, doc_type = loop.run_until_complete(
+                        document_processor.process_document(content, doc["original_filename"], doc["mime_type"])
+                    )
+                    document_observation.update(output={
+                        "document_type": doc_type.value,
+                        "raw_characters": len(raw_text or ""),
+                        "page_count": len(raw_pages or []),
+                    })
                 # Identity is extracted locally, never sent to the model.  The
                 # stored/model text and the evidence verifier use exactly the
                 # same minimised text, including for later re-assessments.
@@ -951,6 +968,8 @@ class ProcessingWorker:
                 assessment_id = None
                 assessment_stack: ExitStack | None = None
                 assessment_observation = None
+                verification_stack: ExitStack | None = None
+                verification_observation = None
                 try:
                     assessment_stack = ExitStack()
                     assessment_observation = assessment_stack.enter_context(observability.span(
@@ -1078,8 +1097,23 @@ class ProcessingWorker:
                     # Deterministic rules decide measurable criteria first.
                     # The LLM is only a fallback for criteria the rules cannot
                     # decide, and it receives just that unresolved sub-rubric.
-                    deterministic_result = deterministic_matcher.evaluate_criteria(
-                        cv_text, criteria_items, candidate_profile)
+                    with observability.span(
+                        "hra.assessment.deterministic_matching",
+                        metadata={
+                            "assessment_id": str(assessment_id),
+                            "assessment_fingerprint": assessment_fingerprint,
+                            "criterion_count": len(criteria_items),
+                            "deterministic_rules_version": settings.DETERMINISTIC_RULES_VERSION,
+                        },
+                    ) as deterministic_observation:
+                        deterministic_result = deterministic_matcher.evaluate_criteria(
+                            cv_text, criteria_items, candidate_profile)
+                        deterministic_observation.update(output={
+                            "rule_finding_count": len(deterministic_result.get("findings", [])),
+                            "unresolved_criterion_count": len(deterministic_result.get("unresolved_criterion_ids", [])),
+                            "chunk_count": len(deterministic_result.get("chunks", [])),
+                            "candidate_years_experience_present": deterministic_result.get("candidate_years_experience") is not None,
+                        })
                     if deterministic_result.get("candidate_years_experience"):
                         candidate_profile["total_years_experience"] = deterministic_result[
                             "candidate_years_experience"]
@@ -1093,10 +1127,29 @@ class ProcessingWorker:
                     prompt_version = settings.MATCHING_PROMPT_VERSION
                     fallback_chunks = deterministic_result.get("fallback_chunks", {})
                     if unresolved_criteria:
-                        fallback_chunks = self._semantic_fallback_chunks(
-                            db, loop, application_id=application_id, document_id=document_id,
-                            deterministic_result=deterministic_result,
-                            unresolved_criteria=unresolved_criteria)
+                        with observability.span(
+                            "hra.assessment.semantic_retrieval",
+                            metadata={
+                                "assessment_id": str(assessment_id),
+                                "assessment_fingerprint": assessment_fingerprint,
+                                "unresolved_criterion_count": len(unresolved_criteria),
+                                "semantic_enabled": bool(settings.SEMANTIC_RETRIEVAL_ENABLED),
+                                "embedding_provider": settings.EMBEDDING_PROVIDER,
+                                "embedding_model": settings.EMBEDDING_MODEL,
+                                "embedding_index_version": settings.EMBEDDING_INDEX_VERSION,
+                            },
+                        ) as semantic_observation:
+                            fallback_chunks = self._semantic_fallback_chunks(
+                                db, loop, application_id=application_id, document_id=document_id,
+                                deterministic_result=deterministic_result,
+                                unresolved_criteria=unresolved_criteria)
+                            semantic_observation.update(output={
+                                "fallback_criterion_count": len(fallback_chunks or {}),
+                                "fallback_chunk_count": sum(
+                                    len(chunks) for chunks in (fallback_chunks or {}).values()
+                                    if isinstance(chunks, list)
+                                ),
+                            })
                     if unresolved_criteria:
                         findings = loop.run_until_complete(llm_client.match_criterion_evidence(
                             cv_text=cv_text, candidate_profile=candidate_profile,
@@ -1115,6 +1168,16 @@ class ProcessingWorker:
                         for chunk in deterministic_result.get("chunks", [])
                         if isinstance(chunk, dict) and chunk.get("chunk_id")
                     }
+                    verification_stack = ExitStack()
+                    verification_observation = verification_stack.enter_context(observability.span(
+                        "hra.assessment.evidence_verification",
+                        metadata={
+                            "assessment_id": str(assessment_id),
+                            "assessment_fingerprint": assessment_fingerprint,
+                            "raw_finding_count": len(raw_findings),
+                            "criterion_count": len(criteria_items),
+                        },
+                    ))
                     validated = []
                     for finding in matching_engine.canonicalize_findings(
                             criteria_items, raw_findings):
@@ -1157,8 +1220,36 @@ class ProcessingWorker:
                             finding["outcome"] = "UNCLEAR"
                             finding["requires_verification"] = True
                         validated.append(finding)
-                    score, coverage, match_status, results, needs_verification = matching_engine.calculate_assessment_scores(
-                        criteria_items, validated, group_weights=group_weights)
+                    with observability.span(
+                        "hra.assessment.scoring",
+                        metadata={
+                            "assessment_id": str(assessment_id),
+                            "assessment_fingerprint": assessment_fingerprint,
+                            "validated_finding_count": len(validated),
+                            "matching_policy_version": matching_engine.POLICY_VERSION,
+                        },
+                    ) as scoring_observation:
+                        score, coverage, match_status, results, needs_verification = matching_engine.calculate_assessment_scores(
+                            criteria_items, validated, group_weights=group_weights)
+                        scoring_observation.update(output={
+                            "matching_status": match_status,
+                            "evidence_coverage": coverage,
+                            "needs_verification": needs_verification,
+                            "result_count": len(results),
+                        })
+                    if verification_observation is not None:
+                        verification_observation.update(output={
+                            "validated_finding_count": len(validated),
+                            "evidence_verified_count": sum(
+                                1 for finding in validated if finding.get("evidence_verified")),
+                            "downgraded_to_unclear_count": sum(
+                                1 for finding in validated
+                                if finding.get("outcome") == "UNCLEAR" and finding.get("requires_verification")),
+                        })
+                    if verification_stack is not None:
+                        verification_stack.close()
+                        verification_stack = None
+                        verification_observation = None
                     if assessment_observation is not None:
                         outcome_counts = Counter(str(result.get("outcome") or "UNCLEAR") for result in results)
                         source_counts = Counter(str(result.get("decision_source") or "LLM") for result in results)
@@ -1262,6 +1353,8 @@ class ProcessingWorker:
                         """), {"assessment_id": assessment_id})
                         db.commit()
                 finally:
+                    if verification_stack is not None:
+                        verification_stack.close()
                     if assessment_stack is not None:
                         assessment_stack.close()
         finally:
@@ -1269,7 +1362,17 @@ class ProcessingWorker:
         if failed_count:
             raise RuntimeError(f"Không thể đánh giá {failed_count} hồ sơ. Vui lòng kiểm tra kết nối AI và thử lại.")
         # Use the same operation id: completion now guarantees ranking is ready.
-        self._generate_ranking(operation_id, db, criteria_version_id=criteria_version_id)
+        with observability.span(
+            "hra.ranking.generate",
+            metadata={
+                "operation_id": str(operation_id),
+                "position_id": position_id,
+                "criteria_version_id": criteria_version_id,
+                "ranking_policy_version": settings.RANKING_POLICY_VERSION,
+                "ltr_mode": settings.LTR_MODE,
+            },
+        ):
+            self._generate_ranking(operation_id, db, criteria_version_id=criteria_version_id)
 
     def _generate_ranking(self, operation_id: UUID, db, criteria_version_id: Optional[str] = None):
         """Generate a snapshot for one position and one approved rubric version."""

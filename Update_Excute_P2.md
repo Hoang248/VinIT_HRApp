@@ -2,7 +2,7 @@
 
 > File này ghi lại quá trình rà soát, lập plan và triển khai Phase 2 theo quy ước giống `Update_Excute_P1.md`: trạng thái tổng quan, thay đổi file/code/migration, test đã chạy và kết quả, commit hash sau khi push, blocker và điều kiện mở khóa.
 >
-> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng nghiệp vụ Phase 2 F2.01/F2.02; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt. Lộ trình UI/UX Recruitment Workspace UX-0…UX-4 đã được triển khai ở code và kiểm chứng tự động; usability/staging vẫn là gate riêng. Langfuse AI Observability đã có plan riêng và LF-1 đã triển khai ở code ở chế độ tắt mặc định, metadata-first, fail-open; chưa bật server/staging.**
+> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng nghiệp vụ Phase 2 F2.01/F2.02; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt. Lộ trình UI/UX Recruitment Workspace UX-0…UX-4 đã được triển khai ở code và kiểm chứng tự động; usability/staging vẫn là gate riêng. Langfuse AI Observability đã có plan riêng; LF-1, LF-2A và LF-3A đã triển khai ở code ở chế độ tắt mặc định, metadata-first, fail-open; chưa bật server/staging và chưa gửi trace thật.**
 >
 > **F2.08 SSO: TẠM TREO** theo quyết định của người dùng; không đưa vào plan ở vòng này.
 
@@ -20,6 +20,7 @@
 | UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 | LF-0 | Lập tài liệu, lộ trình và plan triển khai Langfuse AI Observability | HOÀN THÀNH | `doc/LANGFUSE_IMPLEMENTATION_PLAN.md` |
 | LF-1 | Observability foundation: cấu hình, wrapper fail-open, tracing LLM/worker/BGE, score assessment, Admin health và smoke script | ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING | Chưa dựng/bật Langfuse server; không gửi nội dung CV/JD mặc định |
+| LF-2A/LF-3A | Child spans worker, runbook staging và cầu nối evaluation scores sang Langfuse | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Chỉ gửi evaluation khi có `--send`; sandbox không có Docker/Podman và DEP-01 chưa mở |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -122,6 +123,16 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 - Commit triển khai: `5e401b1` (`feat: triển khai Langfuse observability LF-1`), đã push lên `arena/ea6e2570-vinit-hrapp`.
 - CI run `42564275009` cho commit trên: **success** cả Frontend checks, Backend unit tests và Backend integration (disposable PostgreSQL + pgvector).
 
+### 3.11. Langfuse LF-2A/LF-3A — Child spans, runbook và evaluation bridge
+
+- Người dùng yêu cầu tiếp tục sau LF-1. Đối chiếu cho thấy DEP-01 vẫn bị chặn vì bảng environment mapping trong `doc/PENDING_DEPLOYMENT.md` còn `CHƯA XÁC NHẬN — BLOCKER`; sandbox không có Docker/Podman nên không dựng Langfuse self-host và không bật staging. Phần làm được an toàn ở code là LF-2A/LF-3A.
+- Worker `backend/app/workers/processor.py`: bổ sung span metadata-only cho `hra.cv.document_extraction`, `hra.assessment.deterministic_matching`, `hra.assessment.semantic_retrieval`, `hra.assessment.evidence_verification`, `hra.assessment.scoring` và `hra.ranking.generate`. Chỉ ghi ID nội bộ, version, trạng thái, count và tỷ lệ; không thay matching semantics và không gửi CV/JD/quote/reasoning.
+- Evaluation bridge: tạo `backend/scripts/push_langfuse_evaluation.py`, tái sử dụng `build_repeatability_report`/`compare_rankings` từ snapshot hiện có. Mặc định dry-run và in report/scores dự kiến; chỉ gửi aggregate scores khi có `--send` và cấu hình hợp lệ. Thêm `backend/tests/test_push_langfuse_evaluation.py`.
+- Runbook: tạo `doc/LANGFUSE_STAGING_RUNBOOK.md` gồm gate DEP-01, cấu hình staging, smoke, workflow tổng hợp, evaluation bridge, kiểm tra fail-open, rollback và tiêu chí đóng LF-2/LF-3. Tài liệu này không mở gate môi trường.
+- Kiểm chứng local: nhóm test liên quan `38 passed`; backend full `112 passed, 64 skipped`; Ruff `--select F` trên phạm vi thay đổi đạt; `langfuse_smoke.py` chế độ chỉ kiểm tra báo `enabled=false`; evaluation bridge dry-run trên snapshot tổng hợp nhỏ chạy đạt và báo `sent=false`.
+- Chưa gửi trace/score lên Langfuse Cloud/self-host, chưa dựng server và chưa dùng dữ liệu thật. LF-2B chỉ mở sau DEP-01 environment mapping đã ký, lựa chọn đích đến, phê duyệt privacy/egress/retention/RBAC và chỉ dùng dữ liệu tổng hợp.
+- Commit triển khai và CI: **đang chờ ghi sau khi push**.
+
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 
 ### 4.1. Quyết định phạm vi đã chốt ngày 2026-11-07
@@ -162,7 +173,7 @@ Các quyết định D-01…D-10 tại Mục 3 của `doc/PHASE2_IMPLEMENTATION_
 | P2-B07 | F2.07 Retention automation | LOẠI KHỎI VÒNG NÀY | Chỉ xét lại khi có quyết định mới; quyết định Legal về hold/OTP/chữ ký vẫn cần nếu mở lại |
 | P2-B08 | Candidate Rediscovery | ĐỂ CUỐI PHASE 2 | Chỉ lập plan sau khi chốt consent, retention và quyền tái sử dụng CV |
 | P2-B09 | Triển khai UI/UX Recruitment Workspace | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Đẩy commit và theo dõi CI; usability HR/HM chỉ thực hiện trên staging với dữ liệu tổng hợp sau khi DEP-01/điều kiện dữ liệu cho phép. UX-5 cần contract/đánh giá riêng |
-| P2-B10 | Langfuse staging/pilot | CHƯA MỞ LF-2 | DEP-01 environment mapping, chọn Cloud project riêng hoặc self-host, duyệt privacy/egress/retention/RBAC; chỉ dùng dữ liệu tổng hợp cho tới khi có phê duyệt dữ liệu thật |
+| P2-B10 | Langfuse staging/pilot | LF-2A/LF-3A ĐÃ Ở CODE; LF-2B CHƯA MỞ | DEP-01 environment mapping, chọn Cloud project riêng hoặc self-host, duyệt privacy/egress/retention/RBAC; chỉ dùng dữ liệu tổng hợp cho tới khi có phê duyệt dữ liệu thật |
 
 ## 6. Quy ước cập nhật file này
 

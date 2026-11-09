@@ -2,7 +2,7 @@
 
 > Ngày lập plan: 2026-11-05  
 > Branch: `arena/ea6e2570-vinit-hrapp`  
-> Trạng thái: **LF-0 ĐÃ LƯU PLAN; LF-1 ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING**
+> Trạng thái: **LF-0 ĐÃ LƯU PLAN; LF-1, LF-2A và LF-3A ĐÃ TRIỂN KHAI Ở CODE — LF-2B/LF-3 ĐẦY ĐỦ CHỜ STAGING VÀ GOLDEN SET**
 > Phạm vi: bổ sung khả năng quan sát pipeline AI/LLM, embedding và assessment. Không thay đổi matching engine, điểm số, workflow HR/HM, RBAC, audit nghiệp vụ hoặc quyết định tuyển dụng.
 
 ## 1. Kết luận
@@ -112,7 +112,7 @@ Nguyên tắc bắt buộc:
 | `hra.embedding.bge` | embedding | Gọi BGE `/embeddings` | model, dimension, kind, số text, tổng ký tự dạng count/hash, vector count |
 | `hra.langfuse.smoke` | span | Script smoke test tổng hợp | `synthetic=true`, môi trường, release |
 
-Các span OCR/rule/scoring chi tiết hơn sẽ được bổ sung ở LF-2 sau khi trace gốc và LLM generation ổn định. Không instrument toàn bộ hàm nhỏ ngay từ đầu để tránh trace nhiễu và thay đổi lớn trong worker.
+LF-2A đã bổ sung các span chọn lọc `hra.cv.document_extraction`, `hra.assessment.deterministic_matching`, `hra.assessment.semantic_retrieval`, `hra.assessment.evidence_verification`, `hra.assessment.scoring` và `hra.ranking.generate`. Các span này chỉ ghi ID nội bộ, version, trạng thái và count/tỷ lệ; không ghi CV/JD, quote hoặc reasoning. Không instrument toàn bộ hàm nhỏ để tránh trace nhiễu và thay đổi lớn trong worker.
 
 ### 4.2. Trường được phép gửi mặc định
 
@@ -269,7 +269,15 @@ Tiêu chí xong:
 
 ### LF-2 — Staging synthetic tracing và dashboard vận hành
 
-Điều kiện mở khóa:
+Trạng thái: **LF-2A ĐÃ TRIỂN KHAI Ở CODE; LF-2B CHƯA MỞ VÌ DEP-01 CHƯA CÓ ENVIRONMENT MAPPING**.
+
+LF-2A đã làm ở code:
+
+- Bổ sung child span metadata-only cho document extraction, deterministic matching, semantic retrieval, evidence verification, scoring và ranking trong `backend/app/workers/processor.py`.
+- Tạo runbook `doc/LANGFUSE_STAGING_RUNBOOK.md` cho gate, cấu hình, smoke, workflow tổng hợp, evaluation bridge, fail-open, rollback và tiêu chí đóng LF-2/LF-3.
+- Không dựng Langfuse server trong sandbox vì không có Docker/Podman; không suy đoán project Supabase đã kết nối là staging.
+
+Điều kiện mở khóa LF-2B:
 
 - DEP-01 có environment mapping: backend/frontend URL, Supabase project, commit đang chạy, worker topology, chủ trì và cửa sổ triển khai.
 - Chọn Cloud project riêng hoặc self-host dev/staging.
@@ -298,7 +306,16 @@ Tiêu chí xong:
 
 ### LF-3 — Dataset, experiment và evaluation
 
-Điều kiện mở khóa:
+Trạng thái: **LF-3A ĐÃ TRIỂN KHAI CẦU NỐI EVALUATION Ở CODE; DATASET/EXPERIMENT ĐẦY ĐỦ CHƯA MỞ**.
+
+LF-3A đã làm ở code:
+
+- Tạo `backend/scripts/push_langfuse_evaluation.py`: đọc cùng snapshot JSON với `evaluate_matching.py`, tính lại `build_repeatability_report` và `compare_rankings`, mặc định chỉ dry-run/in JSON; chỉ gửi score tổng hợp khi có `--send` và Langfuse đã cấu hình.
+- Score dự kiến/gửi gồm `repeatability_mean_score_drift`, `repeatability_max_score_drift`, `repeatability_p95_score_drift`, `criterion_flip_rate`, `fingerprint_reuse_rate`, `ranking_kendall_tau`, `ranking_top10_overlap`, `repeatability_passed` và score theo từng fingerprint group.
+- Script không gửi snapshot thô, CV text, profile fact, evidence quote, reasoning hoặc chi tiết từng application lên Langfuse.
+- HR agreement score chưa triển khai vì repo chưa có nguồn nhãn HR hợp lệ đã duyệt; không suy diễn từ trạng thái vận hành.
+
+Điều kiện mở khóa phần còn lại:
 
 - Có golden set tổng hợp hoặc dữ liệu đã ẩn danh/được phép theo `doc/MATCHING_STABILITY.md`.
 - HR chốt nhãn và quy trình phân xử; không dùng trạng thái vận hành yếu thay gold label.
