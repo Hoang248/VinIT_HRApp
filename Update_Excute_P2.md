@@ -19,7 +19,7 @@
 | UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
 | UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 | LF-0 | Lập tài liệu, lộ trình và plan triển khai Langfuse AI Observability | HOÀN THÀNH | `doc/LANGFUSE_IMPLEMENTATION_PLAN.md` |
-| LF-1 | Observability foundation: cấu hình, wrapper fail-open, tracing LLM/worker/BGE, score assessment, Admin health và smoke script | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI | Chưa dựng/bật Langfuse server; không gửi nội dung CV/JD mặc định |
+| LF-1 | Observability foundation: cấu hình, wrapper fail-open, tracing LLM/worker/BGE, score assessment, Admin health và smoke script | ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING | Chưa dựng/bật Langfuse server; không gửi nội dung CV/JD mặc định |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -119,7 +119,8 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
   - Thêm `GET /v1/admin/langfuse/health` không trả key/host và script `backend/scripts/langfuse_smoke.py` chỉ gửi trace tổng hợp khi chạy chủ động với `--send`.
 - Kiểm chứng local: test Langfuse + LLM client/Phase 1 unit `35 passed`; backend full `111 passed, 64 skipped`; Ruff phạm vi file mới/đổi chính đạt; smoke script ở chế độ chỉ kiểm tra cấu hình chạy đạt và báo `enabled=false`.
 - Chưa chạy Langfuse server, chưa gửi trace lên Cloud/self-host và chưa dùng dữ liệu thật. LF-2 chỉ mở sau DEP-01 environment mapping và lựa chọn đích đến được duyệt.
-- Commit triển khai và CI: sẽ ghi sau khi push ở mục cập nhật tiếp theo.
+- Commit triển khai: `5e401b1` (`feat: triển khai Langfuse observability LF-1`), đã push lên `arena/ea6e2570-vinit-hrapp`.
+- CI run `42564275009` cho commit trên: **success** cả Frontend checks, Backend unit tests và Backend integration (disposable PostgreSQL + pgvector).
 
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 

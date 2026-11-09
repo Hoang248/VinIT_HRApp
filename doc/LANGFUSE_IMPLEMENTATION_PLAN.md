@@ -2,7 +2,7 @@
 
 > Ngày lập plan: 2026-11-05  
 > Branch: `arena/ea6e2570-vinit-hrapp`  
-> Trạng thái: **LF-0 ĐÃ LƯU PLAN; LF-1 ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING**
+> Trạng thái: **LF-0 ĐÃ LƯU PLAN; LF-1 ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING**
 > Phạm vi: bổ sung khả năng quan sát pipeline AI/LLM, embedding và assessment. Không thay đổi matching engine, điểm số, workflow HR/HM, RBAC, audit nghiệp vụ hoặc quyết định tuyển dụng.
 
 ## 1. Kết luận
@@ -230,7 +230,7 @@ Tiêu chí xong:
 
 ### LF-1 — Observability foundation + LLM/worker/BGE tracing
 
-Trạng thái: **ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING**.
+Trạng thái: **ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING**.
 
 Phạm vi code:
 
