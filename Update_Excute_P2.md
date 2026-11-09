@@ -20,7 +20,7 @@
 | UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 | LF-0 | Lập tài liệu, lộ trình và plan triển khai Langfuse AI Observability | HOÀN THÀNH | `doc/LANGFUSE_IMPLEMENTATION_PLAN.md` |
 | LF-1 | Observability foundation: cấu hình, wrapper fail-open, tracing LLM/worker/BGE, score assessment, Admin health và smoke script | ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING | Chưa dựng/bật Langfuse server; không gửi nội dung CV/JD mặc định |
-| LF-2A/LF-3A | Child spans worker, runbook staging và cầu nối evaluation scores sang Langfuse | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Chỉ gửi evaluation khi có `--send`; sandbox không có Docker/Podman và DEP-01 chưa mở |
+| LF-2A/LF-3A | Child spans worker, runbook staging và cầu nối evaluation scores sang Langfuse | ĐÃ TRIỂN KHAI Ở CODE — CHỜ STAGING | Chỉ gửi evaluation khi có `--send`; sandbox không có Docker/Podman và DEP-01 chưa mở |
 
 ## 2. Nguyên tắc áp dụng cho Phase 2
 
@@ -131,7 +131,8 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 - Runbook: tạo `doc/LANGFUSE_STAGING_RUNBOOK.md` gồm gate DEP-01, cấu hình staging, smoke, workflow tổng hợp, evaluation bridge, kiểm tra fail-open, rollback và tiêu chí đóng LF-2/LF-3. Tài liệu này không mở gate môi trường.
 - Kiểm chứng local: nhóm test liên quan `38 passed`; backend full `112 passed, 64 skipped`; Ruff `--select F` trên phạm vi thay đổi đạt; `langfuse_smoke.py` chế độ chỉ kiểm tra báo `enabled=false`; evaluation bridge dry-run trên snapshot tổng hợp nhỏ chạy đạt và báo `sent=false`.
 - Chưa gửi trace/score lên Langfuse Cloud/self-host, chưa dựng server và chưa dùng dữ liệu thật. LF-2B chỉ mở sau DEP-01 environment mapping đã ký, lựa chọn đích đến, phê duyệt privacy/egress/retention/RBAC và chỉ dùng dữ liệu tổng hợp.
-- Commit triển khai: `5d77423` (`feat: bổ sung Langfuse LF-2A và LF-3A`), đã push. CI run `42565258509` **failed** ở bước thu thập test vì `scripts` không phải package khi pytest chạy từ thư mục gốc; đã sửa test nạp module theo đường dẫn file và kiểm chứng lại local đạt. Commit sửa và CI thay thế sẽ ghi ở bằng chứng cuối.
+- Commit triển khai: `5d77423` (`feat: bổ sung Langfuse LF-2A và LF-3A`), đã push. CI run `42565258509` **failed** ở bước thu thập test vì `scripts` không phải package khi pytest chạy từ thư mục gốc; commit `2f51585` sửa test nạp module theo đường dẫn file.
+- CI run `42565430193` cho commit `2f51585`: **success** cả Frontend checks, Backend unit tests và Backend integration (disposable PostgreSQL + pgvector).
 
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 
