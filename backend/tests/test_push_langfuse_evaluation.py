@@ -1,4 +1,13 @@
-from scripts.push_langfuse_evaluation import build_report, evaluation_scores
+import importlib.util
+from pathlib import Path
+
+_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "push_langfuse_evaluation.py"
+_SPEC = importlib.util.spec_from_file_location("push_langfuse_evaluation", _SCRIPT_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+build_report = _MODULE.build_report
+evaluation_scores = _MODULE.evaluation_scores
 
 
 def test_push_langfuse_evaluation_builds_scores_from_snapshot_without_sending():
