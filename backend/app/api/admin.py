@@ -28,6 +28,7 @@ from app.services.ai_secrets import (
     normalize_api_key,
 )
 from app.services.audit_integrity import verify_audit_chain
+from app.services.langfuse_observability import get_observability_status
 from app.services.llm_client import LLMError, llm_client
 from app.services.ltr import LTRError, LTRModel, artifact_sha256
 from app.services.semantic_diagnostics import get_semantic_diagnostics
@@ -310,6 +311,12 @@ async def get_active_ai_config(current_user: dict = Depends(require_admin_role))
         allowed = False
     return {"active": True, "source": runtime["source"], "allowed_by_this_process": allowed,
             "config": {**public_runtime(runtime), "external_api_allowed": settings.ALLOW_EXTERNAL_API}}
+
+
+@router.get("/langfuse/health")
+async def get_langfuse_health(current_user: dict = Depends(require_admin_role)):
+    """Safe Langfuse configuration state; never returns keys or host."""
+    return get_observability_status()
 
 
 @router.get("/semantic/health")

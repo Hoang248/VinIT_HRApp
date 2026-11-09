@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     LTR_MIN_HOLDOUT_EXAMPLES: int = 20
     LTR_MIN_HOLDOUT_GROUPS: int = 2
 
+    # Langfuse AI observability. Disabled by default and metadata-first:
+    # enabling it must never be required for LLM, worker or assessment
+    # operations. Content capture is additionally blocked in production by
+    # app.services.langfuse_observability.
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_PUBLIC_KEY: Optional[str] = None
+    LANGFUSE_SECRET_KEY: Optional[str] = None
+    LANGFUSE_HOST: Optional[str] = None
+    LANGFUSE_BASE_URL: Optional[str] = None
+    LANGFUSE_ENVIRONMENT: Optional[str] = None
+    LANGFUSE_RELEASE: Optional[str] = None
+    LANGFUSE_SAMPLE_RATE: float = 1.0
+    LANGFUSE_CAPTURE_CONTENT: bool = False
+
     # Retention
     RETENTION_MONTHS: int = 12
 

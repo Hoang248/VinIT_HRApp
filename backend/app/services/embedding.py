@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.core.config import settings
+from app.services import langfuse_observability as observability
 from app.services.deterministic_matching import normalize_text
 
 
@@ -180,25 +181,42 @@ class BGEHttpEmbeddingProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         payload = {"model": self.model, "input": prepared}
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False) as client:
-                response = await client.post(
-                    f"{self.api_base}/embeddings", json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise EmbeddingError(f"BGE embedding request failed: {type(exc).__name__}") from None
-        rows = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(rows, list) or len(rows) != len(texts):
-            raise EmbeddingError("BGE endpoint returned an unexpected embeddings payload")
-        vectors: list[list[float]] = []
-        for row in sorted(rows, key=lambda item: item.get("index", 0) if isinstance(item, dict) else 0):
-            vector = row.get("embedding") if isinstance(row, dict) else None
-            if not isinstance(vector, list) or len(vector) != self.dimension:
-                raise EmbeddingError(
-                    f"BGE vector dimension does not match configured dimension {self.dimension}")
-            vectors.append(normalize_vector([float(value) for value in vector]))
-        return vectors
+        with observability.embedding(
+            "hra.embedding.bge",
+            model=self.model,
+            metadata={
+                "embedding_provider": self.name,
+                "embedding_kind": kind,
+                "embedding_index_version": settings.EMBEDDING_INDEX_VERSION,
+                "text_count": len(texts),
+                "total_characters": sum(len(text) for text in texts),
+            },
+            version=settings.EMBEDDING_INDEX_VERSION,
+            input_data={"kind": kind, "text_count": len(texts)},
+        ) as embedding_observation:
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False) as client:
+                    response = await client.post(
+                        f"{self.api_base}/embeddings", json=payload, headers=headers)
+                    response.raise_for_status()
+                    data = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise EmbeddingError(f"BGE embedding request failed: {type(exc).__name__}") from None
+            rows = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(rows, list) or len(rows) != len(texts):
+                raise EmbeddingError("BGE endpoint returned an unexpected embeddings payload")
+            vectors: list[list[float]] = []
+            for row in sorted(rows, key=lambda item: item.get("index", 0) if isinstance(item, dict) else 0):
+                vector = row.get("embedding") if isinstance(row, dict) else None
+                if not isinstance(vector, list) or len(vector) != self.dimension:
+                    raise EmbeddingError(
+                        f"BGE vector dimension does not match configured dimension {self.dimension}")
+                vectors.append(normalize_vector([float(value) for value in vector]))
+            embedding_observation.update(output={
+                "vector_count": len(vectors),
+                "embedding_dimension": self.dimension,
+            })
+            return vectors
 
 
 def get_embedding_provider() -> EmbeddingProvider:

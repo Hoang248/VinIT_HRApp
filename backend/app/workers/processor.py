@@ -10,6 +10,8 @@ import os
 import json
 import re
 import hashlib
+from collections import Counter
+from contextlib import ExitStack
 from typing import Optional
 from uuid import UUID, uuid4
 from sqlalchemy import text
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.db.database import SessionLocal, engine
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services import langfuse_observability as observability
 from app.services.document_processor import document_processor
 from app.services.llm_client import llm_client, LLMError
 from app.services.matching import matching_engine
@@ -145,6 +148,8 @@ class ProcessingWorker:
         heartbeat_stop = threading.Event()
         heartbeat = None
         context_token = None
+        observability_stack: ExitStack | None = None
+        operation_observation = None
         try:
             cursor_filter = "" if self._queue_cursor is None else (
                 "AND (created_at, operation_id) > (:cursor_time, CAST(:cursor_id AS uuid))"
@@ -208,6 +213,19 @@ class ProcessingWorker:
             logger.info("Worker claimed operation", operation_id=operation_id, capability=capability, recovered=was_processing)
             heartbeat = threading.Thread(target=self._heartbeat, args=(operation_id, token, heartbeat_stop), daemon=True)
             heartbeat.start()
+            observability_stack = ExitStack()
+            operation_observation = observability_stack.enter_context(observability.span(
+                "hra.worker.operation",
+                metadata={
+                    "operation_id": operation_id,
+                    "capability": capability,
+                    "recovered": was_processing,
+                    "ai_config_id": snapshot.get("config_id"),
+                    "ai_provider": snapshot.get("provider"),
+                    "ai_model": snapshot.get("model_name"),
+                    "runtime_source": snapshot.get("source"),
+                },
+            ))
 
             try:
                 if was_processing:
@@ -239,11 +257,19 @@ class ProcessingWorker:
                     WHERE operation_id = :operation_id AND worker_token = :token
                 """), {"operation_id": operation_id, "token": token})
                 db.commit()
+                if operation_observation is not None:
+                    operation_observation.update(output={"status": "COMPLETED"})
                 logger.info("Operation completed successfully", operation_id=operation_id)
             except LostOwnership:
                 db.rollback()
+                if operation_observation is not None:
+                    operation_observation.update(
+                        output={"status": "LOST_OWNERSHIP"}, level="WARNING", status_message="LostOwnership")
                 logger.warning("Worker lost operation ownership; no further writes", operation_id=operation_id)
             except Exception as exc:
+                if operation_observation is not None:
+                    operation_observation.update(
+                        output={"status": "FAILED"}, level="ERROR", status_message=type(exc).__name__)
                 logger.error("Operation failed", operation_id=operation_id, error_type=type(exc).__name__)
                 db.rollback()
                 # A connection may have been replaced after the original error.
@@ -274,6 +300,8 @@ class ProcessingWorker:
                     logger.warning("Worker could not record failure after losing ownership", operation_id=operation_id)
         finally:
             heartbeat_stop.set()
+            if observability_stack is not None:
+                observability_stack.close()
             if context_token is not None:
                 runtime_context.reset(context_token)
             if heartbeat:
@@ -921,7 +949,25 @@ class ProcessingWorker:
             for app in applications:
                 application_id, document_id = str(app["application_id"]), str(app["document_id"])
                 assessment_id = None
+                assessment_stack: ExitStack | None = None
+                assessment_observation = None
                 try:
+                    assessment_stack = ExitStack()
+                    assessment_observation = assessment_stack.enter_context(observability.span(
+                        "hra.assessment",
+                        metadata={
+                            "operation_id": str(operation_id),
+                            "position_id": position_id,
+                            "application_id": application_id,
+                            "document_id": document_id,
+                            "profile_version_id": str(app["profile_version_id"]) if app["profile_version_id"] else None,
+                            "criteria_version_id": criteria_version_id,
+                            "jd_version_id": str(cv["jd_version_id"]),
+                            "matching_policy_version": matching_engine.POLICY_VERSION,
+                            "deterministic_rules_version": settings.DETERMINISTIC_RULES_VERSION,
+                            "prompt_version": settings.MATCHING_PROMPT_VERSION,
+                        },
+                    ))
                     if not app["profile_version_id"] or not app["extracted_text_storage_path"]:
                         raise RuntimeError("Thiếu hồ sơ trích xuất hoặc văn bản CV")
                     # Old extracted files may predate minimisation. Redact again
@@ -987,6 +1033,13 @@ class ProcessingWorker:
                     assessment_fingerprint = hashlib.sha256(json.dumps(
                         fingerprint_payload, sort_keys=True, ensure_ascii=False, default=str
                     ).encode("utf-8")).hexdigest()
+                    if assessment_observation is not None:
+                        assessment_observation.update(metadata={
+                            "assessment_fingerprint": assessment_fingerprint,
+                            "cv_text_sha256": fingerprint_payload["cv_text_sha256"],
+                            "profile_fact_count": len(facts),
+                            "criterion_count": len(criteria_items),
+                        })
                     existing_assessment = db.execute(text("""
                         SELECT assessment_id FROM app_private.assessment_runs
                         WHERE assessment_fingerprint = :fingerprint AND status = 'COMPLETED'
@@ -1020,6 +1073,8 @@ class ProcessingWorker:
                             "prompt_version": settings.MATCHING_PROMPT_VERSION,
                             "provider_snapshot": json.dumps(provider_snapshot)}).scalar_one()
                     db.commit()
+                    if assessment_observation is not None:
+                        assessment_observation.update(metadata={"assessment_id": str(assessment_id)})
                     # Deterministic rules decide measurable criteria first.
                     # The LLM is only a fallback for criteria the rules cannot
                     # decide, and it receives just that unresolved sub-rubric.
@@ -1102,8 +1157,48 @@ class ProcessingWorker:
                             finding["outcome"] = "UNCLEAR"
                             finding["requires_verification"] = True
                         validated.append(finding)
-                    score, coverage, match_status, results, _ = matching_engine.calculate_assessment_scores(
+                    score, coverage, match_status, results, needs_verification = matching_engine.calculate_assessment_scores(
                         criteria_items, validated, group_weights=group_weights)
+                    if assessment_observation is not None:
+                        outcome_counts = Counter(str(result.get("outcome") or "UNCLEAR") for result in results)
+                        source_counts = Counter(str(result.get("decision_source") or "LLM") for result in results)
+                        verified_count = sum(1 for result in results if result.get("evidence_verified"))
+                        score_metadata = {
+                            "assessment_id": str(assessment_id),
+                            "assessment_fingerprint": assessment_fingerprint,
+                            "matching_status": match_status,
+                        }
+                        assessment_observation.update(
+                            output={
+                                "status": "COMPLETED",
+                                "matching_status": match_status,
+                                "criterion_count": len(results),
+                                "outcome_counts": dict(outcome_counts),
+                                "decision_source_counts": dict(source_counts),
+                                "evidence_verified_count": verified_count,
+                            },
+                            metadata=score_metadata,
+                        )
+                        if score is not None:
+                            assessment_observation.score(
+                                name="matching_score", value=float(score), data_type="NUMERIC", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="evidence_coverage", value=float(coverage), data_type="NUMERIC", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="needs_verification", value=bool(needs_verification), data_type="BOOLEAN", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="unclear_criterion_count", value=int(outcome_counts.get("UNCLEAR", 0)),
+                            data_type="NUMERIC", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="rule_decided_count", value=int(source_counts.get("RULE", 0)),
+                            data_type="NUMERIC", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="llm_decided_count", value=int(source_counts.get("LLM", 0)),
+                            data_type="NUMERIC", metadata=score_metadata)
+                        assessment_observation.score(
+                            name="evidence_verified_rate",
+                            value=(verified_count / len(results) if results else 0.0),
+                            data_type="NUMERIC", metadata=score_metadata)
                     db.execute(text("""
                         UPDATE app_private.assessment_runs
                         SET status = 'COMPLETED', matching_status = :matching_status, matching_score = :score,
@@ -1148,9 +1243,15 @@ class ProcessingWorker:
                                     "verification_status": "VERIFIED" if result.get("evidence_verified") else "FAILED"})
                     db.commit()
                 except LostOwnership:
+                    if assessment_observation is not None:
+                        assessment_observation.update(
+                            output={"status": "LOST_OWNERSHIP"}, level="WARNING", status_message="LostOwnership")
                     db.rollback()
                     raise
                 except Exception as e:
+                    if assessment_observation is not None:
+                        assessment_observation.update(
+                            output={"status": "FAILED"}, level="ERROR", status_message=type(e).__name__)
                     db.rollback()
                     failed_count += 1
                     logger.error("Assessment failed for application", application_id=application_id, error_type=type(e).__name__)
@@ -1160,6 +1261,9 @@ class ProcessingWorker:
                             WHERE assessment_id = :assessment_id
                         """), {"assessment_id": assessment_id})
                         db.commit()
+                finally:
+                    if assessment_stack is not None:
+                        assessment_stack.close()
         finally:
             loop.close()
         if failed_count:

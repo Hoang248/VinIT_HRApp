@@ -1,7 +1,9 @@
+import hashlib
 import json
 import ipaddress
 import socket
 import time
+from collections import Counter
 from urllib.parse import urlsplit
 import httpx
 from typing import Dict, Any, List, Literal, Optional
@@ -9,6 +11,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from app.core.config import settings
 from app.core.logging import get_logger
 from pydantic import BaseModel, Field, ValidationError
+from app.services import langfuse_observability as observability
 from app.services.redaction import redact_payload, redact_professional_profile, redact_text
 from app.services.ai_config import (
     AIConfigError, canonical_endpoint, get_active_runtime, hydrate_runtime_secret,
@@ -17,6 +20,62 @@ from app.services.ai_config import (
 from app.db.database import SessionLocal
 
 logger = get_logger(__name__)
+
+
+def _text_sha256(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def _usage_details(data: Dict[str, Any]) -> Dict[str, int]:
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    aliases = {
+        "prompt_tokens": "input",
+        "input_tokens": "input",
+        "completion_tokens": "output",
+        "output_tokens": "output",
+        "total_tokens": "total",
+    }
+    details: Dict[str, int] = {}
+    for key, value in usage.items():
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            continue
+        details[aliases.get(str(key), str(key))] = numeric
+    return details
+
+
+def _parsed_output_summary(parsed: Any) -> Dict[str, Any]:
+    """Counts-only output summary for observability; never raw model text."""
+    if not isinstance(parsed, dict):
+        return {"result_type": type(parsed).__name__}
+    summary: Dict[str, Any] = {
+        "result_type": "object",
+        "top_level_keys": ",".join(sorted(str(key) for key in parsed.keys())[:30]),
+    }
+    criteria = parsed.get("criteria")
+    if isinstance(criteria, list):
+        summary["criteria_count"] = len(criteria)
+        summary["criteria_category_counts"] = dict(Counter(
+            str(item.get("category") or "UNKNOWN") for item in criteria if isinstance(item, dict)
+        ))
+    findings = parsed.get("findings")
+    if isinstance(findings, list):
+        summary["findings_count"] = len(findings)
+        summary["finding_outcome_counts"] = dict(Counter(
+            str(item.get("outcome") or "UNKNOWN") for item in findings if isinstance(item, dict)
+        ))
+        summary["findings_requiring_verification"] = sum(
+            1 for item in findings if isinstance(item, dict) and item.get("requires_verification")
+        )
+    for section in ("education", "work_history", "skills", "certifications", "languages", "projects"):
+        value = parsed.get(section)
+        if isinstance(value, list):
+            summary[f"{section}_count"] = len(value)
+    return summary
+
 
 # This prefix applies to every AI capability, not just profile extraction.
 # It reduces prompt-injection and discrimination risks; it is not a substitute
@@ -226,7 +285,11 @@ class LLMClient:
         user_prompt: str,
         temperature: Optional[float] = None,
         json_schema: Optional[Dict] = None,
-        metadata_out: dict[str, Any] | None = None
+        metadata_out: dict[str, Any] | None = None,
+        *,
+        task_name: str = "hra.llm.call",
+        prompt_version: str | None = None,
+        observability_metadata: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Make LLM API call with retry logic"""
         runtime = runtime_context.get()
@@ -296,39 +359,79 @@ class LLMClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        try:
-            # Environment proxy variables must not silently reroute CV text to
-            # a third party after the endpoint policy has checked a private host.
-            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-                response = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                data = response.json()
-                if metadata_out is not None:
-                    metadata_out.update({
-                        "provider_returned_model": data.get("model"),
-                        "system_fingerprint": data.get("system_fingerprint"),
-                    })
+        generation_metadata = {
+            **(observability_metadata or {}),
+            "task_name": task_name,
+            "prompt_version": prompt_version,
+            "provider": runtime.get("provider"),
+            "provider_name": runtime.get("provider_name"),
+            "ai_config_id": runtime.get("config_id"),
+            "runtime_source": runtime.get("source"),
+            "strict_json_schema": bool(json_schema and settings.LLM_STRICT_JSON_SCHEMA),
+        }
+        with observability.generation(
+            task_name,
+            model=runtime["model_name"],
+            model_parameters={
+                "temperature": temp,
+                "seed": settings.LLM_SEED,
+                "response_format": response_format.get("type"),
+            },
+            metadata=generation_metadata,
+            version=prompt_version,
+            input_data=payload["messages"],
+        ) as generation:
+            try:
+                # Environment proxy variables must not silently reroute CV text to
+                # a third party after the endpoint policy has checked a private host.
+                async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+                    response = await client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        json=payload,
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    usage_details = _usage_details(data)
+                    if metadata_out is not None:
+                        metadata_out.update({
+                            "provider_returned_model": data.get("model"),
+                            "system_fingerprint": data.get("system_fingerprint"),
+                        })
+                        if usage_details:
+                            metadata_out["token_usage"] = usage_details
 
-                content = data["choices"][0]["message"]["content"]
-                # Parse and validate JSON
-                parsed = json.loads(content)
-                return parsed
+                    content = data["choices"][0]["message"]["content"]
+                    # Parse and validate JSON
+                    parsed = json.loads(content)
+                    generation.update(
+                        output={**_parsed_output_summary(parsed), **observability.content_summary(parsed)},
+                        usage_details=usage_details or None,
+                        metadata={
+                            "provider_returned_model": data.get("model"),
+                            "system_fingerprint": data.get("system_fingerprint"),
+                        },
+                    )
+                    return parsed
 
-        except json.JSONDecodeError as e:
-            logger.error("LLM returned invalid JSON")
-            raise LLMError("Failed to parse LLM response as JSON")
-        except httpx.HTTPStatusError as e:
-            logger.error("LLM API error", status_code=e.response.status_code)
-            raise LLMError(f"LLM API error: {e.response.status_code}")
-        except Exception as e:
-            logger.error("Unexpected error calling LLM", error_type=type(e).__name__)
-            raise LLMError("LLM call failed") from None
+            except json.JSONDecodeError as e:
+                logger.error("LLM returned invalid JSON")
+                raise LLMError("Failed to parse LLM response as JSON")
+            except httpx.HTTPStatusError as e:
+                logger.error("LLM API error", status_code=e.response.status_code)
+                raise LLMError(f"LLM API error: {e.response.status_code}")
+            except Exception as e:
+                logger.error("Unexpected error calling LLM", error_type=type(e).__name__)
+                raise LLMError("LLM call failed") from None
 
-    async def extract_criteria_from_jd(self, jd_text: str, requisition_id: str, job_title: str) -> Dict[str, Any]:
+    async def extract_criteria_from_jd(
+        self,
+        jd_text: str,
+        requisition_id: str,
+        job_title: str,
+        *,
+        position_id: str | None = None,
+    ) -> Dict[str, Any]:
         """Task AIC-01: Extract structured MUST_HAVE/NICE_TO_HAVE criteria from JD"""
         system_prompt = """You are an expert HR Recruitment Assistant specialized in job description decomposition.
 Your task is to analyze the provided English Job Description (JD) and extract explicit, verifiable evaluation criteria.
@@ -353,6 +456,14 @@ RULES:
             user_prompt=user_prompt,
             temperature=0.0,
             metadata_out=metadata,
+            task_name="hra.llm.criteria_extraction",
+            prompt_version=CRITERIA_PROMPT_VERSION,
+            observability_metadata={
+                "position_id": position_id,
+                "requisition_id": requisition_id,
+                "input_sha256": _text_sha256(jd_text),
+                "input_characters": len(jd_text or ""),
+            },
         )
 
         # Validate against schema
@@ -388,6 +499,13 @@ STRICT PRIVACY & ANTI-BIAS RULES:
             user_prompt=user_prompt,
             temperature=0.0,  # Deterministic parsing
             metadata_out=metadata,
+            task_name="hra.llm.profile_extraction",
+            prompt_version=PROFILE_PROMPT_VERSION,
+            observability_metadata={
+                "application_id": candidate_identifier,
+                "input_sha256": _text_sha256(cv_text),
+                "input_characters": len(cv_text or ""),
+            },
         )
 
         try:
@@ -554,6 +672,12 @@ EVALUATION RULES:
                 cv_text, detect_first_line_name=True)
         user_prompt = json.dumps(prompt_payload, ensure_ascii=False)
 
+        chunk_count = 0
+        if candidate_chunks is not None:
+            if isinstance(candidate_chunks, dict):
+                chunk_count = sum(len(items) for items in candidate_chunks.values() if isinstance(items, list))
+            elif isinstance(candidate_chunks, list):
+                chunk_count = len(candidate_chunks)
         metadata: dict[str, Any] = {}
         result = await self._call_llm(
             system_prompt=system_prompt,
@@ -561,6 +685,16 @@ EVALUATION RULES:
             temperature=0.0,  # Fully deterministic matching
             json_schema=self._matching_json_schema(),
             metadata_out=metadata,
+            task_name="hra.llm.criterion_matching",
+            prompt_version=MATCHING_PROMPT_VERSION,
+            observability_metadata={
+                "application_id": candidate_identifier,
+                "criteria_version_id": rubric_version,
+                "criterion_count": len(rubric),
+                "candidate_chunk_count": chunk_count,
+                "candidate_chunks_provided": candidate_chunks is not None,
+                "input_sha256": _text_sha256(cv_text),
+            },
         )
 
         from app.services.matching import matching_engine

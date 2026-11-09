@@ -115,7 +115,12 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
     finally:
         db.close()
     try:
-        draft = await llm_client.extract_criteria_from_jd(jd_text=jd["content_text"], requisition_id=position["position_code"], job_title=position["title"])
+        draft = await llm_client.extract_criteria_from_jd(
+            jd_text=jd["content_text"],
+            requisition_id=position["position_code"],
+            job_title=position["title"],
+            position_id=str(position_id),
+        )
     except LLMError as exc:
         logger.error("Criteria generation failed", error_type=type(exc).__name__)
         raise HTTPException(status_code=503, detail="Không thể tạo tiêu chí bằng AI. Vui lòng kiểm tra cấu hình và thử lại.")
