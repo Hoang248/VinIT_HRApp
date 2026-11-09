@@ -103,7 +103,8 @@ Không thay đổi code tính năng, schema/migration, API hoặc frontend ở g
 - UX-5 vẫn chưa làm: Global Search, highlight chữ trong PDF, server-side pagination, retry từng file và overall confidence.
 - Kiểm chứng đã chạy: backend unit/integration-selected `5 passed, 50 skipped` cho workspace + integration file ở môi trường không có `TEST_DATABASE_URL`; backend full `103 passed, 64 skipped`; Ruff phạm vi mới đạt. Frontend `test:unit` 3 passed, `test:i18n` 3 passed, `type-check`, `lint` và `build` đạt.
 - Chưa chạy synthetic UI E2E vì cần backend testing + DB tổng hợp dùng một lần theo guard của test; chỉ cập nhật kỳ vọng link Sidebar từ `Dashboard` sang `Work overview`. Chưa chạy usability HR/HM trên staging.
-- Commit triển khai: sẽ ghi sau khi push ở mục cập nhật tiếp theo.
+- Commit triển khai: `c5c81e0` (`feat: triển khai Recruitment Workspace UI/UX`), đã push lên `arena/ea6e2570-vinit-hrapp`.
+- CI run `42549064191` cho commit trên: **success** cả Frontend checks, Backend unit tests và Backend integration (disposable PostgreSQL + pgvector).
 
 ## 4. Quyết định đã chốt và việc còn phải duyệt
 
