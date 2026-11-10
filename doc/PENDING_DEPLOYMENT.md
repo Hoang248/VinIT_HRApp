@@ -19,16 +19,18 @@ bằng chứng là blocker thực thi, không phải chi tiết có thể bổ s
 
 | Thành phần | Staging cho DEP-01/DEP-02 | Môi trường phục vụ project đã kết nối cho DEP-03 |
 |---|---|---|
-| Mục đích môi trường | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Backend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Frontend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
+| Mục đích môi trường | `CHƯA XÁC NHẬN — BLOCKER` | Pilot cấu hình production phục vụ thử nghiệm LLM; `APP_ENV=production` là chủ đích. Có thể coi VPS là server test, nhưng dữ liệu đã dùng không phải synthetic-only |
+| Backend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-backend`, Uvicorn nội bộ `127.0.0.1:8005`; health từng xác nhận `ready` |
+| Frontend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-frontend`, Next chạy trực tiếp cổng `3005`; hiện truy cập qua IP public `:3005` |
 | Supabase project ref | `CHƯA XÁC NHẬN — BLOCKER` | `myrymlqdbyqmpynesiwk` |
 | Migration cao nhất đã xác nhận | `CHƯA XÁC NHẬN — BLOCKER` | `20261107142027 retention_audit_integrity` |
 | Backend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
 | Frontend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Worker topology/số instance | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Loại dữ liệu được phép | Chỉ dữ liệu tổng hợp cho DEP-01 | `CHƯA XÁC NHẬN — BLOCKER` |
-| Provider/mode được phép | LLM local/mock đã duyệt; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Theo phê duyệt riêng; không suy từ staging |
+| Worker topology/số instance | `CHƯA XÁC NHẬN — BLOCKER` | PM2 có 1 `hra-backend` với worker trong cùng process và 1 `hra-frontend`; dùng chung PM2/user với NarrativeHealth |
+| Loại dữ liệu được phép | Chỉ dữ liệu tổng hợp cho DEP-01 | Đã có tài khoản HR/CV phục vụ thử nghiệm LLM; dữ liệu được người vận hành cho biết có thể reset, nhưng hiện vẫn phân loại là dữ liệu thật/pilot, không phải synthetic-only |
+| Provider/mode được phép | LLM local/mock đã duyệt; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Đã dùng cho thử nghiệm LLM; provider, loại dữ liệu đã gửi và phạm vi lưu trữ phía provider chưa được kiểm kê/phê duyệt theo DEP-05 |
+
+Kết luận Gate 0 tạm thời: stack VPS + Supabase hiện tại là **pilot cấu hình production có dữ liệu HR/CV thật dùng thử**, không tự động đạt điều kiện staging synthetic cho DEP-01/DEP-02. Muốn dùng chính stack này làm staging phải có quyết định reset/reclassify chính thức, xóa/kiểm chứng dữ liệu Auth/DB/Storage, đổi nhãn môi trường và ký bằng chứng sau reset. Phương án ưu tiên là giữ stack hiện tại cho DEP-03/pilot và tạo staging tách biệt cho DEP-01/DEP-02.
 
 ## 1. Danh sách chờ triển khai/thực thi
 

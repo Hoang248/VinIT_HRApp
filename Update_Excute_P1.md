@@ -369,6 +369,13 @@
 - Phase 1 chưa đóng. Việc chuyển sang rà soát Phase 2 không thay thế E2E staging/production, không đóng legacy keys, không phê duyệt privacy/egress và không cho phép dùng CV thật ngoài phạm vi đã được phê duyệt.
 - Khi Production được triển khai, quay lại `doc/PENDING_DEPLOYMENT.md` để thực hiện và ký bằng chứng theo từng DEP.
 
+### Tiến triển Gate 0 — Phân loại môi trường hiện tại
+
+- Người vận hành xác nhận VPS HRA được cấu hình `APP_ENV=production` có chủ đích, đồng thời có thể coi VPS là server test. Supabase project `myrymlqdbyqmpynesiwk` đã có tài khoản HR/CV phục vụ thử nghiệm mô hình LLM; dữ liệu được cho biết có thể reset.
+- Đã kiểm tra qua Supabase connector: project ở region `ap-southeast-1`, trạng thái `ACTIVE_HEALTHY`; Auth/DB/REST/Storage đều healthy; migration cao nhất là `20261107142027 retention_audit_integrity`. Không truy vấn nội dung HR/CV.
+- Kết luận tạm thời cho gate: stack hiện tại là pilot cấu hình production có dữ liệu HR/CV thật dùng thử, không phải staging synthetic sạch cho DEP-01/DEP-02. DEP-01 vẫn bị chặn cho tới khi tạo staging tách biệt hoặc có quyết định reset/reclassify chính thức kèm bằng chứng xóa/kiểm chứng dữ liệu.
+- Việc đã dùng HR/CV cho thử nghiệm LLM phải được kiểm kê ở DEP-05: provider nào đã nhận dữ liệu, loại dữ liệu đã gửi, region/lưu trữ và phê duyệt áp dụng; không suy ngược rằng thử nghiệm đã có phê duyệt privacy/egress.
+
 ## 9. Blocker ngoài code
 
 | Mã | Hạng mục | Người/điều kiện cần | Trạng thái |
