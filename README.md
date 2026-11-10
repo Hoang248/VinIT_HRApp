@@ -17,10 +17,10 @@
 
 - **Frontend:** Next.js 15 + React + MUI, giao diện Việt–Anh (mặc định Việt, lưu lựa chọn trên trình duyệt); gọi API qua proxy `/v1` cùng origin. Nội dung do người dùng nhập không được dịch tự động.
 - **Backend:** FastAPI, xác thực JWT Supabase HS256 và phân quyền nghiệp vụ theo vị trí/hồ sơ; kết nối PostgreSQL trực tiếp.
-- **Worker:** thread trong process API, poll PostgreSQL; có advisory session lock, fencing, heartbeat và tự thử phục hồi job sau crash. Cuộc gọi AI là at-least-once, không bảo đảm chạy đúng một lần; xem [runbook](DEPLOYMENT.md#phục-hồi-worker-và-giám-sát).
+- **Worker:** thread trong process API, poll PostgreSQL; có advisory session lock, fencing, heartbeat và tự thử phục hồi job sau crash. Cuộc gọi AI là at-least-once, không bảo đảm chạy đúng một lần; xem [cập nhật, rollback và sự cố](doc/VPS_DEPLOYMENT.md#8-cập-nhật-rollback-và-sự-cố).
 - **Lưu trữ:** Supabase Storage bucket private qua service role backend hoặc filesystem cục bộ dùng thử.
 
-Các migration trong `supabase/migrations/` yêu cầu Supabase Auth và các role tương ứng. Migration 00003 và 00004 đã áp vào project Supabase kết nối sau khi được xác nhận; version 00004 remote là `20261105152817 recovery_and_privacy`. **Mã tài khoản mới phụ thuộc 00005, hiện chỉ có trong repository và chưa được áp vào project kết nối.** Không triển khai backend mới vào database chưa có 00005. Không reset/push migration mù quáng; cần phê duyệt riêng, staging, backup và drain worker cũ theo [DEPLOYMENT.md](DEPLOYMENT.md).
+Các migration trong `supabase/migrations/` yêu cầu Supabase Auth và các role tương ứng. Migration 00003 và 00004 đã áp vào project Supabase kết nối sau khi được xác nhận; version 00004 remote là `20261105152817 recovery_and_privacy`. **Mã tài khoản mới phụ thuộc 00005, hiện chỉ có trong repository và chưa được áp vào project kết nối.** Không triển khai backend mới vào database chưa có 00005. Không reset/push migration mù quáng; cần phê duyệt riêng, staging, backup và drain worker cũ theo [hướng dẫn VPS](doc/VPS_DEPLOYMENT.md) và tài liệu vận hành nội bộ trong thư mục `audit/` (không đưa lên Git).
 
 ## Chạy phát triển
 
@@ -46,7 +46,7 @@ npm run dev
 
 Mở `http://localhost:3000`. Đăng nhập cần Supabase Auth thật, JWT secret tương ứng và profile/role đã cấp trong database. Khởi tạo ADMIN đầu tiên mặc định đóng; chỉ bật bằng mã ngẫu nhiên bí mật trong môi trường được bảo vệ, và chỉ thực hiện một lần. ADMIN sau đó tạo HR/HM, cấp vai trò và khóa/mở tài khoản từ **Quản lý tài khoản**. Quy trình, quyền DB và các giới hạn: [hướng dẫn bootstrap](doc/VPS_DEPLOYMENT.md#7-bootstrap-người-dùng-và-smoke-test). `/health` là liveness, `/health/ready` kiểm tra kết nối database; Swagger `/docs` chỉ bật khi `DEBUG=true`.
 
-Có thể dùng `docker compose up --build` sau khi chuẩn bị root `.env` và các dịch vụ Supabase/LLM bên ngoài. Compose không tự tạo Supabase hay LLM; xem [hướng dẫn VPS](doc/VPS_DEPLOYMENT.md) và [DEPLOYMENT.md](DEPLOYMENT.md) trước khi sử dụng. Docker chưa được kiểm thử trong phiên này.
+Có thể dùng `docker compose up --build` sau khi chuẩn bị root `.env` và các dịch vụ Supabase/LLM bên ngoài. Compose không tự tạo Supabase hay LLM; xem [hướng dẫn VPS](doc/VPS_DEPLOYMENT.md) trước khi sử dụng. Docker chưa được kiểm thử trong phiên này.
 
 ## Kiểm thử
 
@@ -65,4 +65,4 @@ TEST_DATABASE_URL='postgresql://postgres@127.0.0.1:55432/hra_phase1_test' \
 - Chưa có workflow quên mật khẩu, mời email, đổi email, xóa user hoặc đổi HM của vị trí đã tạo. Thu hồi role HR/HM qua trang quản trị cũng thu hồi phân công tương ứng và không tự khôi phục khi cấp lại; cần quy trình DBA được phê duyệt để xử lý vị trí đang phụ trách.
 - Chưa có workflow retention/xác nhận xóa; audit chưa bảo đảm bất biến; access token hiện ở `localStorage`. Worker recovery cần staging, giám sát bên ngoài, PostgreSQL session ổn định và runbook; heartbeat không chứng minh worker còn sống.
 - Admin kích hoạt cấu hình trong allowlist môi trường; kết quả đã có không tự chạy lại khi đổi model (pipeline bỏ qua profile/rubric đã có assessment hoàn tất). Client chỉ hỗ trợ `/chat/completions` OpenAI-compatible với Bearer, không trực tiếp hỗ trợ giao thức Azure riêng. Không dùng CV thật khi chưa có kiểm soát và phê duyệt phù hợp.
-- Service-role key từng xuất hiện trong Git history **phải được thu hồi/rotate** theo kế hoạch; Supabase thật và các dịch vụ AI/Storage chưa được kiểm thử đầu-cuối. Xem [PHASE1_GAP_ANALYSIS.md](PHASE1_GAP_ANALYSIS.md) và [DEPLOYMENT.md](DEPLOYMENT.md) để biết phạm vi, các giả định và việc còn lại.
+- Service-role key từng xuất hiện trong Git history **phải được thu hồi/rotate** theo kế hoạch; Supabase thật và các dịch vụ AI/Storage chưa được kiểm thử đầu-cuối. Phạm vi, giả định, trạng thái rotate key và việc còn lại được theo dõi trong báo cáo khoảng trống và tài liệu vận hành nội bộ trong thư mục `audit/` (không đưa lên Git).

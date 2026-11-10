@@ -11,6 +11,7 @@ from app.core.exceptions import NotFoundError
 from app.core.permissions import application_access
 from app.core.security import get_current_user
 from app.db.database import SessionLocal
+from app.services.matching import profile_years_experience
 
 router = APIRouter()
 
@@ -143,7 +144,9 @@ async def update_profile(application_id: UUID, request: ProfileUpdate, current_u
             VALUES (:app, :document, :version, CAST(:config AS jsonb), 'COMPLETED', :user)
             RETURNING profile_version_id
         """), {"app": app_id, "document": source_document, "version": version,
-                "config": json.dumps({"origin": "HR_MANUAL", "previous_profile_version_id": actual}),
+                "config": json.dumps({"origin": "HR_MANUAL", "previous_profile_version_id": actual,
+                                      # Keep the extracted value: the HR edit form does not expose it.
+                                      "total_years_experience": profile_years_experience(previous.get("extraction_config"))}),
                 "user": current_user["user_id"]}).scalar_one()
         for fact, encoded in zip(request.facts, facts_json):
             db.execute(text("""

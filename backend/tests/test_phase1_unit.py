@@ -5,7 +5,7 @@ from docx import Document
 
 from app.core.exceptions import FileValidationError
 from app.services.document_processor import document_processor
-from app.services.matching import matching_engine
+from app.services.matching import matching_engine, normalize_years_experience, profile_years_experience
 
 
 def test_matching_uses_weights_confidence_and_coverage():
@@ -287,3 +287,16 @@ async def test_real_llm_boundary_redacts_cv_profile_and_rubric_and_sets_guardrai
     assert "hr@example.test" not in str(captured[1])
     assert "English" in str(captured[1]) and "Search Platform" in str(captured[1])
     assert "123456789" not in str(captured[1])
+
+
+def test_years_experience_is_unknown_rather_than_zero():
+    assert normalize_years_experience(4) == 4.0
+    assert normalize_years_experience("2.5") == 2.5
+    assert normalize_years_experience(0) == 0.0
+    for bad in (None, True, "five", -1, float("nan"), float("inf"), 61):
+        assert normalize_years_experience(bad) is None
+    assert profile_years_experience({"origin": "AI_EXTRACTION", "total_years_experience": 3}) == 3.0
+    assert profile_years_experience('{"total_years_experience": 1.5}') == 1.5
+    assert profile_years_experience({}) is None
+    assert profile_years_experience(None) is None
+    assert profile_years_experience("not json") is None

@@ -1,9 +1,42 @@
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
+import json
 import re
 import math
 from app.core.config import settings
 from app.schemas.criteria import CriterionRating, CriteriaCategory
+
+
+MAX_YEARS_EXPERIENCE = 60.0
+
+
+def normalize_years_experience(value: Any) -> Optional[float]:
+    """Return a plausible years-of-experience number, or None when unknown.
+
+    The model may return strings, negatives or NaN; an unknown value must stay
+    None so the assessment step does not read it as "0 years".
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        years = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(years) or years < 0 or years > MAX_YEARS_EXPERIENCE:
+        return None
+    return round(years, 1)
+
+
+def profile_years_experience(extraction_config: Any) -> Optional[float]:
+    """Read years of experience stored on a profile version's extraction_config."""
+    if isinstance(extraction_config, str):
+        try:
+            extraction_config = json.loads(extraction_config)
+        except ValueError:
+            return None
+    if not isinstance(extraction_config, dict):
+        return None
+    return normalize_years_experience(extraction_config.get("total_years_experience"))
 
 
 class MatchingEngine:

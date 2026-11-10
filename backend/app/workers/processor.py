@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.document_processor import document_processor, DocumentType
 from app.services.llm_client import llm_client, LLMError
-from app.services.matching import matching_engine
+from app.services.matching import matching_engine, normalize_years_experience, profile_years_experience
 from app.services.redaction import redact_text
 from app.services.ai_config import get_active_runtime, runtime_context
 from datetime import datetime
@@ -445,9 +445,16 @@ class ProcessingWorker:
                         INSERT INTO app_private.profile_versions
                         (application_id, source_document_id, version_number, extraction_config, status, created_at)
                         VALUES
-                        (:application_id, :document_id, 1, '{}'::jsonb, 'COMPLETED', NOW())
+                        (:application_id, :document_id, 1, CAST(:extraction_config AS jsonb), 'COMPLETED', NOW())
                         RETURNING profile_version_id
-                    """), {"application_id": application_id, "document_id": document_id})
+                    """), {"application_id": application_id, "document_id": document_id,
+                            "extraction_config": json.dumps({
+                                "origin": "AI_EXTRACTION",
+                                # Not a profile_facts row: the fact_type CHECK has no slot for it,
+                                # and storing it here avoids a schema migration.
+                                "total_years_experience": normalize_years_experience(
+                                    candidate_profile.get("total_years_experience")),
+                            })})
                     profile_version_id = profile_ver_result.fetchone()[0]
 
                     # Extract basic contact signals locally; never infer a name from the
@@ -622,7 +629,8 @@ class ProcessingWorker:
 
         applications = db.execute(text("""
             SELECT DISTINCT ON (a.application_id) a.application_id, d.document_id,
-                   processing.extracted_text_storage_path, profile.profile_version_id
+                   processing.extracted_text_storage_path, profile.profile_version_id,
+                   profile.extraction_config
             FROM app_private.applications a
             JOIN app_private.application_documents d ON d.application_id = a.application_id
             LEFT JOIN LATERAL (
@@ -631,7 +639,7 @@ class ProcessingWorker:
                 ORDER BY created_at DESC LIMIT 1
             ) processing ON TRUE
             LEFT JOIN LATERAL (
-                SELECT profile_version_id FROM app_private.profile_versions
+                SELECT profile_version_id, extraction_config FROM app_private.profile_versions
                 WHERE application_id = a.application_id AND status = 'COMPLETED'
                 ORDER BY version_number DESC LIMIT 1
             ) profile ON TRUE
@@ -676,7 +684,8 @@ class ProcessingWorker:
                     """), {"profile_version_id": str(app["profile_version_id"])}).mappings().all()
                     candidate_profile = {
                         "candidate_identifier": application_id,
-                        "total_years_experience": 0,
+                        # None means "not stated in the CV"; never send a fabricated 0.
+                        "total_years_experience": profile_years_experience(app["extraction_config"]),
                         "education": [f["fact_value"] for f in facts if f["fact_type"] == "EDUCATION"],
                         "work_history": [f["fact_value"] for f in facts if f["fact_type"] == "WORK_EXPERIENCE"],
                         "skills": [f["fact_value"].get("name") for f in facts if f["fact_type"] == "SKILL"],

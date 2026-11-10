@@ -787,7 +787,9 @@ def test_recovery_resumes_processing_document_and_reconciles_batch(client, seed,
                 "education": [], "work_history": [], "skills": ["Python"], "certifications": [],
                 "languages": [{"name": "English", "level": "Professional"}],
                 "projects": [{"name": "Synthetic Search", "description": "Python services"}]}
+    seen_profiles = []
     async def match(cv_text, candidate_profile, rubric, candidate_identifier, rubric_version):
+        seen_profiles.append(candidate_profile)
         return {"findings": [{"criterion_id": rubric[0]["criterion_id"], "outcome": "MATCH", "confidence": .9,
                               "confidence_band": "HIGH", "reasoning": "Evidence provided",
                               "evidence": {"verbatim_quote": "Built Python services for two years", "page_number": None}}]}
@@ -817,6 +819,10 @@ def test_recovery_resumes_processing_document_and_reconciles_batch(client, seed,
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE operation_id=:id AND status='COMPLETED'"), {"id": op}).scalar_one() == 1
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.ranking_runs WHERE operation_id=:id"), {"id": op}).scalar_one() == 1
         assert set(conn.execute(text("SELECT fact_type FROM app_private.profile_facts WHERE fact_type IN ('LANGUAGE','PROJECT')")).scalars()) == {'LANGUAGE', 'PROJECT'}
+        config = conn.execute(text("SELECT extraction_config FROM app_private.profile_versions")).scalar_one()
+        assert config["total_years_experience"] == 2.0 and config["origin"] == "AI_EXTRACTION"
+    # The extracted years must reach the matching step instead of a hard-coded 0.
+    assert [profile["total_years_experience"] for profile in seen_profiles] == [2.0]
 
 
 def test_worker_health_is_admin_only_and_reports_stale_work(client, seed):
