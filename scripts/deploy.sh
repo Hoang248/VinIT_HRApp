@@ -2,7 +2,7 @@
 # ============================================================================
 # Smart deploy for VinIT HRApp on a PM2/no-Docker VPS (idempotent).
 #
-#   git up        → 1. pull code (skip everything when already up to date)
+#   git uphra     → 1. pull code (skip everything when already up to date)
 #   2. install Node deps only when frontend/package*.json changed
 #      (+ Python deps only when backend/pyproject.toml changed)
 #   3. stop on Supabase migration changes — this script never applies
@@ -13,10 +13,15 @@
 #   5. pm2 restart — hra-frontend after a build/asset sync; hra-backend after
 #      backend Python or dependency changes; both after --force
 #
+# Recommended alias on a VPS shared with other projects (Git global aliases
+# are per OS user, not per repository, so each project needs a unique name):
+#   git config --global alias.uphra '!bash /home/ubuntu/hra/scripts/deploy.sh'
+#
 # Usage:
+#   git uphra                                   # full smart run for HRA
+#   git uphra arena/ea6e2570-vinit-hrapp        # deploy a specific HRA branch
 #   bash scripts/deploy.sh                      # full smart run
 #   bash scripts/deploy.sh --force              # ignore markers, do everything
-#   bash scripts/deploy.sh arena/ea6e2570-vinit-hrapp
 #   bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
 #   bash scripts/deploy.sh --migrations-verified
 #
@@ -191,7 +196,7 @@ if [[ -f "$MARK" ]]; then
 fi
 
 STARTED=$(date +%s)
-log "Smart deploy VinIT HRApp — branch: $BRANCH"
+log "Smart deploy VinIT HRApp — repo: $(pwd) — branch: $BRANCH — PM2: $PM2_BACKEND/$PM2_FRONTEND"
 
 # ─── 1. Code: pull only if there is something new ───────────────────────────
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -404,7 +409,7 @@ else
 PENDING_FRONTEND_RESTART=$(( 1 - FRONTEND_RESTART_OK ))
 PENDING_BACKEND_RESTART=$(( 1 - BACKEND_RESTART_OK ))
 EOF
-  warn "some pm2 restarts did not succeed — they will retry on the next 'git up'"
+  warn "some pm2 restarts did not succeed — they will retry on the next 'git uphra'"
 fi
 
 # ─── Persist state ──────────────────────────────────────────────────────────

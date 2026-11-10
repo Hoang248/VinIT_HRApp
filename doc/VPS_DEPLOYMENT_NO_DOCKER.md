@@ -565,7 +565,7 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    pm2 save
    ```
 
-### 12.1.1. Cập nhật nhanh bằng `git up` trên VPS
+### 12.1.1. Cập nhật nhanh bằng `git uphra` trên VPS
 
 Repo có sẵn script smart deploy tại `scripts/deploy.sh`, đã chỉnh theo đúng dự án này:
 
@@ -577,20 +577,22 @@ Repo có sẵn script smart deploy tại `scripts/deploy.sh`, đã chỉnh theo 
 - Script có stale-guard: nếu lần trước build xong nhưng PM2 restart lỗi, lần chạy sau sẽ retry restart kể cả khi code không đổi.
 - Script từ chối pull khi worktree có thay đổi local hoặc local có commit chưa push.
 
-Gán alias `git up` trên VPS:
+Trên VPS chạy chung nhiều project, không dùng tên chung `git up` cho HRA. Alias đặt bằng `git config --global` thuộc về OS user, không thuộc từng thư mục/repository; nếu NarrativeHealth và HRA cùng khai báo `alias.up`, khai báo sau sẽ thắng trên toàn VPS bất kể đang đứng ở thư mục nào. Vì vậy HRA dùng tên riêng `git uphra`:
 
 ```bash
-git config --global alias.up '!bash /home/ubuntu/hra/scripts/deploy.sh'
+git config --global alias.uphra '!bash /home/ubuntu/hra/scripts/deploy.sh'
 ```
+
+Có thể giữ nguyên `git up` cho NarrativeHealth, hoặc đổi NarrativeHealth sang một tên riêng tương tự như `git upnh`; không để hai project cùng dùng một global alias trỏ tới hai script khác nhau. PM2 dùng chung một daemon không phải vấn đề tự thân: hai project vẫn an toàn nếu tên process, thư mục chạy, cổng và file env tách riêng. HRA chỉ restart đúng `hra-backend`/`hra-frontend` và dùng cổng 8005/3005.
 
 Cách dùng:
 
 ```bash
 cd /home/ubuntu/hra
-git up
+git uphra
 
 # Chỉ định branch deploy khác (hai cách tương đương)
-git up arena/ea6e2570-vinit-hrapp
+git uphra arena/ea6e2570-vinit-hrapp
 bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
 
 # Buộc làm lại toàn bộ các bước smart deploy
@@ -600,7 +602,15 @@ bash scripts/deploy.sh --force
 bash scripts/deploy.sh --migrations-verified
 ```
 
-Lưu ý: nếu output vẫn hiển thị các PM2 app kiểu `nextjs-dashboard`/`fastapi-backend` hoặc branch `main` ngoài dự kiến, VPS đang gọi nhầm script/alias của project khác. Kiểm tra `git config --global --get alias.up`, `git remote -v`, `git branch --show-current` và 5 dòng đầu của `scripts/deploy.sh`; script đúng của dự án này mở đầu bằng `Smart deploy for VinIT HRApp`.
+Dòng đầu của script đúng phải in rõ `Smart deploy VinIT HRApp`, đường dẫn repo `/home/ubuntu/hra`, branch cần deploy và `PM2: hra-backend/hra-frontend`. Nếu output vẫn hiển thị `nextjs-dashboard`/`fastapi-backend`, lệnh vừa chạy vẫn là script của NarrativeHealth. Khi đó kiểm tra:
+
+```bash
+git config --global --get alias.up
+git config --global --get alias.uphra
+git remote -v
+git branch --show-current
+head -25 scripts/deploy.sh
+```
 
 Lần chạy đầu tiên trên VPS, nếu chưa có thư mục state `.deploy-state/`, script chỉ coi migration là thay đổi khi lần pull đó thực sự kéo về file migration mới hoặc marker cũ ghi nhận hash khác. Thư mục `.deploy-state/` đã được ignore khỏi Git.
 
