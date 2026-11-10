@@ -387,7 +387,7 @@
 
 - Đã mở rộng `POST /v1/auth/change-password`: mọi tài khoản `ACTIVE` đều tự đổi được mật khẩu sau khi tái xác thực bằng mật khẩu hiện tại; luồng bắt buộc đổi mật khẩu tạm thời vẫn giữ và được ghi audit riêng (`CHANGE_TEMPORARY_PASSWORD` so với `CHANGE_OWN_PASSWORD`). Sau khi đổi, token cũ bị từ chối qua `tokens_valid_after`.
 - Đã thêm `POST /v1/admin/users/{user_id}/reset-password` cho Admin: đặt mật khẩu tạm thời qua Supabase Auth Admin API, bật `must_change_password=true`, thu hồi token cũ và ghi audit `RESET_USER_PASSWORD` không chứa credential. Giao diện Admin → Tài khoản có hành động “Đặt lại mật khẩu”; menu tài khoản có lối vào “Đổi mật khẩu”.
-- Kiểm thử cục bộ: backend unit `117 passed, 65 skipped` (integration DB không chạy khi thiếu `TEST_DATABASE_URL`), frontend i18n/type-check/lint/build đều đạt. Chưa deploy lên VPS và chưa coi là bằng chứng E2E/DEP-01 cho tới khi CI integration đạt và kiểm thử đăng nhập thực tế trên môi trường test.
+- Kiểm thử: commit `91539bc`; cục bộ backend unit `117 passed, 65 skipped` (integration DB không chạy khi thiếu `TEST_DATABASE_URL`), frontend i18n/type-check/lint/build đều đạt; GitHub Actions run `42808084883` đạt cả 3 job Backend unit, Frontend checks và Backend integration. Chưa deploy lên VPS và chưa coi là bằng chứng E2E/DEP-01 cho tới khi cập nhật runtime và kiểm thử đăng nhập thực tế trên môi trường test.
 
 ## 9. Blocker ngoài code
 
