@@ -394,7 +394,7 @@
 - Người vận hành phát hiện AI có thể tách một yêu cầu thành tiêu chí chồng lấp, ví dụ thêm `Backend API Development` bên cạnh `Python Programming`; bản nháp cũ chưa cho HR thêm/xóa/chuyển nhóm tiêu chí và hiển thị `Docker=30%` dù là tiêu chí duy nhất của nhóm Ưu tiên.
 - Đã sửa prompt tiêu chí (`criteria-prompt-v2.1`) để yêu cầu weight trong từng nhóm cộng 100% và tránh tách tiêu chí chồng lấp; backend chuẩn hoá kết quả AI theo từng nhóm trước khi lưu, ví dụ Docker duy nhất trong NICE_TO_HAVE được lưu/hiển thị 100% trong nhóm và tương ứng 30% tổng điểm khi nhóm Ưu tiên chiếm 30%.
 - HR phụ trách nay có thể thêm, sửa tên/mô tả/loại yêu cầu/từ khóa bằng chứng, chuyển tiêu chí giữa Bắt buộc/Ưu tiên và xóa tiêu chí khỏi bản nháp. Đã thêm màn hình “Điều chỉnh trọng số tiêu chí” với tổng từng nhóm, chia đều, chuẩn hoá theo tỉ lệ hiện tại và lưu nguyên tử; backend chặn HR/HM duyệt nếu một nhóm hiện có không cộng đúng 100% hoặc thiếu tiêu chí Bắt buộc.
-- Kiểm thử cục bộ sau sửa: backend `117 passed, 66 skipped` (test integration mới chờ CI PostgreSQL), frontend i18n/type-check/lint/build đều đạt. Chưa deploy lên VPS; bản nháp hiện hữu phải được HR xóa tiêu chí thừa và bấm chuẩn hoá trọng số sau khi cập nhật, hoặc tạo phiên bản tiêu chí mới.
+- Kiểm thử: commit `4dce013`; cục bộ backend `117 passed, 66 skipped` (test integration mới chờ CI PostgreSQL), frontend i18n/type-check/lint/build đều đạt; GitHub Actions run `42842019405` đạt cả 3 job Backend unit, Frontend checks và Backend integration. Chưa deploy lên VPS; bản nháp hiện hữu phải được HR xóa tiêu chí thừa và bấm chuẩn hoá trọng số sau khi cập nhật, hoặc tạo phiên bản tiêu chí mới.
 
 ## 9. Blocker ngoài code
 
