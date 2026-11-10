@@ -277,17 +277,11 @@ Không dùng lệnh in toàn bộ `settings` hoặc nội dung `.env` vào log/t
 
 ```bash
 cd /home/ubuntu/hra/frontend
-npm ci
+npm ci --no-audit --no-fund
 npm run build
 ```
 
-Project đã bật `output: 'standalone'`. Bổ sung static assets và thư mục public vào bản standalone:
-
-```bash
-rm -rf .next/standalone/.next/static .next/standalone/public
-cp -a .next/static .next/standalone/.next/static
-cp -a public .next/standalone/public
-```
+Trên VPS/PM2, frontend chạy trực tiếp bằng `next start` từ thư mục `frontend`, nên Next tự phục vụ `.next/static` và `public`; không copy assets vào `.next/standalone`. Bản standalone chỉ còn là lựa chọn riêng cho Docker image khi build với `NEXT_OUTPUT_STANDALONE=1`.
 
 Không cần `frontend/.env.local` nếu biến `API_INTERNAL_URL` đã được đặt trong PM2 ecosystem ở bước tiếp theo. Nếu chạy thử bằng `npm run dev`, khi đó mới sao chép mẫu:
 
@@ -304,7 +298,7 @@ PM2 quản lý đúng hai app:
 | PM2 app | Tiến trình | Cổng nội bộ |
 |---|---|---|
 | `hra-backend` | Uvicorn/FastAPI từ Python venv | `127.0.0.1:8005` |
-| `hra-frontend` | Next.js standalone `server.js` | `127.0.0.1:3005` |
+| `hra-frontend` | Next.js `next start` trực tiếp từ thư mục `frontend` | `127.0.0.1:3005` |
 
 Không tạo file `.service` trong `/etc/systemd/system` cho hai app này.
 
@@ -333,8 +327,9 @@ module.exports = {
     },
     {
       name: 'hra-frontend',
-      cwd: '/home/ubuntu/hra/frontend/.next/standalone',
-      script: 'server.js',
+      cwd: '/home/ubuntu/hra/frontend',
+      script: '/home/ubuntu/hra/frontend/node_modules/next/dist/bin/next',
+      args: 'start --hostname 127.0.0.1 --port 3005',
       interpreter: 'node',
       instances: 1,
       exec_mode: 'fork',
@@ -343,8 +338,6 @@ module.exports = {
       kill_timeout: 30000,
       env: {
         NODE_ENV: 'production',
-        PORT: '3005',
-        HOSTNAME: '127.0.0.1',
         API_INTERNAL_URL: 'http://127.0.0.1:8005',
       },
     },
@@ -546,11 +539,8 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    .venv/bin/python -m pip install .
 
    cd ../frontend
-   npm ci
+   npm ci --no-audit --no-fund
    npm run build
-   rm -rf .next/standalone/.next/static .next/standalone/public
-   cp -a .next/static .next/standalone/.next/static
-   cp -a public .next/standalone/public
    ```
 
 5. Nếu release có migration mới, dừng tại đây và thực hiện quy trình migration/staging/backup/rollback đã được phê duyệt riêng. Không tự áp migration chỉ vì code mới đã được checkout. Đối với bản OpenAI Compatible dùng migration `00006`, project Supabase đã kết nối đã được áp version remote `20261106042158`; trên VPS vẫn phải bảo đảm `AI_CONFIG_ENCRYPTION_KEY` đã có trong `backend/.env` trước khi khởi động lại backend, nếu không Admin sẽ không lưu được API key mới. Bản quản lý phòng ban/mã vị trí tự sinh dùng migration `00007`, project đã kết nối đã được áp version remote `20261106050756`; không cần chạy lại migration trên VPS. Bản matching ổn định dùng migration `00008`, project đã kết nối đã được áp version remote `20261107012433`; trên VPS chỉ cần pull code và restart backend/frontend, không chạy lại migration.
@@ -571,8 +561,8 @@ Repo có sẵn script smart deploy tại `scripts/deploy.sh`, đã chỉnh theo 
 
 - PM2 app đúng là `hra-backend` và `hra-frontend`.
 - Backend cài dependency từ `backend/pyproject.toml` bằng `backend/.venv`, chỉ khi file này thay đổi.
-- Frontend cài dependency bằng `npm ci`, chỉ khi `frontend/package.json`/`package-lock.json` thay đổi.
-- Frontend chỉ build lại khi source/config/deps thay đổi; sau build luôn copy `.next/static` và `public` vào `.next/standalone` để tránh lỗi mất logo/JS khiến đăng nhập quay vòng.
+- Frontend cài dependency bằng `npm ci --no-audit --no-fund`, chỉ khi `frontend/package.json`/`package-lock.json` thay đổi hoặc marker bootstrap chưa có mà `node_modules` không kiểm chứng được.
+- Frontend chỉ build lại khi source/config/deps thay đổi; PM2 chạy `next start` trực tiếp từ thư mục `frontend`, nên không copy `.next/static`/`public` vào standalone.
 - Script **không tự áp Supabase migrations**. Nếu `supabase/migrations` thay đổi, script dừng lại; sau khi migration đã được áp/kiểm chứng qua quy trình Supabase đã duyệt, chạy lại với `--migrations-verified`.
 - Script có stale-guard: nếu lần trước build xong nhưng PM2 restart lỗi, lần chạy sau sẽ retry restart kể cả khi code không đổi.
 - Script từ chối pull khi worktree có thay đổi local hoặc local có commit chưa push.
@@ -604,6 +594,19 @@ bash scripts/deploy.sh --migrations-verified
 
 Nếu bản script cũ dừng với `worktree has local changes` và chỉ liệt kê `backend/build/` cùng `ecosystem.config.cjs`, không xóa `ecosystem.config.cjs` vì đó là cấu hình PM2 riêng của VPS. Sao lưu file này, chạy một lần `git pull --ff-only origin arena/ea6e2570-vinit-hrapp` thủ công để lấy `.gitignore` và script mới, kiểm tra `git status --short`, rồi chạy lại `git uphra`. Từ bản mới, hai đường dẫn này được ignore và cũng được script bỏ qua ở bước kiểm tra bootstrap.
 
+Khi chuyển từ bản standalone cũ sang `next start` trực tiếp, sao lưu `ecosystem.config.cjs`, sửa riêng app `hra-frontend` theo mục 9.1, rồi nạp lại đúng app đó trước khi chạy script mới:
+
+```bash
+cp -a /home/ubuntu/hra/ecosystem.config.cjs /home/ubuntu/ecosystem.config.cjs.bak-direct
+${EDITOR:-nano} /home/ubuntu/hra/ecosystem.config.cjs
+pm2 startOrReload /home/ubuntu/hra/ecosystem.config.cjs --only hra-frontend --update-env
+pm2 save
+pm2 describe hra-frontend
+curl --fail --output /dev/null http://127.0.0.1:3005/
+```
+
+Script mới kiểm tra `pm2 jlist`; nếu `hra-frontend` vẫn trỏ vào `.next/standalone`, script dừng với exit code 6 để tránh restart nhầm runtime cũ sau khi build trực tiếp.
+
 Dòng đầu của script đúng phải in rõ `Smart deploy VinIT HRApp`, đường dẫn repo `/home/ubuntu/hra`, branch cần deploy và `PM2: hra-backend/hra-frontend`. Nếu output vẫn hiển thị `nextjs-dashboard`/`fastapi-backend`, lệnh vừa chạy vẫn là script của NarrativeHealth. Khi đó kiểm tra:
 
 ```bash
@@ -622,7 +625,7 @@ Nếu bản mới lỗi và không phụ thuộc thay đổi database không tư
 
 1. Dừng frontend/backend và drain worker như trên.
 2. Checkout lại SHA trước đó.
-3. Cài lại backend, build lại frontend và bổ sung static/public vào standalone như bước cập nhật.
+3. Cài lại backend và build lại frontend trực tiếp như bước cập nhật; không cần thao tác standalone trên VPS.
 4. Khởi động backend bằng `pm2 start hra-backend`, kiểm tra `/health/ready` ở cổng 8005, sau đó khởi động frontend bằng `pm2 start hra-frontend`, kiểm tra cổng 3005/HTTPS và chạy `pm2 save`.
 
 Không tự rollback migration bằng cách sửa bảng migration history hoặc chạy reset. Rollback database phải theo kế hoạch đã thử trên staging.

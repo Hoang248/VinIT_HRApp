@@ -8,10 +8,10 @@
 #   3. stop on Supabase migration changes — this script never applies
 #      supabase/migrations automatically; rerun with --migrations-verified
 #      after the migration has been applied/verified outside the VPS deploy
-#   4. rebuild Next only when frontend source/config/deps changed, then copy
-#      .next/static and public into the standalone bundle
-#   5. pm2 restart — hra-frontend after a build/asset sync; hra-backend after
-#      backend Python or dependency changes; both after --force
+#   4. rebuild Next only when frontend source/config/deps changed; PM2 runs
+#      `next start` directly from frontend, so no standalone asset copy
+#   5. pm2 restart — hra-frontend after a build; hra-backend after backend
+#      Python or dependency changes; both after --force
 #
 # Recommended alias on a VPS shared with other projects (Git global aliases
 # are per OS user, not per repository, so each project needs a unique name):
@@ -159,17 +159,36 @@ backend_src_hash() {
   find backend/app -type f -name '*.py' -print0 2>/dev/null | hash_files
 }
 
-sync_frontend_assets() {
-  rm -rf frontend/.next/standalone/.next/static frontend/.next/standalone/public
-  cp -a frontend/.next/static frontend/.next/standalone/.next/static
-  cp -a frontend/public frontend/.next/standalone/public
+frontend_build_missing() {
+  [[ ! -f frontend/.next/BUILD_ID ]]
 }
 
-frontend_assets_missing() {
-  [[ ! -f frontend/.next/standalone/server.js ]] && return 0
-  [[ ! -f frontend/.next/standalone/public/vinuni-logo.png ]] && return 0
-  [[ ! -d frontend/.next/standalone/.next/static ]] && return 0
-  return 1
+frontend_node_modules_usable() {
+  [[ -f frontend/node_modules/.package-lock.json ]] || return 1
+  (cd frontend && npm ls --depth=0 >/dev/null 2>&1)
+}
+
+pm2_frontend_uses_standalone() {
+  command -v pm2 >/dev/null 2>&1 || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  pm2 jlist 2>/dev/null | PM2_PROCESS_NAME="$PM2_FRONTEND" node -e '
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const apps = JSON.parse(input);
+        const app = apps.find((item) => item.name === process.env.PM2_PROCESS_NAME);
+        if (!app) process.exit(1);
+        const env = app.pm2_env || {};
+        const args = Array.isArray(env.args) ? env.args.join(" ") : (env.args || "");
+        const runtime = [env.pm_cwd, env.pm_exec_path, args].filter(Boolean).join(" ");
+        process.exit(runtime.includes(".next/standalone") ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    });
+  '
 }
 
 # ─── Load previous state ────────────────────────────────────────────────────
@@ -198,6 +217,12 @@ fi
 STARTED=$(date +%s)
 log "Smart deploy VinIT HRApp — repo: $(pwd) — branch: $BRANCH — PM2: $PM2_BACKEND/$PM2_FRONTEND"
 
+if pm2_frontend_uses_standalone; then
+  warn "PM2 process $PM2_FRONTEND still runs the Next.js standalone bundle"
+  warn "switch its ecosystem entry to node_modules/next/dist/bin/next with args 'start --hostname 127.0.0.1 --port 3005', reload PM2, then rerun git uphra"
+  exit 6
+fi
+
 # ─── 1. Code: pull only if there is something new ───────────────────────────
 # ecosystem.config.cjs is intentionally VPS-local and backend/build/ is a
 # generated Python artifact. They may exist before the .gitignore rules are
@@ -211,7 +236,7 @@ if [[ -n "$WORKTREE_CHANGES" ]]; then
 fi
 
 NEED_BUILD=0; NEED_NODE_DEPS=0; NEED_PY_DEPS=0; MIGRATION_CHANGED=0; PULLED=0
-FRONTEND_CHANGED=0; BACKEND_CHANGED=0; ASSETS_SYNCED=0
+FRONTEND_CHANGED=0; BACKEND_CHANGED=0
 MIG_HASH_BEFORE_PULL=$(migrations_hash)
 
 FETCH_OK=1
@@ -267,14 +292,18 @@ fi
 # ─── 2a. Node dependencies: install only when frontend lock inputs changed ──
 LOCK_HASH=$(frontend_deps_hash)
 if [[ $FORCE -eq 1 || "$LOCK_HASH" != "$PREV_LOCK" ]]; then
-  log "installing frontend Node dependencies (npm ci)…"
-  if (cd frontend && npm ci); then
-    ok "frontend Node dependencies ready"
-    NEED_NODE_DEPS=1
-    NEED_BUILD=1
+  if [[ $FORCE -eq 0 && -z "$PREV_LOCK" ]] && frontend_node_modules_usable; then
+    skip "frontend Node dependencies already installed — accepting bootstrap baseline"
   else
-    warn "npm ci FAILED — marker not updated"
-    exit 1
+    log "installing frontend Node dependencies (npm ci)…"
+    if (cd frontend && npm ci --no-audit --no-fund); then
+      ok "frontend Node dependencies ready"
+      NEED_NODE_DEPS=1
+      NEED_BUILD=1
+    else
+      warn "npm ci FAILED — marker not updated"
+      exit 1
+    fi
   fi
 else
   skip "frontend Node dependencies unchanged"
@@ -332,32 +361,22 @@ fi
 if [[ $NEED_BUILD -eq 1 ]]; then
   log "building Next.js…"
   if (cd frontend && npm run build); then
-    sync_frontend_assets
-    ASSETS_SYNCED=1
-    ok "Next.js build completed and standalone assets synced"
+    ok "Next.js build completed"
   else
-    warn "Next.js build FAILED — keeping previous standalone runtime"
+    warn "Next.js build FAILED — keeping previous frontend runtime"
     exit 1
   fi
 else
   skip "frontend build unchanged — reusing existing .next"
-  if frontend_assets_missing; then
-    if [[ -d frontend/.next/static && -f frontend/.next/standalone/server.js ]]; then
-      warn "standalone assets missing — syncing existing build assets"
-      sync_frontend_assets
-      ASSETS_SYNCED=1
+  if frontend_build_missing; then
+    warn "frontend build output missing — rebuilding"
+    if (cd frontend && npm run build); then
+      NEED_BUILD=1
+      FRONTEND_CHANGED=1
+      ok "Next.js build completed"
     else
-      warn "standalone assets missing and no reusable build output — rebuilding"
-      if (cd frontend && npm run build); then
-        sync_frontend_assets
-        ASSETS_SYNCED=1
-        NEED_BUILD=1
-        FRONTEND_CHANGED=1
-        ok "Next.js build completed and standalone assets synced"
-      else
-        warn "Next.js build FAILED — keeping previous standalone runtime"
-        exit 1
-      fi
+      warn "Next.js build FAILED — keeping previous frontend runtime"
+      exit 1
     fi
   fi
 fi
@@ -383,8 +402,8 @@ else
   skip "$PM2_BACKEND restart not needed (no backend change)"
 fi
 
-if [[ $NEED_BUILD -eq 1 || $ASSETS_SYNCED -eq 1 || $PENDING_FRONTEND_RESTART -eq 1 || $FORCE -eq 1 ]]; then
-  [[ $PENDING_FRONTEND_RESTART -eq 1 && $NEED_BUILD -eq 0 && $ASSETS_SYNCED -eq 0 ]] && warn "retrying pending $PM2_FRONTEND restart from a previous run"
+if [[ $NEED_BUILD -eq 1 || $PENDING_FRONTEND_RESTART -eq 1 || $FORCE -eq 1 ]]; then
+  [[ $PENDING_FRONTEND_RESTART -eq 1 && $NEED_BUILD -eq 0 ]] && warn "retrying pending $PM2_FRONTEND restart from a previous run"
   if pm2_restart "$PM2_FRONTEND"; then
     FRONTEND_RESTARTED=1
     wait_for_url "frontend" "$FRONTEND_URL" 30 || FRONTEND_RESTART_OK=0
@@ -430,7 +449,7 @@ LAST_RUN=$(date -Iseconds)
 EOF
 
 DUR=$(( $(date +%s) - STARTED ))
-log "done in ${DUR}s — (code:$PULLED nodeDeps:$NEED_NODE_DEPS pyDeps:$NEED_PY_DEPS migrations:$MIGRATION_CHANGED build:$NEED_BUILD assets:$ASSETS_SYNCED backendRestart:$BACKEND_RESTARTED frontendRestart:$FRONTEND_RESTARTED)"
+log "done in ${DUR}s — (code:$PULLED nodeDeps:$NEED_NODE_DEPS pyDeps:$NEED_PY_DEPS migrations:$MIGRATION_CHANGED build:$NEED_BUILD backendRestart:$BACKEND_RESTARTED frontendRestart:$FRONTEND_RESTARTED)"
 
 [[ $SMOKE_OK -eq 1 ]] || exit 4
 [[ $FRONTEND_RESTART_OK -eq 1 && $BACKEND_RESTART_OK -eq 1 ]] || exit 5

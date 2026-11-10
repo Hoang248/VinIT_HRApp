@@ -27,7 +27,7 @@
 | 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
 | 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Commit `c862700`; GitHub Actions run `42385930996` đạt cả 3 job; DEP-01 đang bị chặn bởi mapping môi trường staging |
 | 5.4 | Chẩn đoán thông báo CI cũ và giảm nhiễu cho thay đổi chỉ gồm Markdown | ĐÃ XỬ LÝ | Run lỗi `42379094324` thuộc commit cũ `479e391`; nguyên nhân đã sửa ở `3105045`; CI tại HEAD `072c7e2` đạt cả 3 job |
-| OPS-1 | Smart deploy `git uphra` cho VPS PM2/no-Docker | ĐÃ LÀM Ở SCRIPT/TÀI LIỆU — CHỜ ÁP DỤNG ĐÚNG TRÊN VPS | Commit `605aed0`, `82df2c0`, `b177a66`, `b88aa2b`; GitHub Actions run `42760182499`, `42761053413`, `42761695196`, `42777309240` đạt cả 3 job; HRA dùng alias riêng `uphra` để không chồng lấn NarrativeHealth trên VPS dùng chung |
+| OPS-1 | Smart deploy `git uphra` cho VPS PM2/no-Docker | ĐÃ LÀM Ở SCRIPT/TÀI LIỆU — CHỜ ÁP DỤNG ĐÚNG TRÊN VPS | Commit `605aed0`, `82df2c0`, `b177a66`, `b88aa2b`; GitHub Actions run `42760182499`, `42761053413`, `42761695196`, `42777309240` đạt cả 3 job; HRA dùng alias riêng `uphra` và frontend chuyển sang `next start` trực tiếp như NarrativeHealth |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -340,7 +340,9 @@
 - PM2 dùng chung không phải lỗi tự thân nếu tên process, cwd, cổng và env tách riêng; script HRA chỉ restart `hra-backend`/`hra-frontend` và từ nay in rõ repo root, branch và PM2 targets ở dòng log đầu tiên.
 - Sau khi alias `uphra` được tạo, script đã chạy đúng repo HRA nhưng dừng an toàn vì worktree có hai untracked path: `backend/build/` và `ecosystem.config.cjs`. Đây là lỗi bootstrap của bộ deploy: tài liệu yêu cầu tạo ecosystem ngoài Git nhưng `.gitignore` chưa ignore file này, còn `backend/build/` là artifact do pip/setuptools sinh ra.
 - Đã bổ sung ignore cho `/ecosystem.config.cjs` và `backend/build/`; script mới cũng bỏ qua đúng hai untracked path đã biết này ở lần bootstrap trước khi pull được `.gitignore`, trong khi vẫn dừng với mọi tracked modification hoặc untracked path khác.
-- Chưa xác nhận smart deploy VinIT chạy thành công trên VPS; người vận hành cần sao lưu ecosystem, pull thủ công một lần để lấy bản sửa, rồi chạy lại `git uphra`.
+- Người dùng chốt chuyển frontend VPS sang hướng đơn giản như NarrativeHealth: PM2 chạy `next start` trực tiếp từ thư mục `frontend`, bỏ bước copy `.next/static`/`public` vào standalone. `frontend/next.config.js` chỉ bật standalone khi `NEXT_OUTPUT_STANDALONE=1`; Dockerfile đặt biến này để giữ đường Docker hiện tại.
+- Script deploy bỏ logic sync standalone, kiểm tra `.next/BUILD_ID` khi tái dùng build cũ, dùng `npm ci --no-audit --no-fund`, và ở lần bootstrap chưa có marker sẽ chấp nhận `node_modules` sẵn có nếu `npm ls --depth=0` kiểm chứng đạt. Script cũng dừng nếu PM2 `hra-frontend` vẫn trỏ vào `.next/standalone` để tránh restart runtime cũ sau khi build trực tiếp.
+- Chưa xác nhận smart deploy VinIT chạy thành công trên VPS; người vận hành cần sao lưu/sửa ecosystem sang direct mode, pull thủ công một lần để lấy bản sửa, rồi chạy lại `git uphra`.
 
 #### Commit/CI
 
@@ -349,6 +351,7 @@
 - Sau phản hồi chạy thử nhầm script cũ trên VPS, commit `82df2c0` bổ sung hỗ trợ `git up <branch>` dạng positional và lưu ý chẩn đoán alias/script. GitHub Actions run `42761053413` cho commit này: **success** cả 3 job.
 - Chuẩn lệnh riêng `git uphra` cho VPS dùng chung: commit `b177a66`; GitHub Actions run `42761695196`: **success** cả 3 job.
 - Sửa bootstrap untracked `backend/build/` và `ecosystem.config.cjs`: commit `b88aa2b`; GitHub Actions run `42777309240`: **success** cả 3 job.
+- Chuyển frontend VPS sang `next start` trực tiếp và đơn giản hóa dependency/bootstrap: commit và CI sẽ ghi sau khi push.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 
