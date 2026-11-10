@@ -20,13 +20,13 @@ bằng chứng là blocker thực thi, không phải chi tiết có thể bổ s
 | Thành phần | Staging cho DEP-01/DEP-02 | Môi trường phục vụ project đã kết nối cho DEP-03 |
 |---|---|---|
 | Mục đích môi trường | Dùng chính stack hiện tại sau khi purge CV và reclassify cho test code; chưa ký nghiệm thu cho tới khi có bằng chứng purge | Môi trường test code; giữ nguyên stack và tài khoản hiện tại để tiếp tục các bước tiếp theo. Dữ liệu CV/kết quả thử nghiệm hiện tại không cần bảo tồn lâu dài |
-| Backend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-backend`, Uvicorn nội bộ `127.0.0.1:8005`; health từng xác nhận `ready` |
-| Frontend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-frontend`, Next chạy trực tiếp cổng `3005`; hiện truy cập qua IP public `:3005` |
-| Supabase project ref | `CHƯA XÁC NHẬN — BLOCKER` | `myrymlqdbyqmpynesiwk` |
-| Migration cao nhất đã xác nhận | `CHƯA XÁC NHẬN — BLOCKER` | `20261107142027 retention_audit_integrity` |
-| Backend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Frontend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
-| Worker topology/số instance | `CHƯA XÁC NHẬN — BLOCKER` | PM2 có 1 `hra-backend` với worker trong cùng process và 1 `hra-frontend`; dùng chung PM2/user với NarrativeHealth |
+| Backend URL/process | VPS HRA, PM2 `hra-backend`, Uvicorn nội bộ `127.0.0.1:8005` | VPS HRA, PM2 `hra-backend`, Uvicorn nội bộ `127.0.0.1:8005`; health `ready`, database `connected`, health vẫn báo `environment=production` theo cấu hình hiện tại |
+| Frontend URL/process | VPS HRA, PM2 `hra-frontend`, Next chạy trực tiếp cổng `3005` | VPS HRA, PM2 `hra-frontend`, Next chạy trực tiếp cổng `3005`; HTTP nội bộ trả `200`; hiện truy cập qua IP public `:3005` |
+| Supabase project ref | `myrymlqdbyqmpynesiwk` | `myrymlqdbyqmpynesiwk` |
+| Migration cao nhất đã xác nhận | `20261107142027 retention_audit_integrity` | `20261107142027 retention_audit_integrity` |
+| Backend commit đang chạy | `8c94fa8` | `8c94fa8` |
+| Frontend commit đang chạy | `8c94fa8` | `8c94fa8` |
+| Worker topology/số instance | PM2 có 1 `hra-backend` với worker trong cùng process và 1 `hra-frontend`; đã `pm2 save` sau purge/restart | PM2 có 1 `hra-backend` với worker trong cùng process và 1 `hra-frontend`; dùng chung PM2/user với NarrativeHealth; đã `pm2 save` sau purge/restart |
 | Loại dữ liệu được phép | Chỉ nạp dữ liệu cho vòng test code mới; dữ liệu thật đã từng tồn tại không được gọi ngược là synthetic | Đã purge toàn bộ CV cũ và đối chiếu độc lập: applications/documents/profiles/assessments/rankings/embeddings đều bằng 0; hai bucket `cv-originals` và `cv-extracted-text` đều bằng 0. Giữ nguyên 4 Auth users, 4 user profiles, 2 positions, 2 JD versions, 3 criteria versions và 2 AI configuration versions |
 | Provider/mode được phép | Provider test hiện tại chỉ sau khi xác nhận payload qua redaction và cấu hình egress; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Cấu hình AI ACTIVE dạng OpenAI-compatible qua host `tokenharbor.ai`, model `deepseek-v4.1-flash:free`. Kiểm kê hồi cứu DEP-05 vẫn phải xác nhận quan hệ gateway/provider DeepSeek, retention/training và thời gian sử dụng thực tế |
 
@@ -78,7 +78,7 @@ Bằng chứng purge hoàn tất: script trên VPS báo `storage_orphans.cv-extr
 
 | ID | Hạng mục chờ | Trạng thái chờ | Phụ thuộc | Chủ trì | Bằng chứng đóng hạng mục |
 |---|---|---|---|---|---|
-| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên môi trường test đã reclassify và chạy E2E cho vòng dữ liệu mới | `READY_CODE — BLOCKED_RUNTIME_COMMIT_AND_E2E` | Đã purge toàn bộ CV cũ và kiểm chứng; còn cần bảng mapping commit đang chạy đã ký, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider hiện tại hoặc tạo mới, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL/N/A hợp lệ, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
+| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên môi trường test đã reclassify và chạy E2E cho vòng dữ liệu mới | `READY_CODE — BLOCKED_E2E_ACCOUNTS_AND_EXECUTION` | Đã purge toàn bộ CV cũ và kiểm chứng; runtime VPS đã ghi nhận commit `8c94fa8`, health/HTTP đạt; còn cần xác nhận tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider hiện tại hoặc tạo mới và chạy checklist | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL/N/A hợp lệ, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
 | DEP-02 | Kiểm chứng retention/audit qua backend môi trường test đã deploy | `READY_TO_EXECUTE` sau DEP-01 | Backend test trỏ tới DB đã có migration `00012`, tài khoản đúng quyền; không dùng chính thao tác purge reset làm bằng chứng retention nếu không chạy đúng workflow case/confirm/execute | DevOps + HR Lead/Admin | `GET /v1/admin/audit/verify` trả `valid=true`; retention due/not-due/confirm/execute có case/job/audit evidence |
 | DEP-03 | Triển khai code tương ứng với schema `00011`/`00012` lên môi trường phục vụ project đã kết nối, nếu môi trường đó đang chạy code cũ | `BLOCKED_ENVIRONMENT_IDENTIFICATION` | Điền cột môi trường đã kết nối trong bảng mapping, xác nhận topology/process đang chạy, cửa sổ deploy, drain worker, kế hoạch rollback | DevOps/Release owner | Phiên bản deploy thực tế, health checks, smoke test Admin/LTR/retention, xác nhận không chạy mixed-version worker |
 | DEP-04 | Đóng legacy Supabase API keys và revoke legacy JWT signing secret | `BLOCKED_MANUAL_OPS` | Kiểm kê mọi client/backend/worker đã chuyển sang key/JWKS mới; restart đồng nhất | Chủ project Supabase | Dashboard/Management API xác nhận legacy disabled, legacy JWT secret revoked, login/JWKS mới hoạt động |
