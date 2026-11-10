@@ -589,15 +589,18 @@ Cách dùng:
 cd /home/ubuntu/hra
 git up
 
+# Chỉ định branch deploy khác (hai cách tương đương)
+git up arena/ea6e2570-vinit-hrapp
+bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
+
 # Buộc làm lại toàn bộ các bước smart deploy
 bash scripts/deploy.sh --force
 
 # Sau khi Supabase migrations đã được áp/kiểm chứng ngoài VPS
 bash scripts/deploy.sh --migrations-verified
-
-# Chỉ định branch deploy khác
-bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
 ```
+
+Lưu ý: nếu output vẫn hiển thị các PM2 app kiểu `nextjs-dashboard`/`fastapi-backend` hoặc branch `main` ngoài dự kiến, VPS đang gọi nhầm script/alias của project khác. Kiểm tra `git config --global --get alias.up`, `git remote -v`, `git branch --show-current` và 5 dòng đầu của `scripts/deploy.sh`; script đúng của dự án này mở đầu bằng `Smart deploy for VinIT HRApp`.
 
 Lần chạy đầu tiên trên VPS, nếu chưa có thư mục state `.deploy-state/`, script chỉ coi migration là thay đổi khi lần pull đó thực sự kéo về file migration mới hoặc marker cũ ghi nhận hash khác. Thư mục `.deploy-state/` đã được ignore khỏi Git.
 

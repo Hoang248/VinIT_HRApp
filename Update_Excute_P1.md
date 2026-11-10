@@ -334,7 +334,9 @@
 #### Kiểm chứng
 
 - Đã kiểm tra cú pháp script bằng `bash -n scripts/deploy.sh` và `scripts/deploy.sh --help` ở local.
-- Chưa chạy smart deploy trên VPS trong phiên này; người vận hành cần chạy lần đầu trên VPS và gửi output smoke test nếu có lỗi.
+- Người vận hành chạy thử `git up` trên VPS nhưng output vẫn là script cũ của NarrativeHealth (`branch: main`, PM2 `nextjs-dashboard`/`fastapi-backend`), chứng tỏ VPS chưa gọi đúng script/alias của VinIT HRApp hoặc chưa checkout đúng branch chứa script.
+- Đã bổ sung hỗ trợ branch dạng positional để `git up arena/ea6e2570-vinit-hrapp` hoạt động tương đương `--branch arena/ea6e2570-vinit-hrapp`, đồng thời bổ sung lưu ý chẩn đoán nhầm script/alias trong tài liệu VPS.
+- Chưa xác nhận smart deploy VinIT chạy thành công trên VPS; người vận hành cần checkout đúng branch, đặt lại alias và chạy lại.
 
 #### Commit/CI
 

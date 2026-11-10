@@ -16,6 +16,7 @@
 # Usage:
 #   bash scripts/deploy.sh                      # full smart run
 #   bash scripts/deploy.sh --force              # ignore markers, do everything
+#   bash scripts/deploy.sh arena/ea6e2570-vinit-hrapp
 #   bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
 #   bash scripts/deploy.sh --migrations-verified
 #
@@ -53,8 +54,17 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--branch requires a value" >&2; exit 64; }
       BRANCH="$2"; shift 2 ;;
     --branch=*) BRANCH="${1#--branch=}"; shift ;;
+    --) shift ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "Unknown argument: $1" >&2; usage >&2; exit 64 ;;
+    -*)
+      echo "Unknown argument: $1" >&2; usage >&2; exit 64 ;;
+    *)
+      if [[ -z "$BRANCH" ]]; then
+        BRANCH="$1"; shift
+      else
+        echo "Unknown argument: $1" >&2; usage >&2; exit 64
+      fi
+      ;;
   esac
 done
 
