@@ -385,6 +385,61 @@ def test_generate_criteria_requires_hr_and_rejects_invalid_ai(client, seed, monk
     assert versions.status_code == 200 and len(versions.json()) == 2
 
 
+def test_criteria_draft_can_be_customized_and_weights_must_total_100_in_each_group(client, seed, monkeypatch):
+    from app.api.criteria import llm_client
+    async def valid(**kwargs):
+        return {"criteria": [
+            {"name": "Python backend experience", "description": "Production Python APIs", "category": "MUST_HAVE", "weight": 42, "expected_evidence_keywords": ["Python"]},
+            {"name": "PostgreSQL production experience", "description": "Production PostgreSQL", "category": "MUST_HAVE", "weight": 28, "expected_evidence_keywords": ["PostgreSQL"]},
+            {"name": "Docker/container delivery", "description": "Docker delivery", "category": "NICE_TO_HAVE", "weight": 30, "expected_evidence_keywords": ["Docker"]},
+        ]}
+    monkeypatch.setattr(llm_client, "extract_criteria_from_jd", valid)
+    generated = client.post(f"/v1/criteria/generate/{seed['pos']}", headers=headers(seed["hr"]))
+    assert generated.status_code == 202, generated.text
+    version = generated.json()
+    version_id = version["criteria_version_id"]
+    weights = {item["name"]: float(item["weight_in_group"]) for item in version["criteria"]}
+    assert weights == {
+        "Python backend experience": 60.0,
+        "PostgreSQL production experience": 40.0,
+        "Docker/container delivery": 100.0,
+    }
+    by_name = {item["name"]: item for item in version["criteria"]}
+    create_payload = {
+        "name": "Backend API Development", "description": "API endpoint design", "category": "MUST_HAVE",
+        "weight_in_group": 0, "expected_evidence_keywords": ["REST API"],
+    }
+    assert client.post(f"/v1/criteria/{version_id}/items", headers=headers(seed["hm"]), json=create_payload).status_code == 403
+    created = client.post(f"/v1/criteria/{version_id}/items", headers=headers(seed["hr"]), json=create_payload)
+    assert created.status_code == 201, created.text
+    created_id = created.json()["criterion_id"]
+    moved = client.patch(f"/v1/criteria/{version_id}/items/{created_id}", headers=headers(seed["hr"]), json={"category": "NICE_TO_HAVE"})
+    assert moved.status_code == 200, moved.text
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT category FROM app_private.criteria_items WHERE criterion_id=:id"), {"id": created_id}).scalar_one() == "NICE_TO_HAVE"
+    assert client.delete(f"/v1/criteria/{version_id}/items/{created_id}", headers=headers(seed["hr"])).status_code == 200
+
+    python_id = by_name["Python backend experience"]["criterion_id"]
+    postgres_id = by_name["PostgreSQL production experience"]["criterion_id"]
+    docker_id = by_name["Docker/container delivery"]["criterion_id"]
+    assert client.patch(f"/v1/criteria/{version_id}/items/{python_id}", headers=headers(seed["hr"]), json={"weight_in_group": 50}).status_code == 200
+    assert client.post(f"/v1/criteria/{version_id}/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"}).status_code == 400
+    invalid_bulk = {"items": [
+        {"criterion_id": python_id, "weight_in_group": 50},
+        {"criterion_id": postgres_id, "weight_in_group": 40},
+        {"criterion_id": docker_id, "weight_in_group": 100},
+    ]}
+    assert client.patch(f"/v1/criteria/{version_id}/items/weights", headers=headers(seed["hr"]), json=invalid_bulk).status_code == 400
+    valid_bulk = {"items": [
+        {"criterion_id": python_id, "weight_in_group": 60},
+        {"criterion_id": postgres_id, "weight_in_group": 40},
+        {"criterion_id": docker_id, "weight_in_group": 100},
+    ]}
+    assert client.patch(f"/v1/criteria/{version_id}/items/weights", headers=headers(seed["hr"]), json=valid_bulk).status_code == 200
+    assert client.post(f"/v1/criteria/{version_id}/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"}).status_code == 200
+    assert client.post(f"/v1/criteria/{version_id}/approve", headers=headers(seed["hm"]), json={"action": "APPROVE"}).status_code == 200
+
+
 def test_batch_level_failure_marks_unfinished_documents_for_review(client, seed, tmp_path, monkeypatch):
     from app.core.config import settings
     from app.workers.processor import worker

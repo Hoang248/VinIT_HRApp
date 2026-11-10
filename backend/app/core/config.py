@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     ASSESSMENT_POLICY_VERSION: str = "assessment-v2.0"
     MATCHING_POLICY_VERSION: str = "matching-v2.1"
     RANKING_POLICY_VERSION: str = "ranking-v2.0"
-    CRITERIA_PROMPT_VERSION: str = "criteria-prompt-v2.0"
+    CRITERIA_PROMPT_VERSION: str = "criteria-prompt-v2.1"
     PROFILE_PROMPT_VERSION: str = "profile-prompt-v2.0"
     MATCHING_PROMPT_VERSION: str = "matching-prompt-v2.0"
     DETERMINISTIC_RULES_VERSION: str = "deterministic-rules-v1.1"

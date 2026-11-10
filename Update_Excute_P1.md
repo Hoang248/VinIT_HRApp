@@ -389,6 +389,13 @@
 - Đã thêm `POST /v1/admin/users/{user_id}/reset-password` cho Admin: đặt mật khẩu tạm thời qua Supabase Auth Admin API, bật `must_change_password=true`, thu hồi token cũ và ghi audit `RESET_USER_PASSWORD` không chứa credential. Giao diện Admin → Tài khoản có hành động “Đặt lại mật khẩu”; menu tài khoản có lối vào “Đổi mật khẩu”.
 - Kiểm thử: commit `91539bc`; cục bộ backend unit `117 passed, 65 skipped` (integration DB không chạy khi thiếu `TEST_DATABASE_URL`), frontend i18n/type-check/lint/build đều đạt; GitHub Actions run `42808084883` đạt cả 3 job Backend unit, Frontend checks và Backend integration. Chưa deploy lên VPS và chưa coi là bằng chứng E2E/DEP-01 cho tới khi cập nhật runtime và kiểm thử đăng nhập thực tế trên môi trường test.
 
+### Sửa luồng rà soát tiêu chí AI và trọng số
+
+- Người vận hành phát hiện AI có thể tách một yêu cầu thành tiêu chí chồng lấp, ví dụ thêm `Backend API Development` bên cạnh `Python Programming`; bản nháp cũ chưa cho HR thêm/xóa/chuyển nhóm tiêu chí và hiển thị `Docker=30%` dù là tiêu chí duy nhất của nhóm Ưu tiên.
+- Đã sửa prompt tiêu chí (`criteria-prompt-v2.1`) để yêu cầu weight trong từng nhóm cộng 100% và tránh tách tiêu chí chồng lấp; backend chuẩn hoá kết quả AI theo từng nhóm trước khi lưu, ví dụ Docker duy nhất trong NICE_TO_HAVE được lưu/hiển thị 100% trong nhóm và tương ứng 30% tổng điểm khi nhóm Ưu tiên chiếm 30%.
+- HR phụ trách nay có thể thêm, sửa tên/mô tả/loại yêu cầu/từ khóa bằng chứng, chuyển tiêu chí giữa Bắt buộc/Ưu tiên và xóa tiêu chí khỏi bản nháp. Đã thêm màn hình “Điều chỉnh trọng số tiêu chí” với tổng từng nhóm, chia đều, chuẩn hoá theo tỉ lệ hiện tại và lưu nguyên tử; backend chặn HR/HM duyệt nếu một nhóm hiện có không cộng đúng 100% hoặc thiếu tiêu chí Bắt buộc.
+- Kiểm thử cục bộ sau sửa: backend `117 passed, 66 skipped` (test integration mới chờ CI PostgreSQL), frontend i18n/type-check/lint/build đều đạt. Chưa deploy lên VPS; bản nháp hiện hữu phải được HR xóa tiêu chí thừa và bấm chuẩn hoá trọng số sau khi cập nhật, hoặc tạo phiên bản tiêu chí mới.
+
 ## 9. Blocker ngoài code
 
 | Mã | Hạng mục | Người/điều kiện cần | Trạng thái |

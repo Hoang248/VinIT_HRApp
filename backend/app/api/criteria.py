@@ -6,10 +6,12 @@ from app.core.permissions import check_position_access, can_update_application_s
 from app.core.logging import get_logger
 from app.core.exceptions import CriteriaNotApprovedError, NotFoundError
 from app.schemas.criteria import (
+    CriteriaItemWeightsUpdate,
     CriteriaVersion,
     CriteriaVersionCreate,
     CriteriaWeightsUpdate,
     Criterion,
+    CriterionCreate,
     CriterionUpdate,
     ApprovalAction,
     CriteriaApprovalRequest
@@ -19,6 +21,7 @@ from app.db.supabase import get_supabase_client
 from app.db.database import SessionLocal
 from sqlalchemy import text
 import json
+from decimal import Decimal, ROUND_HALF_UP
 from app.services.llm_client import llm_client, LLMError
 from app.services.deterministic_matching import deterministic_matcher
 
@@ -51,6 +54,75 @@ def _stored_requirement_spec(item: dict) -> dict:
         "required_cefr": spec.required_cefr,
         "required_language_rank": spec.required_language_rank,
     }
+
+
+def _normalize_weights_in_group(items: list[dict]) -> list[dict]:
+    """Scale AI/manual draft weights so every present category sums to 100.
+
+    LLM output has historically mixed two meanings: share of the whole rubric
+    and share inside a category. The database field is explicitly the latter,
+    so generation normalizes it before storage. A zero criterion stays zero;
+    the rounding remainder is assigned to the largest criterion in its group.
+    """
+    normalized = [dict(item) for item in items]
+    categories = {str(item.get("category")) for item in normalized}
+    for category in categories:
+        group = [item for item in normalized if str(item.get("category")) == category]
+        total = sum(Decimal(str(item.get("weight") if "weight" in item else item.get("weight_in_group") or 0)) for item in group)
+        if total <= 0:
+            continue
+        scaled: list[Decimal] = []
+        for item in group:
+            raw = Decimal(str(item.get("weight") if "weight" in item else item.get("weight_in_group") or 0))
+            value = (raw * Decimal("100") / total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            item["weight"] = float(value)
+            if "weight_in_group" in item:
+                item["weight_in_group"] = float(value)
+            scaled.append(value)
+        remainder = Decimal("100.00") - sum(scaled)
+        if remainder:
+            largest = max(group, key=lambda item: Decimal(str(item.get("weight") if "weight" in item else item.get("weight_in_group") or 0)))
+            adjusted = (Decimal(str(largest.get("weight") if "weight" in largest else largest.get("weight_in_group") or 0)) + remainder).quantize(Decimal("0.01"))
+            largest["weight"] = float(adjusted)
+            if "weight_in_group" in largest:
+                largest["weight_in_group"] = float(adjusted)
+    return normalized
+
+
+def _item_weight_totals(db, criteria_version_id: str) -> dict[str, Decimal]:
+    rows = db.execute(text("""
+        SELECT category, COALESCE(SUM(weight_in_group), 0) AS total, COUNT(*) AS item_count
+        FROM app_private.criteria_items WHERE criteria_version_id = :id GROUP BY category
+    """), {"id": str(criteria_version_id)}).mappings().all()
+    return {str(row["category"]): Decimal(str(row["total"])) for row in rows if int(row["item_count"]) > 0}
+
+
+def _validate_item_weight_totals(db, criteria_version_id: str) -> None:
+    totals = _item_weight_totals(db, criteria_version_id)
+    if "MUST_HAVE" not in totals:
+        raise HTTPException(status_code=400, detail="Cần có ít nhất một tiêu chí bắt buộc trước khi duyệt.")
+    invalid = [category for category, total in totals.items() if total != Decimal("100.00")]
+    if invalid:
+        labels = {"MUST_HAVE": "Bắt buộc", "NICE_TO_HAVE": "Ưu tiên"}
+        details = ", ".join(f"{labels.get(category, category)}={totals[category]}%" for category in invalid)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tổng trọng số trong mỗi nhóm tiêu chí phải bằng 100%. Hiện tại: {details}.",
+        )
+
+
+def _lock_editable_criteria_version(db, criteria_version_id: UUID, user_id: str):
+    version = db.execute(text("""
+        SELECT position_id, status FROM app_private.criteria_versions
+        WHERE criteria_version_id = :id FOR UPDATE
+    """), {"id": str(criteria_version_id)}).mappings().first()
+    if not version:
+        raise NotFoundError("Criteria version")
+    if not can_update_application_status(user_id, str(version["position_id"])):
+        raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể sửa tiêu chí")
+    if version["status"] not in ("DRAFT", "PENDING_HR_REVIEW"):
+        raise HTTPException(status_code=400, detail="Chỉ có thể sửa tiêu chí ở trạng thái bản nháp")
+    return version
 
 
 def _materialize_requirement_specs(db, criteria_version_id: str) -> int:
@@ -147,6 +219,7 @@ async def generate_criteria_from_jd(position_id: UUID, current_user: dict = Depe
         if any(sum(c["weight"] for c in items if c["category"] == category) <= 0
                for category in {c["category"] for c in items}):
             raise ValueError("A criterion group has no weight")
+        items = _normalize_weights_in_group(items)
     except (KeyError, TypeError, ValueError, AttributeError):
         raise HTTPException(status_code=502, detail="AI trả về bộ tiêu chí không hợp lệ. Vui lòng thử lại.")
     db = SessionLocal()
@@ -275,12 +348,9 @@ async def approve_criteria(
                 raise HTTPException(status_code=400, detail="Trọng số hai nhóm không hợp lệ hoặc không bằng 100%")
         if new_status == "PENDING_HM_APPROVAL":
             _materialize_requirement_specs(db, cv_id_str)
-            groups = db.execute(text("""
-                SELECT category, SUM(weight_in_group) AS total FROM app_private.criteria_items
-                WHERE criteria_version_id = :id GROUP BY category
-            """), {"id": cv_id_str}).mappings().all()
-            if not any(g["category"] == "MUST_HAVE" and g["total"] > 0 for g in groups) or any(g["total"] <= 0 for g in groups):
-                raise HTTPException(status_code=400, detail="Cần có tiêu chí bắt buộc và trọng số dương trong mỗi nhóm")
+            _validate_item_weight_totals(db, cv_id_str)
+        if new_status == "APPROVED":
+            _validate_item_weight_totals(db, cv_id_str)
 
         db.execute(text("""
             UPDATE app_private.criteria_versions
@@ -384,14 +454,107 @@ async def update_criteria_weights(criteria_version_id: UUID, update: CriteriaWei
         db.close()
 
 
+@router.post("/{criteria_version_id}/items", response_model=Criterion, status_code=status.HTTP_201_CREATED)
+async def create_criterion(criteria_version_id: UUID, request: CriterionCreate,
+                           current_user: dict = Depends(get_current_user)):
+    """Add a criterion to a draft rubric when the AI proposal is incomplete."""
+    name, description = request.name.strip(), request.description.strip()
+    if not name or len(name) > 200 or not description or len(description) > 4000:
+        raise HTTPException(status_code=400, detail="Tên hoặc mô tả tiêu chí không hợp lệ")
+    db = SessionLocal()
+    try:
+        version = _lock_editable_criteria_version(db, criteria_version_id, current_user["user_id"])
+        spec = (request.requirement_spec.model_dump() if request.requirement_spec is not None else _stored_requirement_spec({
+            "name": name, "description": description, "category": request.category.value,
+            "expected_evidence_keywords": request.expected_evidence_keywords,
+        }))
+        display_order = db.execute(text("""
+            SELECT COALESCE(MAX(display_order), -1) + 1 FROM app_private.criteria_items
+            WHERE criteria_version_id = :id
+        """), {"id": str(criteria_version_id)}).scalar_one()
+        criterion_id = db.execute(text("""
+            INSERT INTO app_private.criteria_items
+                (criteria_version_id, name, description, category, weight_in_group,
+                 expected_evidence_keywords, requirement_spec, evidence_guidance, jd_reference_text, display_order)
+            VALUES (:version_id, :name, :description, :category, :weight, CAST(:keywords AS jsonb),
+                    CAST(:spec AS jsonb), :guidance, :jd_reference, :display_order)
+            RETURNING criterion_id
+        """), {"version_id": str(criteria_version_id), "name": name, "description": description,
+                "category": request.category.value, "weight": request.weight_in_group,
+                "keywords": json.dumps(request.expected_evidence_keywords), "spec": json.dumps(spec),
+                "guidance": request.evidence_guidance, "jd_reference": request.jd_reference_text,
+                "display_order": int(display_order)}).scalar_one()
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'CREATE_CRITERION', 'CRITERION', :criterion_id, :position_id, 'SUCCESS')
+        """), {"user_id": current_user["user_id"], "criterion_id": str(criterion_id),
+                "position_id": str(version["position_id"])})
+        result = db.execute(text("SELECT * FROM app_private.criteria_items WHERE criterion_id = :id"),
+                            {"id": str(criterion_id)}).mappings().one()
+        db.commit()
+        return dict(result)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@router.patch("/{criteria_version_id}/items/weights", response_model=CriteriaVersion)
+async def update_criterion_weights(criteria_version_id: UUID, update: CriteriaItemWeightsUpdate,
+                                   current_user: dict = Depends(get_current_user)):
+    """Replace all draft item weights atomically; each present group totals 100."""
+    db = SessionLocal()
+    try:
+        version = _lock_editable_criteria_version(db, criteria_version_id, current_user["user_id"])
+        rows = db.execute(text("""
+            SELECT criterion_id, category FROM app_private.criteria_items WHERE criteria_version_id = :id
+        """), {"id": str(criteria_version_id)}).mappings().all()
+        existing = {str(row["criterion_id"]): str(row["category"]) for row in rows}
+        submitted = {str(item.criterion_id): item.weight_in_group for item in update.items}
+        if set(submitted) != set(existing):
+            raise HTTPException(status_code=400, detail="Cần gửi trọng số cho toàn bộ tiêu chí trong bộ tiêu chí.")
+        totals: dict[str, Decimal] = {}
+        for criterion_id, weight in submitted.items():
+            category = existing[criterion_id]
+            totals[category] = totals.get(category, Decimal("0")) + weight
+        invalid = [category for category, total in totals.items() if total != Decimal("100.00")]
+        if invalid:
+            labels = {"MUST_HAVE": "Bắt buộc", "NICE_TO_HAVE": "Ưu tiên"}
+            details = ", ".join(f"{labels.get(category, category)}={totals[category]}%" for category in invalid)
+            raise HTTPException(status_code=400, detail=f"Tổng trọng số trong mỗi nhóm tiêu chí phải bằng 100%. Hiện tại: {details}.")
+        for criterion_id, weight in submitted.items():
+            db.execute(text("""
+                UPDATE app_private.criteria_items SET weight_in_group = :weight
+                WHERE criterion_id = :criterion_id AND criteria_version_id = :version_id
+            """), {"weight": weight, "criterion_id": criterion_id, "version_id": str(criteria_version_id)})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events
+                (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
+            VALUES (:user_id, 'UPDATE_CRITERION_WEIGHTS', 'CRITERIA_VERSION', :id, :position_id, 'SUCCESS', CAST(:metadata AS jsonb))
+        """), {"user_id": current_user["user_id"], "id": str(criteria_version_id),
+                "position_id": str(version["position_id"]),
+                "metadata": json.dumps({"item_weight_totals": {category: str(total) for category, total in totals.items()}})})
+        result = _load_criteria(db, criteria_version_id)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 @router.patch("/{criteria_version_id}/items/{criterion_id}")
 async def update_criterion(criteria_version_id: UUID, criterion_id: UUID, update: CriterionUpdate,
                            current_user: dict = Depends(get_current_user)):
     """HR may revise a draft; approved and pending versions are immutable."""
     fields = update.model_dump(exclude_unset=True)
     allowed = {key: value for key, value in fields.items()
-               if key in ("name", "description", "weight_in_group", "expected_evidence_keywords")
+               if key in ("name", "description", "category", "weight_in_group", "expected_evidence_keywords")
                and value is not None}
+    if "category" in allowed:
+        allowed["category"] = allowed["category"].value if hasattr(allowed["category"], "value") else str(allowed["category"])
     if "requirement_spec" in fields:
         allowed["requirement_spec"] = (
             json.dumps(fields["requirement_spec"]) if fields["requirement_spec"] is not None else None
@@ -405,16 +568,7 @@ async def update_criterion(criteria_version_id: UUID, criterion_id: UUID, update
                 raise HTTPException(status_code=400, detail="Tên hoặc mô tả tiêu chí không hợp lệ")
     db = SessionLocal()
     try:
-        version = db.execute(text("""
-            SELECT position_id, status FROM app_private.criteria_versions
-            WHERE criteria_version_id = :id FOR UPDATE
-        """), {"id": str(criteria_version_id)}).mappings().first()
-        if not version:
-            raise NotFoundError("Criteria version")
-        if not can_update_application_status(current_user["user_id"], str(version["position_id"])):
-            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể sửa tiêu chí")
-        if version["status"] not in ("DRAFT", "PENDING_HR_REVIEW"):
-            raise HTTPException(status_code=400, detail="Chỉ có thể sửa tiêu chí ở trạng thái bản nháp")
+        version = _lock_editable_criteria_version(db, criteria_version_id, current_user["user_id"])
         set_parts = []
         for name in allowed:
             if name in ("expected_evidence_keywords", "requirement_spec"):
@@ -436,6 +590,34 @@ async def update_criterion(criteria_version_id: UUID, criterion_id: UUID, update
         """), {"user_id": current_user["user_id"], "criterion_id": str(criterion_id), "position_id": str(version["position_id"])})
         db.commit()
         return {"status": "updated"}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@router.delete("/{criteria_version_id}/items/{criterion_id}")
+async def delete_criterion(criteria_version_id: UUID, criterion_id: UUID,
+                           current_user: dict = Depends(get_current_user)):
+    """Remove an unwanted AI-proposed criterion from a draft rubric."""
+    db = SessionLocal()
+    try:
+        version = _lock_editable_criteria_version(db, criteria_version_id, current_user["user_id"])
+        deleted = db.execute(text("""
+            DELETE FROM app_private.criteria_items
+            WHERE criterion_id = :criterion_id AND criteria_version_id = :version_id
+            RETURNING criterion_id
+        """), {"criterion_id": str(criterion_id), "version_id": str(criteria_version_id)}).first()
+        if not deleted:
+            raise NotFoundError("Criterion")
+        db.execute(text("""
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
+            VALUES (:user_id, 'DELETE_CRITERION', 'CRITERION', :criterion_id, :position_id, 'SUCCESS')
+        """), {"user_id": current_user["user_id"], "criterion_id": str(criterion_id),
+                "position_id": str(version["position_id"])})
+        db.commit()
+        return {"status": "deleted"}
     except Exception:
         db.rollback()
         raise

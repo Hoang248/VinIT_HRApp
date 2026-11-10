@@ -117,6 +117,22 @@ class CriteriaWeightsUpdate(BaseSchema):
         return self
 
 
+class CriterionWeightUpdate(BaseSchema):
+    criterion_id: UUID
+    weight_in_group: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class CriteriaItemWeightsUpdate(BaseSchema):
+    items: List[CriterionWeightUpdate] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_criterion_ids(self):
+        ids = [item.criterion_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Danh sách trọng số tiêu chí bị trùng")
+        return self
+
+
 class CriteriaVersion(CriteriaVersionBase, TimestampMixin):
     criteria_version_id: UUID
     position_id: UUID

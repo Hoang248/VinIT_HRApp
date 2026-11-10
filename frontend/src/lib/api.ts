@@ -85,8 +85,14 @@ export const criteriaApi = {
   approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
-  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; weight_in_group: number; requirement_spec?: import('@/types').RequirementSpec | null }) =>
+  createItem: (versionId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
+    apiClient.post(`/criteria/${versionId}/items`, data),
+  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
     apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
+  deleteItem: (versionId: string, itemId: string) =>
+    apiClient.delete(`/criteria/${versionId}/items/${itemId}`),
+  updateItemWeights: (versionId: string, items: { criterion_id: string; weight_in_group: number }[]) =>
+    apiClient.patch(`/criteria/${versionId}/items/weights`, { items }),
   updateWeights: (versionId: string, mandatory: number, nice: number) =>
     apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>
