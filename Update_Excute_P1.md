@@ -383,6 +383,12 @@
 - Purge đã hoàn tất: orphan sweep báo xóa 2/2 object còn lại trong `cv-extracted-text`; đối chiếu độc lập cuối cùng qua Supabase xác nhận mọi DB target về CV và cả hai bucket storage đều bằng 0, preserved counts vẫn là 4 Auth users, 4 user profiles, 2 positions, 2 JD versions, 3 criteria versions, 2 AI configuration versions. PM2 `hra-backend`/`hra-frontend` online sau restart. Gate 0 được reclassify sang môi trường test code sẵn sàng vòng dữ liệu mới; DEP-01 còn chờ mapping commit đang chạy, xác nhận tài khoản vai trò E2E và checklist E2E có bằng chứng.
 - Đã nhận bằng chứng runtime VPS cho DEP-01: `git rev-parse --short HEAD` là `8c94fa8`, worktree sạch; PM2 có `hra-backend` và `hra-frontend` online cùng các process NarrativeHealth; backend health trả `ready/database connected`, frontend nội bộ HTTP `200`, và người vận hành đã chạy `pm2 save`. Health vẫn báo `environment=production`; đây là nhãn cấu hình hiện tại, còn phân loại vận hành theo quyết định là môi trường test code. DEP-01 còn chờ xác nhận/tạo Outsider, kiểm tra đăng nhập các vai trò và chạy E2E.
 
+### Bổ sung quản lý mật khẩu cho vòng E2E
+
+- Đã mở rộng `POST /v1/auth/change-password`: mọi tài khoản `ACTIVE` đều tự đổi được mật khẩu sau khi tái xác thực bằng mật khẩu hiện tại; luồng bắt buộc đổi mật khẩu tạm thời vẫn giữ và được ghi audit riêng (`CHANGE_TEMPORARY_PASSWORD` so với `CHANGE_OWN_PASSWORD`). Sau khi đổi, token cũ bị từ chối qua `tokens_valid_after`.
+- Đã thêm `POST /v1/admin/users/{user_id}/reset-password` cho Admin: đặt mật khẩu tạm thời qua Supabase Auth Admin API, bật `must_change_password=true`, thu hồi token cũ và ghi audit `RESET_USER_PASSWORD` không chứa credential. Giao diện Admin → Tài khoản có hành động “Đặt lại mật khẩu”; menu tài khoản có lối vào “Đổi mật khẩu”.
+- Kiểm thử cục bộ: backend unit `117 passed, 65 skipped` (integration DB không chạy khi thiếu `TEST_DATABASE_URL`), frontend i18n/type-check/lint/build đều đạt. Chưa deploy lên VPS và chưa coi là bằng chứng E2E/DEP-01 cho tới khi CI integration đạt và kiểm thử đăng nhập thực tế trên môi trường test.
+
 ## 9. Blocker ngoài code
 
 | Mã | Hạng mục | Người/điều kiện cần | Trạng thái |

@@ -177,6 +177,8 @@ export const adminApi = {
     apiClient.post('/admin/users', data),
   updateUser: (id: string, data: { display_name: string; account_status: string; roles: string[] }) =>
     apiClient.patch(`/admin/users/${id}`, data),
+  resetUserPassword: (id: string, new_password: string) =>
+    apiClient.post(`/admin/users/${id}/reset-password`, { new_password }),
   listAiConfigs: () => apiClient.get('/admin/ai/config'),
   testAiConnection: (data: any) => apiClient.post('/admin/ai/test-connection', data),
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),

@@ -25,6 +25,9 @@ SECRET = "synthetic-jwt-secret-not-for-production-0123456789"
 SETUP = "synthetic-one-time-setup-token-with-adequate-length"
 TEMP = "temporary-password-123!"
 NEW = "new-password-for-synthetic-user-456!"
+VOLUNTARY = "voluntary-new-password-789!"
+RESET_TEMP = "reset-temporary-password-123!"
+FINAL = "member-final-password-456!"
 
 
 class AuthError(Exception):
@@ -111,6 +114,14 @@ class FakeAuthAdmin:
                 conn.execute(text("DELETE FROM auth.users WHERE id=:id"), {"id": user_id})
             self.fake.users = {email: user for email, user in self.fake.users.items() if user["id"] != user_id}
             self.fake.deleted_ids.append(user_id)
+
+    def update_user_by_id(self, user_id, data):
+        with self.fake.lock:
+            for user in self.fake.users.values():
+                if user["id"] == str(user_id):
+                    user["password"] = data["password"]
+                    return SimpleNamespace(user=SimpleNamespace(id=user_id))
+        raise AuthError(404, "user_not_found")
 
 
 def reset_disposable_database():
@@ -259,11 +270,63 @@ def test_admin_creates_roles_temporary_password_and_protected_routes(client, fak
     time.sleep(1.1)  # Auth iat has second precision; cutoff rejects its entire second.
     changed = login(client, 'hr@example.org', NEW)
     assert changed['user']['must_change_password'] is False
-    assert client.get('/v1/positions', headers=bearer(changed['access_token'])).status_code == 200
+    changed_headers = bearer(changed['access_token'])
+    assert client.get('/v1/positions', headers=changed_headers).status_code == 200
+    # Voluntary change: an active user who is not forced to change may still
+    # rotate their own password, but only after reauthentication.
+    assert client.post('/v1/auth/change-password', headers=changed_headers, json={"current_password": "wrong", "new_password": VOLUNTARY}).status_code == 400
+    assert client.post('/v1/auth/change-password', headers=changed_headers, json={"current_password": NEW, "new_password": NEW}).status_code == 400
+    assert client.post('/v1/auth/change-password', headers=changed_headers, json={"current_password": NEW, "new_password": VOLUNTARY}).status_code == 200
+    assert client.get('/v1/auth/me', headers=changed_headers).status_code == 401
+    assert client.post('/v1/auth/login', json={'email': 'hr@example.org', 'password': NEW}).status_code == 401
+    time.sleep(1.1)  # Auth iat has second precision; cutoff rejects its entire second.
+    voluntary = login(client, 'hr@example.org', VOLUNTARY)
+    assert voluntary['user']['must_change_password'] is False
     with engine.connect() as conn:
         audit = conn.execute(text("SELECT action_type,metadata::text FROM app_private.audit_events ORDER BY created_at")).all()
-    assert {row[0] for row in audit} >= {'BOOTSTRAP_ADMIN', 'CREATE_USER', 'CHANGE_TEMPORARY_PASSWORD'}
-    assert all(TEMP not in str(row) and NEW not in str(row) for row in audit)
+    assert {row[0] for row in audit} >= {'BOOTSTRAP_ADMIN', 'CREATE_USER', 'CHANGE_TEMPORARY_PASSWORD', 'CHANGE_OWN_PASSWORD'}
+    assert all(TEMP not in str(row) and NEW not in str(row) and VOLUNTARY not in str(row) for row in audit)
+
+
+def test_admin_resets_member_password_and_forces_change(client, fake_auth):
+    assert bootstrap(client).status_code == 201
+    admin_headers = bearer(login(client, 'admin@example.org')['access_token'])
+    target = fake_auth.seed('member@example.org', ['HR_RECRUITER'], name='Member')
+    other = fake_auth.seed('other@example.org', ['HR_RECRUITER'], name='Other')
+    other_headers = bearer(fake_auth.token(other, 'other@example.org'))
+    suspended = fake_auth.seed('suspended@example.org', ['VIEWER'], name='Suspended', status='SUSPENDED')
+    old_target_headers = bearer(fake_auth.token(target, 'member@example.org', int(time.time()) - 30))
+    assert client.get('/v1/auth/me', headers=old_target_headers).status_code == 200
+    assert client.post(f'/v1/admin/users/{target}/reset-password', headers=other_headers,
+                       json={"new_password": RESET_TEMP}).status_code == 403
+    weak = client.post(f'/v1/admin/users/{target}/reset-password', headers=admin_headers, json={"new_password": "short"})
+    assert weak.status_code == 422 and RESET_TEMP not in weak.text
+    assert client.post('/v1/admin/users/00000000-0000-0000-0000-000000000000/reset-password', headers=admin_headers,
+                       json={"new_password": RESET_TEMP}).status_code == 404
+    assert client.post(f'/v1/admin/users/{suspended}/reset-password', headers=admin_headers,
+                       json={"new_password": RESET_TEMP}).status_code == 400
+    result = client.post(f'/v1/admin/users/{target}/reset-password', headers=admin_headers,
+                         json={"new_password": RESET_TEMP})
+    assert result.status_code == 200, result.text
+    assert result.json() == {'user_id': target, 'must_change_password': True} and RESET_TEMP not in result.text
+    assert client.get('/v1/auth/me', headers=old_target_headers).status_code == 401
+    assert client.post('/v1/auth/login', json={'email': 'member@example.org', 'password': TEMP}).status_code == 401
+    time.sleep(1.1)  # A token issued in the reset second is also rejected by the cutoff.
+    first = login(client, 'member@example.org', RESET_TEMP)
+    assert first['user']['must_change_password'] is True
+    first_headers = bearer(first['access_token'])
+    assert client.get('/v1/positions', headers=first_headers).status_code == 403
+    assert client.post('/v1/auth/change-password', headers=first_headers,
+                       json={"current_password": RESET_TEMP, "new_password": FINAL}).status_code == 200
+    assert client.get('/v1/auth/me', headers=first_headers).status_code == 401
+    time.sleep(1.1)  # Auth iat has second precision; cutoff rejects its entire second.
+    final = login(client, 'member@example.org', FINAL)
+    assert final['user']['must_change_password'] is False
+    assert client.get('/v1/positions', headers=bearer(final['access_token'])).status_code == 200
+    with engine.connect() as conn:
+        audit = conn.execute(text("SELECT action_type,metadata::text FROM app_private.audit_events ORDER BY created_at")).all()
+    assert {row[0] for row in audit} >= {'RESET_USER_PASSWORD', 'CHANGE_TEMPORARY_PASSWORD'}
+    assert all(RESET_TEMP not in str(row) and FINAL not in str(row) for row in audit)
 
 
 def test_last_active_admin_and_concurrent_revocations(client, fake_auth):

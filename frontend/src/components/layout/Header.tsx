@@ -7,6 +7,7 @@ import * as React from 'react';
 import { useState } from 'react';
 import { AppBar, Avatar, Box, Divider, IconButton, Menu, MenuItem, Toolbar, Tooltip, Typography } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
+import KeyIcon from '@mui/icons-material/Key';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useRouter } from 'next/navigation';
 import { DRAWER_WIDTH } from './Sidebar';
@@ -50,6 +51,7 @@ export default function Header({ onOpenMenu, profile }: HeaderProps) {
         <Box sx={{ px: 2, py: 1 }}><Typography variant="body2" fontWeight={700}>{name}</Typography>
           {profile?.email && <Typography variant="caption" color="text.secondary">{profile.email}</Typography>}</Box>
         <Divider />
+        <MenuItem onClick={() => { setAnchor(null); router.push('/change-password'); }} sx={{ gap: 1 }}><KeyIcon fontSize="small" />{t("Đổi mật khẩu")}</MenuItem>
         <MenuItem onClick={handleLogout} sx={{ gap: 1, color: 'error.main' }}><LogoutIcon fontSize="small" />{t("Đăng xuất")}</MenuItem>
       </Menu>
     </AppBar>
