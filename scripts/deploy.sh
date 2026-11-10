@@ -219,7 +219,7 @@ log "Smart deploy VinIT HRApp — repo: $(pwd) — branch: $BRANCH — PM2: $PM2
 
 if pm2_frontend_uses_standalone; then
   warn "PM2 process $PM2_FRONTEND still runs the Next.js standalone bundle"
-  warn "switch its ecosystem entry to node_modules/next/dist/bin/next with args 'start --hostname 127.0.0.1 --port 3005', reload PM2, then rerun git uphra"
+  warn "switch its ecosystem entry to node_modules/next/dist/bin/next with args 'start --hostname 127.0.0.1 --port 3005', recreate only that PM2 process, then rerun git uphra"
   exit 6
 fi
 

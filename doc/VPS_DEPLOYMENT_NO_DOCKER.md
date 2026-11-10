@@ -594,12 +594,13 @@ bash scripts/deploy.sh --migrations-verified
 
 Nếu bản script cũ dừng với `worktree has local changes` và chỉ liệt kê `backend/build/` cùng `ecosystem.config.cjs`, không xóa `ecosystem.config.cjs` vì đó là cấu hình PM2 riêng của VPS. Sao lưu file này, chạy một lần `git pull --ff-only origin arena/ea6e2570-vinit-hrapp` thủ công để lấy `.gitignore` và script mới, kiểm tra `git status --short`, rồi chạy lại `git uphra`. Từ bản mới, hai đường dẫn này được ignore và cũng được script bỏ qua ở bước kiểm tra bootstrap.
 
-Khi chuyển từ bản standalone cũ sang `next start` trực tiếp, sao lưu `ecosystem.config.cjs`, sửa riêng app `hra-frontend` theo mục 9.1, rồi nạp lại đúng app đó trước khi chạy script mới:
+Khi chuyển từ bản standalone cũ sang `next start` trực tiếp, sao lưu `ecosystem.config.cjs`, sửa riêng app `hra-frontend` theo mục 9.1, rồi xóa/tạo lại đúng process đó trước khi chạy script mới. Cách này làm frontend gián đoạn ngắn nhưng bảo đảm PM2 nhận `cwd`/`script` mới; không dùng `startOrReload` cho thay đổi đường chạy:
 
 ```bash
 cp -a /home/ubuntu/hra/ecosystem.config.cjs /home/ubuntu/ecosystem.config.cjs.bak-direct
 ${EDITOR:-nano} /home/ubuntu/hra/ecosystem.config.cjs
-pm2 startOrReload /home/ubuntu/hra/ecosystem.config.cjs --only hra-frontend --update-env
+pm2 delete hra-frontend
+pm2 start /home/ubuntu/hra/ecosystem.config.cjs --only hra-frontend
 pm2 save
 pm2 describe hra-frontend
 curl --fail --output /dev/null http://127.0.0.1:3005/
