@@ -338,7 +338,9 @@
 - Đã bổ sung hỗ trợ branch dạng positional để `git uphra arena/ea6e2570-vinit-hrapp` hoạt động tương đương `--branch arena/ea6e2570-vinit-hrapp`, đồng thời bổ sung lưu ý chẩn đoán nhầm script/alias trong tài liệu VPS.
 - Người dùng xác định đúng nguyên nhân chồng lấn: NarrativeHealth và VinIT HRApp cùng chạy trên một VPS/PM2 và cùng muốn dùng `git up`; alias đặt bằng `git config --global` là alias theo OS user, không theo thư mục project. Quyết định: HRA dùng tên riêng `git uphra`, NarrativeHealth giữ `git up` hoặc đổi sang tên riêng khác; không để hai project cùng chiếm một global alias.
 - PM2 dùng chung không phải lỗi tự thân nếu tên process, cwd, cổng và env tách riêng; script HRA chỉ restart `hra-backend`/`hra-frontend` và từ nay in rõ repo root, branch và PM2 targets ở dòng log đầu tiên.
-- Chưa xác nhận smart deploy VinIT chạy thành công trên VPS; người vận hành cần checkout đúng branch, đặt alias `uphra` và chạy lại.
+- Sau khi alias `uphra` được tạo, script đã chạy đúng repo HRA nhưng dừng an toàn vì worktree có hai untracked path: `backend/build/` và `ecosystem.config.cjs`. Đây là lỗi bootstrap của bộ deploy: tài liệu yêu cầu tạo ecosystem ngoài Git nhưng `.gitignore` chưa ignore file này, còn `backend/build/` là artifact do pip/setuptools sinh ra.
+- Đã bổ sung ignore cho `/ecosystem.config.cjs` và `backend/build/`; script mới cũng bỏ qua đúng hai untracked path đã biết này ở lần bootstrap trước khi pull được `.gitignore`, trong khi vẫn dừng với mọi tracked modification hoặc untracked path khác.
+- Chưa xác nhận smart deploy VinIT chạy thành công trên VPS; người vận hành cần sao lưu ecosystem, pull thủ công một lần để lấy bản sửa, rồi chạy lại `git uphra`.
 
 #### Commit/CI
 
@@ -346,6 +348,7 @@
 - GitHub Actions run `42760182499` cho commit trên: **success** cả Frontend checks, Backend unit tests và Backend integration (disposable PostgreSQL + pgvector).
 - Sau phản hồi chạy thử nhầm script cũ trên VPS, commit `82df2c0` bổ sung hỗ trợ `git up <branch>` dạng positional và lưu ý chẩn đoán alias/script. GitHub Actions run `42761053413` cho commit này: **success** cả 3 job.
 - Chuẩn lệnh riêng `git uphra` cho VPS dùng chung: commit `b177a66`; GitHub Actions run `42761695196`: **success** cả 3 job.
+- Sửa bootstrap untracked `backend/build/` và `ecosystem.config.cjs`: commit và CI sẽ ghi sau khi push.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

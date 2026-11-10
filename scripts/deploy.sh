@@ -199,9 +199,14 @@ STARTED=$(date +%s)
 log "Smart deploy VinIT HRApp — repo: $(pwd) — branch: $BRANCH — PM2: $PM2_BACKEND/$PM2_FRONTEND"
 
 # ─── 1. Code: pull only if there is something new ───────────────────────────
-if [[ -n "$(git status --porcelain)" ]]; then
+# ecosystem.config.cjs is intentionally VPS-local and backend/build/ is a
+# generated Python artifact. They may exist before the .gitignore rules are
+# pulled, so those known untracked paths must not block the bootstrap pull.
+# Tracked modifications and every other untracked path still stop the deploy.
+WORKTREE_CHANGES="$(git status --porcelain --untracked-files=all | grep -v -E '^\?\? (ecosystem\.config\.cjs|backend/build/)' || true)"
+if [[ -n "$WORKTREE_CHANGES" ]]; then
   warn "worktree has local changes — refusing to pull automatically"
-  git status --short
+  printf '%s\n' "$WORKTREE_CHANGES"
   exit 1
 fi
 

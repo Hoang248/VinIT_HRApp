@@ -310,7 +310,7 @@ Không tạo file `.service` trong `/etc/systemd/system` cho hai app này.
 
 ### 9.1. Tạo file PM2 ecosystem
 
-Tạo file `/home/ubuntu/hra/ecosystem.config.cjs` **ngoài Git**. File này không chứa secret của backend:
+Tạo file `/home/ubuntu/hra/ecosystem.config.cjs` **ngoài Git**; đường dẫn này đã được ignore trong `.gitignore` để smart deploy không coi file cấu hình riêng của VPS là thay đổi mã nguồn. File này không chứa secret của backend:
 
 ```js
 module.exports = {
@@ -601,6 +601,8 @@ bash scripts/deploy.sh --force
 # Sau khi Supabase migrations đã được áp/kiểm chứng ngoài VPS
 bash scripts/deploy.sh --migrations-verified
 ```
+
+Nếu bản script cũ dừng với `worktree has local changes` và chỉ liệt kê `backend/build/` cùng `ecosystem.config.cjs`, không xóa `ecosystem.config.cjs` vì đó là cấu hình PM2 riêng của VPS. Sao lưu file này, chạy một lần `git pull --ff-only origin arena/ea6e2570-vinit-hrapp` thủ công để lấy `.gitignore` và script mới, kiểm tra `git status --short`, rồi chạy lại `git uphra`. Từ bản mới, hai đường dẫn này được ignore và cũng được script bỏ qua ở bước kiểm tra bootstrap.
 
 Dòng đầu của script đúng phải in rõ `Smart deploy VinIT HRApp`, đường dẫn repo `/home/ubuntu/hra`, branch cần deploy và `PM2: hra-backend/hra-frontend`. Nếu output vẫn hiển thị `nextjs-dashboard`/`fastapi-backend`, lệnh vừa chạy vẫn là script của NarrativeHealth. Khi đó kiểm tra:
 
