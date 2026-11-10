@@ -39,6 +39,9 @@ out/
 next-env.d.ts
 tsconfig.tsbuildinfo
 
+# Smart deploy state (created on the VPS by scripts/deploy.sh)
+.deploy-state/
+
 # Python virtual environments
 .venv/
 venv/

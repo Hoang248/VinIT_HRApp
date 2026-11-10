@@ -27,6 +27,7 @@
 | 5.2 | Lưu tài liệu chờ triển khai + review/audit toàn bộ nâng cấp Batch 1–5.1 | ĐÃ AUDIT — CHƯA ĐÓNG GATE TRIỂN KHÁI | Commit `5f5ab66`; GitHub Actions run `42383228867` đạt cả 3 job; full backend local **160 passed**; audit remote 0 broken |
 | 5.3 | Post-audit hardening theo đánh giá GPT: F-01 LTR fail-closed, F-03 retention contract, mapping DEP-01/DEP-03 và tiêu chí PASS E2E | ĐÃ LÀM Ở CODE/TÀI LIỆU — CHƯA DEPLOY/CHƯA ĐÓNG DEP | Commit `c862700`; GitHub Actions run `42385930996` đạt cả 3 job; DEP-01 đang bị chặn bởi mapping môi trường staging |
 | 5.4 | Chẩn đoán thông báo CI cũ và giảm nhiễu cho thay đổi chỉ gồm Markdown | ĐÃ XỬ LÝ | Run lỗi `42379094324` thuộc commit cũ `479e391`; nguyên nhân đã sửa ở `3105045`; CI tại HEAD `072c7e2` đạt cả 3 job |
+| OPS-1 | Smart deploy `git up` cho VPS PM2/no-Docker | ĐÃ LÀM Ở SCRIPT/TÀI LIỆU — CHỜ ÁP DỤNG TRÊN VPS | Tạo `scripts/deploy.sh`, ignore `.deploy-state/`, bổ sung mục 12.1.1 trong `doc/VPS_DEPLOYMENT_NO_DOCKER.md`; commit/CI sẽ ghi sau khi push |
 | 6 | BGE pilot bằng golden set HR; HR gold dataset cho LTR; LTR SHADOW report | CHƯA LÀM | Cần dữ liệu/HR/nguồn lực ngoài code |
 | EXT-1 | Đóng legacy Supabase API keys và revoke legacy JWT secret | BLOCKED — MANUAL OPS | Connector không có thao tác deactivate/revoke; cần chủ project thao tác Dashboard/Management API |
 
@@ -307,6 +308,37 @@
 - Nguyên nhân cảm giác “báo lỗi liên tục”: nhiều commit chẩn đoán được push liên tiếp trong khoảng 13:43–13:54 UTC trước khi sửa, mỗi run lỗi tạo một thông báo riêng; một số email đến/trưng bày sau khi code đã được sửa.
 - `.github/workflows/ci.yml` đã bổ sung `paths-ignore: ["**.md"]` cho push/pull request để thay đổi chỉ gồm tài liệu Markdown không chạy toàn bộ CI. Push hỗn hợp có code/migration/frontend/staging vẫn chạy CI như trước.
 - Commit `e49c346` đã push; GitHub Actions run `42454397160` đạt cả Backend unit tests, Frontend checks và Backend integration. URL: https://github.com/ratrichero/VinIT_HRApp/actions/runs/42454397160
+
+### OPS-1 — Smart deploy `git up` cho VPS PM2/no-Docker
+
+#### Trạng thái: ĐÃ LÀM Ở SCRIPT/TÀI LIỆU — CHƯA CHẠY TRÊN VPS TRONG PHIÊN NÀY
+
+#### Bối cảnh
+
+- Sau khi người dùng deploy code mới nhất lên VPS PM2, hệ thống gặp hai hiện tượng đã xử lý thủ công: backend PM2 giữ cấu hình/process cũ khiến login 401 cho tới khi restart `hra-backend`; frontend Next standalone thiếu copy `.next/static` và `public` khiến logo mất và trang login quay vòng do JS không chạy đúng.
+- Người dùng cung cấp script smart deploy của project khác (NarrativeHealth) làm tham chiếu; script được chỉnh lại theo đúng cấu trúc VinIT HRApp thay vì sao chép nguyên trạng.
+
+#### Đã thay đổi
+
+- Tạo `scripts/deploy.sh` cho VPS PM2/no-Docker:
+  - Pull theo branch hiện tại hoặc `--branch`/`DEPLOY_BRANCH`; từ chối deploy khi worktree bẩn hoặc local có commit chưa push.
+  - Chỉ cài Node deps khi `frontend/package.json`/`package-lock.json` đổi; dùng `npm ci`.
+  - Chỉ cài Python deps khi `backend/pyproject.toml` đổi; dùng `backend/.venv/bin/python -m pip install .`.
+  - Chỉ build frontend khi source/config/deps đổi; sau build luôn sync `.next/static` và `public` vào `.next/standalone`. Nếu standalone thiếu assets nhưng build cũ còn dùng được, script tự sync và restart frontend.
+  - Chỉ restart `hra-backend` khi `backend/app` hoặc Python deps đổi; chỉ restart `hra-frontend` khi build/assets đổi; có stale-guard retry restart lỗi ở lần chạy sau.
+  - Không tự áp Supabase migrations: nếu `supabase/migrations` đổi, script dừng và yêu cầu chạy lại với `--migrations-verified` sau khi migration đã được áp/kiểm chứng qua quy trình Supabase đã duyệt.
+  - Sau restart có smoke test backend health, frontend root, logo và API proxy bootstrap-status.
+- Cập nhật `.gitignore` để ignore `.deploy-state/` do script tạo trên VPS.
+- Cập nhật `doc/VPS_DEPLOYMENT_NO_DOCKER.md` mục 12.1.1: alias `git config --global alias.up '!bash /home/ubuntu/hra/scripts/deploy.sh'`, cách dùng `--force`, `--migrations-verified`, `--branch` và lưu ý lần chạy đầu.
+
+#### Kiểm chứng
+
+- Đã kiểm tra cú pháp script bằng `bash -n scripts/deploy.sh` và `scripts/deploy.sh --help` ở local.
+- Chưa chạy smart deploy trên VPS trong phiên này; người vận hành cần chạy lần đầu trên VPS và gửi output smoke test nếu có lỗi.
+
+#### Commit/CI
+
+- Commit và CI: sẽ ghi sau khi push.
 
 ## 7. Batch 6 — Đánh giá model và dữ liệu thật
 

@@ -565,6 +565,42 @@ Worker chạy trong backend nên không rollout lẫn tiến trình cũ và mớ
    pm2 save
    ```
 
+### 12.1.1. Cập nhật nhanh bằng `git up` trên VPS
+
+Repo có sẵn script smart deploy tại `scripts/deploy.sh`, đã chỉnh theo đúng dự án này:
+
+- PM2 app đúng là `hra-backend` và `hra-frontend`.
+- Backend cài dependency từ `backend/pyproject.toml` bằng `backend/.venv`, chỉ khi file này thay đổi.
+- Frontend cài dependency bằng `npm ci`, chỉ khi `frontend/package.json`/`package-lock.json` thay đổi.
+- Frontend chỉ build lại khi source/config/deps thay đổi; sau build luôn copy `.next/static` và `public` vào `.next/standalone` để tránh lỗi mất logo/JS khiến đăng nhập quay vòng.
+- Script **không tự áp Supabase migrations**. Nếu `supabase/migrations` thay đổi, script dừng lại; sau khi migration đã được áp/kiểm chứng qua quy trình Supabase đã duyệt, chạy lại với `--migrations-verified`.
+- Script có stale-guard: nếu lần trước build xong nhưng PM2 restart lỗi, lần chạy sau sẽ retry restart kể cả khi code không đổi.
+- Script từ chối pull khi worktree có thay đổi local hoặc local có commit chưa push.
+
+Gán alias `git up` trên VPS:
+
+```bash
+git config --global alias.up '!bash /home/ubuntu/hra/scripts/deploy.sh'
+```
+
+Cách dùng:
+
+```bash
+cd /home/ubuntu/hra
+git up
+
+# Buộc làm lại toàn bộ các bước smart deploy
+bash scripts/deploy.sh --force
+
+# Sau khi Supabase migrations đã được áp/kiểm chứng ngoài VPS
+bash scripts/deploy.sh --migrations-verified
+
+# Chỉ định branch deploy khác
+bash scripts/deploy.sh --branch arena/ea6e2570-vinit-hrapp
+```
+
+Lần chạy đầu tiên trên VPS, nếu chưa có thư mục state `.deploy-state/`, script chỉ coi migration là thay đổi khi lần pull đó thực sự kéo về file migration mới hoặc marker cũ ghi nhận hash khác. Thư mục `.deploy-state/` đã được ignore khỏi Git.
+
 ### 12.2. Rollback code
 
 Nếu bản mới lỗi và không phụ thuộc thay đổi database không tương thích ngược:
