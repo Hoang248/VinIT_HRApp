@@ -57,6 +57,21 @@ Giới hạn bắt buộc phải ghi đúng: đây là **data minimisation best-
 5. Kiểm chứng sau purge: applications/documents/profile versions/assessment runs/embeddings bằng 0; không còn object CV/extracted text thuộc các application đã xóa; số Auth users/user profiles không đổi; đăng nhập và phân quyền HR Lead/HM vẫn hoạt động.
 6. Purge trong HRA không xóa log/retention phía DeepSeek/gateway. DEP-05 phải yêu cầu xác nhận chính sách lưu trữ/training và khả năng xóa dữ liệu phía provider riêng.
 
+Script thực thi đã chuẩn bị tại `backend/scripts/purge_test_cv_data.py`: mặc định dry-run, chỉ in counts; khi execute phải có `--confirm PURGE_ALL_CV_KEEP_ACCOUNTS`, từ chối nếu còn operation `PENDING`/`PROCESSING`, xóa storage trước rồi xóa DB trong transaction. Đây là reset môi trường test, không phải bằng chứng DEP-02 retention. Trên VPS chạy:
+
+```bash
+cd /home/ubuntu/hra
+git uphra
+pm2 stop hra-backend
+cd /home/ubuntu/hra/backend
+.venv/bin/python scripts/purge_test_cv_data.py --dry-run
+.venv/bin/python scripts/purge_test_cv_data.py --execute --confirm PURGE_ALL_CV_KEEP_ACCOUNTS
+pm2 restart hra-backend
+pm2 status
+```
+
+Chỉ execute khi dry-run có `active_operations: 0`. Gửi lại JSON output của script (chỉ gồm counts) để đối chiếu độc lập qua Supabase: DB targets bằng 0, `storage.objects` trong `cv-originals`/`cv-extracted-text` bằng 0 và số tài khoản không đổi.
+
 ## 1. Danh sách chờ triển khai/thực thi
 
 | ID | Hạng mục chờ | Trạng thái chờ | Phụ thuộc | Chủ trì | Bằng chứng đóng hạng mục |
