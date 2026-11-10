@@ -70,7 +70,7 @@ pm2 restart hra-backend
 pm2 status
 ```
 
-Chỉ execute khi dry-run có `active_operations: 0`. Gửi lại JSON output của script (chỉ gồm counts) để đối chiếu độc lập qua Supabase: DB targets bằng 0, `storage.objects` trong `cv-originals`/`cv-extracted-text` bằng 0 và số tài khoản không đổi.
+Chỉ execute khi dry-run có `active_operations: 0`. Gửi lại JSON output của script (chỉ gồm counts) để đối chiếu độc lập qua Supabase: DB targets bằng 0, `storage.objects` trong `cv-originals`/`cv-extracted-text` bằng 0 và số tài khoản không đổi. Nếu đối chiếu thấy object mồ côi do attempt trích xuất cũ, dừng lại `hra-backend` và chạy lại cùng lệnh execute với `--include-storage-orphans` để script liệt kê/xóa qua Storage API rồi kiểm tra lại bucket.
 
 ## 1. Danh sách chờ triển khai/thực thi
 

@@ -153,6 +153,80 @@ def count_storage_targets(originals: list[dict[str, Any]], extracted_paths: list
     return len(targets)
 
 
+def _storage_item_value(item: Any, key: str) -> Any:
+    return item.get(key) if isinstance(item, dict) else getattr(item, key, None)
+
+
+def list_supabase_storage_paths(client, bucket: str) -> list[str]:
+    """Recursively list file paths in a Supabase Storage bucket."""
+    storage = client.storage.from_(bucket)
+    paths: list[str] = []
+    stack = [""]
+    while stack:
+        prefix = stack.pop()
+        for item in storage.list(prefix) or []:
+            name = _storage_item_value(item, "name")
+            if not name:
+                continue
+            full_path = f"{prefix}/{name}" if prefix else str(name)
+            if _storage_item_value(item, "id") is None:
+                stack.append(full_path)
+            else:
+                paths.append(full_path)
+    return sorted(paths)
+
+
+def list_storage_paths(bucket: str) -> list[str]:
+    """List all file paths in one configured CV storage bucket."""
+    backend = (settings.STORAGE_BACKEND or "").strip().lower()
+    if backend == "local":
+        bucket_dir = Path(settings.LOCAL_STORAGE_PATH).expanduser() / bucket
+        if not bucket_dir.exists():
+            return []
+        return sorted(
+            path.relative_to(bucket_dir).as_posix()
+            for path in bucket_dir.rglob("*")
+            if path.is_file()
+        )
+    if backend == "supabase":
+        from app.db.supabase import get_supabase_client
+
+        client = get_supabase_client()
+        if not client:
+            raise RuntimeError("Supabase storage is not configured")
+        return list_supabase_storage_paths(client, bucket)
+    raise RuntimeError("Storage backend is not supported by the purge script")
+
+
+def purge_storage_orphans() -> dict[str, dict[str, int]]:
+    """Delete every remaining object in the two CV buckets via the storage API.
+
+    The main purge deletes objects referenced by database rows. Failed or
+    interrupted attempts can leave orphan extracted-text objects behind; this
+    optional sweep removes only objects in the configured CV buckets and
+    reports counts, never paths.
+    """
+    summary: dict[str, dict[str, int]] = {}
+    for bucket in (settings.SUPABASE_STORAGE_BUCKET_CV, settings.SUPABASE_STORAGE_BUCKET_EXTRACTED):
+        paths = list_storage_paths(bucket)
+        delete_summary = (
+            delete_storage_objects(
+                [{"bucket": bucket, "storage_path": path} for path in paths], []
+            )
+            if paths
+            else {"storage_objects_deleted": 0, "storage_objects_missing": 0}
+        )
+        remaining = list_storage_paths(bucket)
+        summary[bucket] = {
+            "objects_found": len(paths),
+            **delete_summary,
+            "objects_remaining": len(remaining),
+        }
+        if remaining:
+            raise RuntimeError(f"storage orphan purge incomplete for bucket {bucket}")
+    return summary
+
+
 def _snapshot(db) -> dict[str, Any]:
     originals, extracted_paths = _collect_storage_inputs(db)
     return {
@@ -164,7 +238,7 @@ def _snapshot(db) -> dict[str, Any]:
     }
 
 
-def run(*, execute: bool, confirmation: str | None) -> dict[str, Any]:
+def run(*, execute: bool, confirmation: str | None, include_storage_orphans: bool = False) -> dict[str, Any]:
     ensure_confirmation(execute=execute, confirmation=confirmation)
 
     db = SessionLocal()
@@ -173,6 +247,12 @@ def run(*, execute: bool, confirmation: str | None) -> dict[str, Any]:
         originals, extracted_paths = _collect_storage_inputs(db)
     finally:
         db.close()
+
+    if include_storage_orphans and not execute:
+        before["storage_orphans_present"] = {
+            bucket: len(list_storage_paths(bucket))
+            for bucket in (settings.SUPABASE_STORAGE_BUCKET_CV, settings.SUPABASE_STORAGE_BUCKET_EXTRACTED)
+        }
 
     if not execute:
         return {"mode": "dry-run", **before}
@@ -205,22 +285,34 @@ def run(*, execute: bool, confirmation: str | None) -> dict[str, Any]:
     if after["preserved"] != before["preserved"]:
         raise RuntimeError("purge verification failed; preserved account/position counts changed")
 
-    return {
+    result = {
         "mode": "execute",
         "before": before,
         "storage": storage_summary,
         "deleted": deleted,
         "after": after,
     }
+    if include_storage_orphans:
+        result["storage_orphans"] = purge_storage_orphans()
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--execute", action="store_true", help="perform the purge; default is dry-run")
+    parser.add_argument("--dry-run", action="store_true", help="only print aggregate counts; this is the default")
+    parser.add_argument("--execute", action="store_true", help="perform the purge")
+    parser.add_argument("--include-storage-orphans", action="store_true",
+                        help="also list/delete every remaining object in the configured CV buckets")
     parser.add_argument("--confirm", default="", help=f"required with --execute: {CONFIRMATION}")
     args = parser.parse_args(argv)
+    if args.dry_run and args.execute:
+        parser.error("--dry-run and --execute are mutually exclusive")
     try:
-        result = run(execute=args.execute, confirmation=args.confirm)
+        result = run(
+            execute=args.execute,
+            confirmation=args.confirm,
+            include_storage_orphans=args.include_storage_orphans,
+        )
     except Exception as exc:
         print(json.dumps({"ok": False, "error_type": type(exc).__name__, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1

@@ -54,3 +54,28 @@ def test_storage_target_count_expands_extracted_pages_and_deduplicates():
     originals = [{"bucket": "cv-originals", "storage_path": "app/cv.pdf"}]
 
     assert script.count_storage_targets(originals, ["app/extracted.txt", "app/extracted.txt"]) == 3
+
+
+def test_list_supabase_storage_paths_recurses_into_folders():
+    script = _load_script()
+
+    class FakeBucket:
+        def list(self, prefix):
+            return {
+                "": [{"name": "app", "id": None}, {"name": "root.txt", "id": "1"}],
+                "app": [{"name": "attempt", "id": None}],
+                "app/attempt": [{"name": "extracted.txt", "id": "2"}, {"name": "pages.json", "id": "3"}],
+            }[prefix]
+
+    class FakeStorage:
+        def from_(self, bucket):
+            assert bucket == "cv-extracted-text"
+            return FakeBucket()
+
+    client = type("Client", (), {"storage": FakeStorage()})()
+
+    assert script.list_supabase_storage_paths(client, "cv-extracted-text") == [
+        "app/attempt/extracted.txt",
+        "app/attempt/pages.json",
+        "root.txt",
+    ]
