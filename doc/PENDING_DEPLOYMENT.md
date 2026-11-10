@@ -19,7 +19,7 @@ bằng chứng là blocker thực thi, không phải chi tiết có thể bổ s
 
 | Thành phần | Staging cho DEP-01/DEP-02 | Môi trường phục vụ project đã kết nối cho DEP-03 |
 |---|---|---|
-| Mục đích môi trường | `CHƯA XÁC NHẬN — BLOCKER` | Pilot cấu hình production phục vụ thử nghiệm LLM; `APP_ENV=production` là chủ đích. Có thể coi VPS là server test, nhưng dữ liệu đã dùng không phải synthetic-only |
+| Mục đích môi trường | Dùng chính stack hiện tại sau khi purge CV và reclassify cho test code; chưa ký nghiệm thu cho tới khi có bằng chứng purge | Môi trường test code; giữ nguyên stack và tài khoản hiện tại để tiếp tục các bước tiếp theo. Dữ liệu CV/kết quả thử nghiệm hiện tại không cần bảo tồn lâu dài |
 | Backend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-backend`, Uvicorn nội bộ `127.0.0.1:8005`; health từng xác nhận `ready` |
 | Frontend URL/process | `CHƯA XÁC NHẬN — BLOCKER` | VPS HRA, PM2 `hra-frontend`, Next chạy trực tiếp cổng `3005`; hiện truy cập qua IP public `:3005` |
 | Supabase project ref | `CHƯA XÁC NHẬN — BLOCKER` | `myrymlqdbyqmpynesiwk` |
@@ -27,20 +27,45 @@ bằng chứng là blocker thực thi, không phải chi tiết có thể bổ s
 | Backend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
 | Frontend commit đang chạy | `CHƯA XÁC NHẬN — BLOCKER` | `CHƯA XÁC NHẬN — BLOCKER` |
 | Worker topology/số instance | `CHƯA XÁC NHẬN — BLOCKER` | PM2 có 1 `hra-backend` với worker trong cùng process và 1 `hra-frontend`; dùng chung PM2/user với NarrativeHealth |
-| Loại dữ liệu được phép | Chỉ dữ liệu tổng hợp cho DEP-01 | Đã có tài khoản HR/CV phục vụ thử nghiệm LLM; dữ liệu được người vận hành cho biết có thể reset, nhưng hiện vẫn phân loại là dữ liệu thật/pilot, không phải synthetic-only |
-| Provider/mode được phép | LLM local/mock đã duyệt; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Đã dùng cho thử nghiệm LLM; provider, loại dữ liệu đã gửi và phạm vi lưu trữ phía provider chưa được kiểm kê/phê duyệt theo DEP-05 |
+| Loại dữ liệu được phép | Sau purge, chỉ nạp dữ liệu cho vòng test code mới; dữ liệu thật đã từng tồn tại không được gọi ngược là synthetic | Tại thời điểm audit tổng hợp có 4 Auth users, 4 user profiles, 2 positions, 5 applications, 5 documents và 4 assessment runs. Toàn bộ CV hiện đã nhập được phép xóa; tài khoản người dùng được giữ nguyên |
+| Provider/mode được phép | Provider test hiện tại chỉ sau khi xác nhận payload qua redaction và cấu hình egress; `LTR_MODE=OFF`; semantic `OFF` hoặc `hash` non-BGE cho smoke | Cấu hình AI ACTIVE dạng OpenAI-compatible qua host `tokenharbor.ai`, model `deepseek-v4.1-flash:free`. Kiểm kê hồi cứu DEP-05 vẫn phải xác nhận quan hệ gateway/provider DeepSeek, retention/training và thời gian sử dụng thực tế |
 
-Kết luận Gate 0 tạm thời: stack VPS + Supabase hiện tại là **pilot cấu hình production có dữ liệu HR/CV thật dùng thử**, không tự động đạt điều kiện staging synthetic cho DEP-01/DEP-02. Muốn dùng chính stack này làm staging phải có quyết định reset/reclassify chính thức, xóa/kiểm chứng dữ liệu Auth/DB/Storage, đổi nhãn môi trường và ký bằng chứng sau reset. Phương án ưu tiên là giữ stack hiện tại cho DEP-03/pilot và tạo staging tách biệt cho DEP-01/DEP-02.
+Kết luận Gate 0 sau quyết định mới nhất: stack VPS + Supabase hiện tại được phân loại là **môi trường test code có dữ liệu CV thật dùng một lần đang chờ purge**. Giữ nguyên stack và các tài khoản đã tạo; HR Lead/Hiring Manager cho E2E dùng tài khoản hiện tại hoặc tạo mới nếu cần. Chưa thực thi purge ở bước audit này. Sau khi xóa toàn bộ CV, kiểm chứng DB/Storage và giữ nguyên tài khoản, stack có thể được reclassify cho vòng test code tiếp theo. Việc purge không biến dữ liệu thật trong quá khứ thành dữ liệu synthetic và không dùng kết quả thử nghiệm cũ để chứng minh độ chính xác OCR/BGE/LTR.
+
+### Audit PII tại biên LLM — code hiện tại
+
+Phạm vi audit là code tại HEAD hiện tại, không phải bằng chứng hồi tố cho mọi phiên bản code/cấu hình từng chạy trên VPS.
+
+| Đường gửi | Dữ liệu trước HTTP request | Kết luận |
+|---|---|---|
+| Tạo criteria từ JD | `extract_criteria_from_jd` chạy `redact_text` cho job title và toàn bộ JD trước `_call_llm` | Không gửi JD raw qua đường này |
+| Trích xuất profile CV | Worker redact text gốc trước khi lưu extracted text và trước khi gọi; `extract_candidate_profile` redact lại với `detect_first_line_name=True`. Email/phone/display name được trích xuất cục bộ để lưu identity, còn định danh gửi model là application UUID | Không gửi CV raw; model nhận toàn bộ nội dung nghề nghiệp còn lại sau redaction |
+| Matching fallback | Worker redact lại extracted text; profile qua `redact_professional_profile`, rubric qua `redact_payload`/`redact_text`, từng chunk qua `redact_text`, tối đa 5 chunks cho mỗi criterion | Đường worker không gửi toàn bộ CV. Direct caller không truyền chunks vẫn dùng legacy prompt chứa toàn bộ CV đã redact |
+| Test provider | Chỉ gửi prompt connectivity tối thiểu, không có CV/JD/profile | Không phát sinh egress dữ liệu ứng viên |
+| Embedding/semantic | Chỉ chạy khi semantic được bật. Worker tạo chunks từ CV text đã redact rồi mới embed; `BGEHttpEmbeddingProvider` tự nó không redact thêm | Phải giữ nguyên thứ tự redact-trước-embed và kiểm kê endpoint riêng ở DEP-05/DEP-06 |
+
+`redact_text` che các dòng có nhãn tên/email/phone/ngày sinh/địa chỉ/lương/hộ chiếu/CMND-CCCD và một số thuộc tính nhạy cảm, đồng thời che email, URL và dãy số dài; `redact_payload` loại các key định danh đã biết. Test biên bằng fake HTTP client xác nhận tên/email/phone synthetic không xuất hiện trong payload và nội dung nghề nghiệp vẫn được giữ.
+
+Giới hạn bắt buộc phải ghi đúng: đây là **data minimisation best-effort, không phải bảo đảm ẩn danh tuyệt đối**. Redaction có thể sót tên không có nhãn hoặc không khớp heuristic, địa chỉ nằm trong câu, ngày sinh không nhãn, biến thể OCR và thông tin nhận dạng gián tiếp từ trường học/công ty/dự án. `_call_llm` không tự redact ở transport layer; hiện ba method nghiệp vụ criteria/profile/matching là các caller duy nhất và đều redact trước, nhưng mọi caller tương lai phải giữ cùng kỷ luật hoặc bổ sung guard tại transport. Trước khi đổi nhãn `APP_ENV` khỏi `production`, phải xác nhận `LANGFUSE_CAPTURE_CONTENT=false`; nếu bật capture ngoài production, Langfuse có thể nhận prompt/output đã redact chứ không chỉ metadata.
+
+### Checklist purge toàn bộ CV nhưng giữ tài khoản — CHƯA THỰC THI
+
+1. Dừng/drain `hra-backend` và tạm dừng upload/assessment để không phát sinh CV mới trong lúc purge; đếm lại aggregate ngay trước khi xóa, không dùng số tại thời điểm audit làm số cuối cùng.
+2. Phạm vi giữ: `auth.users`, `app_private.user_profiles`, role/position assignments của người dùng, AI configuration và — trừ khi có quyết định riêng — positions/JD/criteria hiện có. HR Lead/HM dùng tài khoản hiện tại hoặc tạo mới.
+3. Phạm vi xóa theo từng application: file gốc trong bucket CV, extracted text và `pages.json`, `applications`, `application_identities`, `application_documents`, `document_processing_runs`, `profile_versions`/`profile_facts`, `assessment_runs` và results/evidence phái sinh, `ranking_items`, shortlist shares/feedback, `duplicate_signals`, `cv_chunk_embeddings`, private notes và status events. `cv_batch_items` phải unlink application và thay filename bằng `[DELETED]` như retention hiện tại.
+4. Ưu tiên chạy retention execute cho từng application nếu đủ điều kiện nghiệp vụ; nếu dùng reset test hàng loạt, phải dùng một thao tác có kiểm soát với danh sách application ID, transaction cho DB, đối soát storage trước/sau và audit evidence chỉ chứa opaque ID/counts. Không xóa tay rời rạc từng bảng và không đụng audit hash chain.
+5. Kiểm chứng sau purge: applications/documents/profile versions/assessment runs/embeddings bằng 0; không còn object CV/extracted text thuộc các application đã xóa; số Auth users/user profiles không đổi; đăng nhập và phân quyền HR Lead/HM vẫn hoạt động.
+6. Purge trong HRA không xóa log/retention phía DeepSeek/gateway. DEP-05 phải yêu cầu xác nhận chính sách lưu trữ/training và khả năng xóa dữ liệu phía provider riêng.
 
 ## 1. Danh sách chờ triển khai/thực thi
 
 | ID | Hạng mục chờ | Trạng thái chờ | Phụ thuộc | Chủ trì | Bằng chứng đóng hạng mục |
 |---|---|---|---|---|---|
-| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên staging và chạy E2E bằng dữ liệu tổng hợp | `READY_CODE — BLOCKED_ENVIRONMENT_MAPPING` | Bảng mapping môi trường đã ký, staging tách biệt, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL/N/A hợp lệ, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
-| DEP-02 | Kiểm chứng retention/audit qua backend staging đã deploy | `READY_TO_EXECUTE` sau DEP-01 | Backend staging trỏ tới DB đã có migration `00012`, tài khoản đúng quyền | DevOps + HR Lead/Admin | `GET /v1/admin/audit/verify` trả `valid=true`; retention due/not-due/confirm/execute có case/job/audit evidence |
+| DEP-01 | Deploy backend/frontend chứa Batch 1–5 lên môi trường test đã reclassify và chạy E2E cho vòng dữ liệu mới | `READY_CODE — BLOCKED_PURGE_AND_ENV_EVIDENCE` | Đã purge toàn bộ CV cũ và kiểm chứng, bảng mapping môi trường đã ký, tài khoản Admin/HR Lead/HR Recruiter/HM/Outsider hiện tại hoặc tạo mới, deploy commit đã audit | DevOps/IT + HR/HM | Checklist E2E-01…E2E-16 đã điền PASS/FAIL/N/A hợp lệ, commit SHA, migration versions, log/screenshot đã che secret, ký duyệt |
+| DEP-02 | Kiểm chứng retention/audit qua backend môi trường test đã deploy | `READY_TO_EXECUTE` sau DEP-01 | Backend test trỏ tới DB đã có migration `00012`, tài khoản đúng quyền; không dùng chính thao tác purge reset làm bằng chứng retention nếu không chạy đúng workflow case/confirm/execute | DevOps + HR Lead/Admin | `GET /v1/admin/audit/verify` trả `valid=true`; retention due/not-due/confirm/execute có case/job/audit evidence |
 | DEP-03 | Triển khai code tương ứng với schema `00011`/`00012` lên môi trường phục vụ project đã kết nối, nếu môi trường đó đang chạy code cũ | `BLOCKED_ENVIRONMENT_IDENTIFICATION` | Điền cột môi trường đã kết nối trong bảng mapping, xác nhận topology/process đang chạy, cửa sổ deploy, drain worker, kế hoạch rollback | DevOps/Release owner | Phiên bản deploy thực tế, health checks, smoke test Admin/LTR/retention, xác nhận không chạy mixed-version worker |
 | DEP-04 | Đóng legacy Supabase API keys và revoke legacy JWT signing secret | `BLOCKED_MANUAL_OPS` | Kiểm kê mọi client/backend/worker đã chuyển sang key/JWKS mới; restart đồng nhất | Chủ project Supabase | Dashboard/Management API xác nhận legacy disabled, legacy JWT secret revoked, login/JWKS mới hoạt động |
-| DEP-05 | Phê duyệt privacy/egress cho LLM/BGE/OCR dùng dữ liệu thật | `WAITING_APPROVAL` | Provider/region/DPA, loại dữ liệu gửi, retention phía provider, DLP/redaction | IT Security/Legal/HR | Văn bản phê duyệt hoặc ticket bảo mật đã ký; cấu hình endpoint đúng phạm vi phê duyệt |
+| DEP-05 | Kiểm kê hồi cứu DeepSeek/gateway và phê duyệt privacy/egress cho LLM/BGE/OCR dùng dữ liệu thật | `RETROSPECTIVE_INVENTORY_AND_APPROVAL_REQUIRED` | Provider/gateway/model/API base, thời gian dùng, loại payload sau redaction, `ALLOW_EXTERNAL_API`, retention/training phía provider, DLP/redaction | IT Security/Legal/HR | Văn bản phê duyệt hoặc ticket bảo mật đã ký; cấu hình endpoint đúng phạm vi phê duyệt; xác nhận retention/deletion phía provider |
 | DEP-06 | BGE pilot bằng endpoint thật và golden set HR | `WAITING_ENDPOINT_AND_DATA` | DEP-05, endpoint BGE-M3 1024 chiều có token/quota, HR golden set | IT + HR | Báo cáo Recall@5, false MATCH/NO_MATCH, unresolved rate, latency; quyết định bật/tắt semantic |
 | DEP-07 | LTR SHADOW rồi mới xét ACTIVE | `WAITING_HR_GOLD_DATASET` | DEP-05 nếu dùng dữ liệu thật, HR gold dataset đủ lớn/đại diện, artifact đạt gates và được Admin approve | HR/HM + kỹ thuật | Dataset/labeling report, training gates, review event/artifact hash, SHADOW comparison chứng minh không vi phạm mandatory/coverage |
 | DEP-08 | Production readiness: branch protection, monitoring/alerting, topology worker, backup/restore/DR drill | `WAITING_OPS_DECISION` | Quy trình phát hành và hạ tầng đích | DevOps/IT | Cấu hình branch protection nếu áp dụng, dashboard/alert test, quyết định worker topology, biên bản restore/DR drill |
@@ -71,17 +96,19 @@ Giới hạn bắt buộc:
 
 ## 3. Thứ tự triển khai khuyến nghị
 
-### Gate A — Staging readiness: DEP-01
+### Gate A — Test-environment readiness: DEP-01
 
-Chưa bắt đầu nếu bảng mapping môi trường chưa được DevOps/Release owner điền và
-ký xác nhận. Khi đã có staging, deploy bằng dữ liệu tổng hợp, `LTR_MODE=OFF`,
-LLM local/mock đã duyệt; semantic chỉ dùng `OFF` hoặc provider `hash` non-BGE
-cho smoke plumbing.
+Chưa bắt đầu cho tới khi purge toàn bộ CV cũ đã thực thi/kiểm chứng, bảng mapping
+môi trường được DevOps/Release owner điền và ký xác nhận. Vòng E2E tiếp theo dùng
+chính stack hiện tại đã reclassify, giữ tài khoản người dùng, `LTR_MODE=OFF`;
+semantic chỉ dùng `OFF` hoặc provider `hash` non-BGE cho smoke plumbing nếu chưa
+đóng DEP-06.
 
 ### Gate B — Data lifecycle acceptance: DEP-02
 
-Kiểm chứng sâu retention, storage purge và audit verify qua backend staging đã
-deploy. DEP-02 dùng cùng staging của Gate A nhưng ký đóng riêng.
+Kiểm chứng sâu retention, storage purge và audit verify qua backend môi trường
+test đã deploy. DEP-02 dùng cùng stack của Gate A nhưng ký đóng riêng; thao tác
+purge reset ban đầu không tự động thay thế bằng chứng workflow retention.
 
 ### Gate C — Deployment alignment & security: DEP-03, sau đó DEP-04
 
@@ -92,8 +119,9 @@ chuẩn bị song song, nhưng chỉ đóng legacy keys/JWT secret sau khi mọi
 
 ### Gate D — AI privacy & quality: DEP-05 → DEP-06 → DEP-07
 
-Chỉ dùng dữ liệu/model thật sau phê duyệt privacy/egress. BGE pilot và LTR
-SHADOW/ACTIVE là các gate độc lập; không suy chất lượng từ fixture tổng hợp.
+DEP-05 gồm kiểm kê hồi cứu các lần thử DeepSeek/gateway trước đây và phê duyệt
+cho mọi lần gửi dữ liệu thật trong tương lai. BGE pilot và LTR SHADOW/ACTIVE là
+các gate độc lập; không suy chất lượng từ fixture tổng hợp.
 
 ### Gate E — Production readiness: DEP-08
 
@@ -103,14 +131,15 @@ Gate E khi có bằng chứng vận hành đầy đủ.
 
 ### Thứ tự chi tiết
 
-1. Điền bảng mapping môi trường, chốt commit sẽ deploy và cửa sổ triển khai; xác nhận không có worker/API phiên bản cũ đang xử lý job.
-2. Deploy staging theo DEP-01; ghi commit SHA, cấu hình provider ở mức không lộ secret và migration versions.
-3. Chạy checklist E2E bằng dữ liệu tổng hợp; hoàn thành DEP-02 cho audit/retention.
-4. Nếu môi trường phục vụ project đã kết nối còn code cũ, lên lịch DEP-03 sau khi staging đạt; không để mixed-version worker.
-5. Chủ project thực hiện DEP-04 sau khi mọi deployment đã dùng key/JWKS mới.
-6. Xin DEP-05 trước khi gửi dữ liệu thật tới LLM/BGE/OCR.
-7. Chạy DEP-06 cho BGE; xây HR gold dataset và chạy DEP-07 ở `SHADOW`; chỉ xét `ACTIVE` sau SHADOW report đạt gate.
-8. Hoàn thiện DEP-08 trước khi tuyên bố production readiness.
+1. Thực thi checklist purge toàn bộ CV, giữ tài khoản; kiểm chứng DB/Storage và reclassify stack thành môi trường test code.
+2. Điền bảng mapping môi trường, chốt commit sẽ deploy và cửa sổ triển khai; xác nhận không có worker/API phiên bản cũ đang xử lý job.
+3. Deploy môi trường test theo DEP-01; ghi commit SHA, cấu hình provider ở mức không lộ secret và migration versions.
+4. Chạy checklist E2E cho vòng dữ liệu mới; hoàn thành DEP-02 cho audit/retention bằng đúng workflow retention.
+5. Nếu môi trường phục vụ project đã kết nối còn code cũ, lên lịch DEP-03 sau khi môi trường test đạt; không để mixed-version worker.
+6. Chủ project thực hiện DEP-04 sau khi mọi deployment đã dùng key/JWKS mới.
+7. Hoàn tất kiểm kê hồi cứu và xin DEP-05 trước khi gửi thêm dữ liệu thật tới LLM/BGE/OCR.
+8. Chạy DEP-06 cho BGE; xây HR gold dataset và chạy DEP-07 ở `SHADOW`; chỉ xét `ACTIVE` sau SHADOW report đạt gate.
+9. Hoàn thiện DEP-08 trước khi tuyên bố production readiness.
 
 ## 4. Lưu ý rollback và an toàn schema
 
