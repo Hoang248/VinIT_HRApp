@@ -152,11 +152,23 @@ Chỉ ký PASS vòng staging khi:
 - Audit verify trả `valid=true`, hoặc defect integrity được mở và chặn phát hành.
 - Log kiểm tra không chứa API key, access token, prompt đầy đủ hoặc CV text thật.
 
+Quyết định đóng DEP-01 ở phạm vi rút gọn (11/11/2026):
+
+- Phạm vi được ký đóng: E2E-01, E2E-05, E2E-06, E2E-07, E2E-08 đều PASS
+  (bằng chứng ở Mục 5, 5.2, 5.3); DM-01/DM-02 đã đóng.
+- Phạm vi chính thức loại khỏi vòng DEP-01 và chuyển gate sau (không được
+  hiểu là đã đạt): E2E-02, E2E-03, E2E-04, E2E-09 chuyển vòng kiểm chứng
+  tiếp theo; E2E-10, E2E-11, E2E-12, E2E-13 thuộc DEP-02 (retention/audit)
+  và ký riêng; E2E-14, E2E-15, E2E-16 là `CONDITIONAL` ngoài phạm vi vòng
+  này theo Mục 5.1.
+- Việc đóng rút gọn này do người vận hành/điều phối quyết định ngày
+  11/11/2026; các vai trò còn lại ký bổ sung sau, không đổi kết quả từng mục.
+
 Ký duyệt:
 
 | Vai trò | Họ tên | Kết luận | Ngày |
 |---|---|---|---|
-| Điều phối staging |  | PASS / FAIL |  |
+| Điều phối staging | Người vận hành môi trường test (xác nhận trong phiên làm việc) | PASS ở phạm vi rút gọn nêu trên | 11/11/2026 |
 | HR Lead |  | PASS / FAIL |  |
 | Hiring Manager |  | PASS / FAIL |  |
 | Admin/IT Security (nếu có dùng model thật) |  | PASS / FAIL / N/A |  |
