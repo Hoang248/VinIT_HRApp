@@ -100,6 +100,10 @@ class CriterionResult(BaseSchema):
     confidence_band: Optional[str] = None
     reasoning: Optional[str] = None
     requires_verification: bool = False
+    decision_source: str | None = None
+    evidence_strength: float | None = None
+    evidence_chunk_id: str | None = None
+    rule_version: str | None = None
     verbatim_quote: Optional[str] = None
     page_number: Optional[int] = None
     evidence: List[EvidenceItem] = Field(default_factory=list)
@@ -116,6 +120,10 @@ class AssessmentRun(BaseSchema, TimestampMixin):
     evidence_coverage: Optional[float] = None
     confidence: Optional[float] = None
     summary: Optional[str] = None
+    assessment_fingerprint: str | None = None
+    matching_policy_version: str | None = None
+    prompt_version: str | None = None
+    provider_model_snapshot: dict | None = None
     criterion_results: List[CriterionResult] = Field(default_factory=list)
 
 
@@ -145,5 +153,6 @@ class RankingItem(BaseSchema):
     matching_status: MatchingStatus
     matching_score: Optional[float]
     evidence_coverage: Optional[float]
+    ltr_score: Optional[float] = None
     needs_verification: bool
     has_mismatch: bool

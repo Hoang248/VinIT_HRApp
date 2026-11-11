@@ -5,7 +5,8 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.exceptions import CriteriaNotApprovedError, NotFoundError
-from app.core.permissions import application_access, check_position_access
+from app.core.permissions import application_access, check_position_access, is_system_admin
+from app.services.ai_config import sanitize_provider_snapshot
 from app.core.security import get_current_user
 from app.db.database import SessionLocal
 from app.schemas.applications import AssessmentRun, RankingItem
@@ -94,6 +95,10 @@ async def get_assessment(assessment_id: UUID, current_user: dict = Depends(get_c
         """), {"user_id": current_user["user_id"], "assessment_id": str(assessment_id)}).first():
             raise HTTPException(status_code=403, detail="Bạn không có quyền xem đánh giá này")
         assessment = dict(row)
+        assessment["provider_model_snapshot"] = sanitize_provider_snapshot(
+            assessment.get("provider_model_snapshot"),
+            operations_access=is_system_admin(current_user["user_id"]),
+        )
         results = db.execute(text("""
             SELECT r.*, c.name AS criterion_name, c.category, r.requires_hr_verification AS requires_verification
             FROM app_private.criterion_assessment_results r JOIN app_private.criteria_items c USING (criterion_id)
@@ -124,7 +129,7 @@ async def get_latest_ranking(position_id: UUID, current_user: dict = Depends(get
     try:
         rows = db.execute(text("""
             SELECT ri.application_id, ri.rank_number, ri.ranking_status AS matching_status,
-                   ri.matching_score, ri.evidence_coverage, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
+                   ri.matching_score, ri.evidence_coverage, ri.ltr_score, COALESCE(i.display_name, 'Chưa có tên') AS candidate_name
             FROM app_private.ranking_items ri
             JOIN app_private.applications a ON a.application_id = ri.application_id
             JOIN app_private.assessment_runs ar ON ar.assessment_id = ri.assessment_id

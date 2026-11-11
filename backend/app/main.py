@@ -6,6 +6,7 @@ from app.core.exceptions import HRAException
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 from app.api import api_router
+from app.services.langfuse_observability import shutdown as shutdown_langfuse
 from app.workers.processor import worker
 
 # Setup logging first
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     async def shutdown_event():
         logger.info("Shutting down VinUni HRA Backend")
         worker.stop()
+        shutdown_langfuse()
 
     return app
 

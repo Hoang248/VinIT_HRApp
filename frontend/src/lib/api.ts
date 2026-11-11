@@ -63,9 +63,17 @@ export const positionsApi = {
   },
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
+  getWorkspace: (id: string) => apiClient.get(`/positions/${id}/workspace`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
   getJdVersions: (id: string) => apiClient.get(`/positions/${id}/jd-versions`),
   createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
+};
+
+export const departmentsApi = {
+  list: (includeInactive = false) => apiClient.get('/departments', { params: { include_inactive: includeInactive } }),
+  create: (data: { name: string; code_format: string; is_active: boolean }) => apiClient.post('/departments', data),
+  update: (id: string, data: { name?: string; code_format?: string; is_active?: boolean }) => apiClient.patch(`/departments/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/departments/${id}`),
 };
 
 export const criteriaApi = {
@@ -77,8 +85,14 @@ export const criteriaApi = {
   approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
-  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; weight_in_group: number }) =>
+  createItem: (versionId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
+    apiClient.post(`/criteria/${versionId}/items`, data),
+  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
     apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
+  deleteItem: (versionId: string, itemId: string) =>
+    apiClient.delete(`/criteria/${versionId}/items/${itemId}`),
+  updateItemWeights: (versionId: string, items: { criterion_id: string; weight_in_group: number }[]) =>
+    apiClient.patch(`/criteria/${versionId}/items/weights`, { items }),
   updateWeights: (versionId: string, mandatory: number, nice: number) =>
     apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>
@@ -158,6 +172,7 @@ export const shortlistApi = {
 
 export const dashboardApi = {
   getSummary: () => apiClient.get('/dashboard/summary'),
+  getWorkQueue: () => apiClient.get('/dashboard/work-queue'),
   getPosition: (id: string) => apiClient.get(`/dashboard/position/${id}`),
 };
 
@@ -168,7 +183,10 @@ export const adminApi = {
     apiClient.post('/admin/users', data),
   updateUser: (id: string, data: { display_name: string; account_status: string; roles: string[] }) =>
     apiClient.patch(`/admin/users/${id}`, data),
+  resetUserPassword: (id: string, new_password: string) =>
+    apiClient.post(`/admin/users/${id}/reset-password`, { new_password }),
   listAiConfigs: () => apiClient.get('/admin/ai/config'),
+  testAiConnection: (data: any) => apiClient.post('/admin/ai/test-connection', data),
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),
   enableAiConfig: (id: string) => apiClient.post(`/admin/ai/config/${id}/enable`),
   getActiveAiConfig: () => apiClient.get('/admin/ai/active-config'),
