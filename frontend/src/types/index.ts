@@ -8,12 +8,28 @@ export interface JDVersion {
   created_at: string;
 }
 
+export interface Department {
+  department_id: string;
+  name: string;
+  code_format: string;
+  next_sequence: number;
+  is_active: boolean;
+  position_count?: number;
+  created_by?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface Position {
   position_id: string;
   position_code: string;
   title: string;
   job_family?: string;
   org_unit?: string;
+  department_id?: string;
+  department_name?: string;
+  department_code_format?: string;
+  department_sequence?: number;
   level?: string;
   work_location?: string;
   work_mode?: string;
@@ -29,6 +45,121 @@ export interface Position {
   criteria_approved?: boolean;
 }
 
+export type WorkQueueItemType =
+  | 'POSITION_SETUP'
+  | 'CRITERIA_PENDING_HR'
+  | 'CRITERIA_PENDING_HM'
+  | 'FILE_REVIEW'
+  | 'PROCESSING'
+  | 'NEEDS_VERIFICATION'
+  | 'DUPLICATE_PENDING'
+  | 'POSSIBLE_MISMATCH'
+  | 'NOT_ASSESSED'
+  | 'SHARE_WITHOUT_FEEDBACK';
+
+export interface WorkQueueItem {
+  item_id: string;
+  type: WorkQueueItemType;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  position_id: string;
+  position_code?: string;
+  position_title?: string;
+  position_status?: string;
+  count: number;
+  target: { pathname: string; search?: string };
+}
+
+export interface WorkQueueResponse {
+  generated_at: string;
+  summary: {
+    positions_needing_attention: number;
+    files_needing_review: number;
+    applications_needing_verification: number;
+    duplicate_alerts: number;
+    criteria_pending_action: number;
+    shares_without_feedback: number;
+  };
+  items: WorkQueueItem[];
+}
+
+export type WorkflowStepCode = 'JD' | 'CRITERIA' | 'CV_INTAKE' | 'HR_REVIEW' | 'SHORTLIST';
+export type WorkflowStepStatus = 'COMPLETED' | 'CURRENT' | 'NOT_STARTED' | 'BLOCKED';
+
+export interface PositionWorkspace {
+  position: {
+    position_id: string;
+    position_code?: string;
+    title?: string;
+    status?: string;
+    department_name?: string;
+  };
+  jd: { latest_version_id: string | null; version_number?: number | null };
+  criteria: {
+    current_version_id: string | null;
+    current_status: string | null;
+    version_number?: number | null;
+    approved_for_latest_jd: boolean;
+    is_stale_for_latest_jd: boolean;
+  };
+  counts: {
+    total: number;
+    assessed: number;
+    processing: number;
+    file_review: number;
+    not_assessed: number;
+    needs_verification: number;
+    possible_mismatch: number;
+    meets_mandatory: number;
+    duplicate_pending: number;
+    shortlisted: number;
+  };
+  active_operation: { operation_id: string; status?: string; stage?: string } | null;
+  workflow: {
+    current_step: WorkflowStepCode;
+    steps: Array<{ code: WorkflowStepCode; status: WorkflowStepStatus }>;
+    next_action: {
+      code: string;
+      blocked_reason_code: string | null;
+      target: { pathname: string; search?: string };
+    };
+  };
+  viewer: {
+    is_hr: boolean;
+    is_hm: boolean;
+    position_roles: string[];
+    system_roles: string[];
+  };
+}
+
+export interface OperationProgress {
+  total: number;
+  processed: number;
+  failed: number;
+  percent_complete: number;
+  invalid_files?: Array<{ original_filename: string; error_code?: string }>;
+}
+
+export interface OperationStatus {
+  operation_id: string;
+  status?: string;
+  stage?: string;
+  capability?: string;
+  progress?: OperationProgress;
+  error_message?: string;
+}
+
+export interface RequirementSpec {
+  kind: 'SKILL' | 'YEARS' | 'DEGREE' | 'CERTIFICATION' | 'LANGUAGE';
+  terms: string[];
+  min_years?: number | null;
+  required_degree_level?: number | null;
+  required_languages: string[];
+  required_ielts?: number | null;
+  required_toeic?: number | null;
+  required_cefr?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | null;
+  required_language_rank?: number | null;
+}
+
 export interface Criterion {
   criterion_id: string;
   criteria_version_id: string;
@@ -37,6 +168,7 @@ export interface Criterion {
   category: 'MUST_HAVE' | 'NICE_TO_HAVE';
   weight_in_group: number;
   expected_evidence_keywords: string[];
+  requirement_spec?: RequirementSpec | null;
   evidence_guidance?: string;
   jd_reference_text?: string;
   display_order: number;
@@ -75,6 +207,7 @@ export interface RankingItem {
   matching_status: 'NOT_ASSESSED' | 'NEEDS_HR_VERIFICATION' | 'POSSIBLE_MISMATCH' | 'MEETS_MANDATORY';
   matching_score: number | null;
   evidence_coverage: number | null;
+  ltr_score?: number | null;
   needs_verification: boolean;
   has_mismatch: boolean;
   file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';
@@ -82,6 +215,7 @@ export interface RankingItem {
   has_duplicate_warning?: boolean;
   is_shortlisted?: boolean;
   application_status?: string;
+  created_at?: string;
 }
 
 export interface UserSummary {
@@ -107,6 +241,10 @@ export interface CriterionResult {
   confidence: number | null;
   reasoning: string | null;
   requires_verification: boolean;
+  decision_source?: 'RULE' | 'LLM' | 'HYBRID' | null;
+  evidence_strength?: number | null;
+  evidence_chunk_id?: string | null;
+  rule_version?: string | null;
   verbatim_quote?: string;
   page_number?: number;
   evidence?: EvidenceItem[];
@@ -153,6 +291,9 @@ export interface AssessmentDetail {
   matching_score: number | null;
   evidence_coverage: number | null;
   summary: string | null;
+  assessment_fingerprint?: string | null;
+  matching_policy_version?: string | null;
+  prompt_version?: string | null;
   criterion_results: CriterionResult[];
 }
 

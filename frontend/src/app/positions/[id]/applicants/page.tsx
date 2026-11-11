@@ -57,6 +57,17 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { assessmentsApi, operationsApi, applicationsApi, shortlistApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
+import QueueFilterChips from '@/components/applicants/QueueFilterChips';
+import OperationProgressPanel from '@/components/workflow/OperationProgressPanel';
+import {
+  applicantQueueCounts,
+  filterAndSortApplicantItems,
+  isApplicantQueue,
+  isApplicantSort,
+  storeApplicantNavigation,
+  type ApplicantQueue,
+  type ApplicantSort,
+} from '@/lib/applicantReview';
 import type { RankingItem, UserSummary } from '@/types';
 import { APPLICATION_STATUSES, isApplicationStatus } from '@/lib/applicationStatus';
 
@@ -68,22 +79,18 @@ export default function ApplicantsRankingPage() {
   const positionId = params.id as string;
 
   const [rankingItems, setRankingItems] = useState<RankingItem[]>([]);
-  const [appsNeedingReview, setAppsNeedingReview] = useState<number>(0);
-  const [duplicateCount, setDuplicateCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [assessing, setAssessing] = useState(false);
-  const [operationStatus, setOperationStatus] = useState<{
-    operation_id?: string;
-    status?: string;
-    progress?: { total: number; processed: number; failed: number; percent_complete: number };
-  } | null>(null);
+  const [operationStatus, setOperationStatus] = useState<import('@/types').OperationStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rankingError, setRankingError] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [queue, setQueue] = useState<ApplicantQueue>('ALL');
+  const [sort, setSort] = useState<ApplicantSort>('REVIEW_PRIORITY');
   const [searchQuery, setSearchQuery] = useState('');
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const urlInitializedRef = useRef(false);
 
   // Shortlist share dialog state
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -115,6 +122,7 @@ export default function ApplicantsRankingPage() {
           has_duplicate_warning: a.has_duplicate_warning,
           application_status: a.application_status,
           is_shortlisted: a.application_status === 'SHORTLIST',
+          created_at: a.created_at,
         };
       });
 
@@ -140,16 +148,13 @@ export default function ApplicantsRankingPage() {
             has_duplicate_warning: a.has_duplicate_warning,
             application_status: a.application_status,
             is_shortlisted: a.application_status === 'SHORTLIST',
+            created_at: a.created_at,
           });
         }
       });
 
       setRankingError(null);
       setRankingItems(merged);
-      setAppsNeedingReview(merged.filter((i) =>
-        i.needs_verification || i.file_processing_status === 'NEEDS_HR_REVIEW'
-      ).length);
-      setDuplicateCount(merged.filter((i) => i.has_duplicate_warning).length);
     } catch (err: any) {
       setRankingError(err.response?.data?.detail || t("Không thể tải bảng xếp hạng"));
     } finally {
@@ -198,6 +203,26 @@ export default function ApplicantsRankingPage() {
     return () => { mounted = false; stopPolling(); };
   }, [loadRanking, stopPolling, pollOperation, positionId, t]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const queueParam = params.get('queue');
+    const sortParam = params.get('sort');
+    if (isApplicantQueue(queueParam)) setQueue(queueParam);
+    if (isApplicantSort(sortParam)) setSort(sortParam);
+    if (params.get('q')) setSearchQuery(params.get('q') || '');
+    urlInitializedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!urlInitializedRef.current) return;
+    const params = new URLSearchParams();
+    if (queue !== 'ALL') params.set('queue', queue);
+    if (sort !== 'REVIEW_PRIORITY') params.set('sort', sort);
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }, [queue, sort, searchQuery]);
+
   const handleRunAssessment = async () => {
     try {
       setAssessing(true);
@@ -245,12 +270,11 @@ export default function ApplicantsRankingPage() {
   };
 
   const handleOpenShare = () => {
-    // Pre-select shortlisted items
-    const shortlisted = rankingItems.filter(i => i.is_shortlisted).map(i => i.application_id);
-    setSelectedIds(previous => {
-      const selected = shortlisted.filter(id => previous.has(id));
-      return new Set(selected.length ? selected : shortlisted);
-    });
+    // Preserve an explicit selection; otherwise pre-select visible shortlist items.
+    if (selectedIds.size === 0) {
+      const shortlisted = rankingItems.filter(i => i.is_shortlisted).map(i => i.application_id);
+      setSelectedIds(new Set(shortlisted));
+    }
     setShareError(null);
     setShareDialogOpen(true);
   };
@@ -289,18 +313,19 @@ export default function ApplicantsRankingPage() {
     }
   };
 
-  const displayCategory = (item: RankingItem) => {
-    if (!inScreening(item.application_status)) return 'OUT_OF_SCREENING';
-    if (!item.matching_status || item.matching_status === 'NOT_ASSESSED') return 'NOT_ASSESSED';
-    if (item.has_mismatch) return 'POSSIBLE_MISMATCH';
-    if (item.needs_verification) return 'NEEDS_HR_VERIFICATION';
-    return 'MEETS_MANDATORY';
+  const queueCounts = applicantQueueCounts(rankingItems);
+  const filteredItems = filterAndSortApplicantItems(rankingItems, queue, searchQuery, sort);
+
+  const storeNavigationContext = () => {
+    storeApplicantNavigation({
+      positionId,
+      queue,
+      sort,
+      search: searchQuery,
+      applicationIds: filteredItems.map(item => item.application_id),
+      storedAt: Date.now(),
+    });
   };
-  const filteredItems = rankingItems.filter(item => {
-    if (filterStatus !== 'ALL' && displayCategory(item) !== filterStatus) return false;
-    if (searchQuery && !item.candidate_name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
-  });
 
   const getMatchingStatusBadge = (item: RankingItem) => {
     if (!inScreening(item.application_status)) return <StatusBadge type="app-new" label={t("Ngoài sàng lọc")} />;
@@ -373,29 +398,7 @@ export default function ApplicantsRankingPage() {
 
       {/* Operation progress */}
       {operationStatus && operationStatus.status && operationStatus.status !== 'COMPLETED' && operationStatus.status !== 'FAILED' && (
-        <Card sx={{ mb: 3, border: '1px solid #B2DDFF', backgroundColor: '#EFF8FF' }}>
-          <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
-            <Stack direction="row" alignItems="center" spacing={2}>
-              <CircularProgress size={20} sx={{ color: '#134D8B' }} />
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="body2" fontWeight={600} color="#134D8B">
-                  {assessing ? t("Đang xử lý đánh giá ứng viên...") : t("Đang xử lý...")}
-                </Typography>
-                {operationStatus.progress && (
-                  <>
-                    <LinearProgress
-                      variant="determinate"
-                      value={operationStatus.progress.percent_complete || 0}
-                      sx={{ mt: 1, height: 6, borderRadius: 3, backgroundColor: '#D1E9FF' }}
-                    />
-                    <Typography variant="caption" color="#134D8B" sx={{ mt: 0.5, display: 'block' }}>{t("                      Đã xử lý")} {operationStatus.progress.processed}/{operationStatus.progress.total} {t("hồ sơ")}{operationStatus.progress.failed > 0 && t(" ({0} lỗi)", operationStatus.progress.failed)}
-                    </Typography>
-                  </>
-                )}
-              </Box>
-            </Stack>
-          </CardContent>
-        </Card>
+        <OperationProgressPanel operation={operationStatus} />
       )}
 
       {rankingError && <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" onClick={loadRanking}>{t("Thử lại")}</Button>}>{t(rankingError)}</Alert>}
@@ -414,27 +417,28 @@ export default function ApplicantsRankingPage() {
             <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#067647' }}>{assessedCount}</Typography>
           </CardContent>
         </Card>
-        <Card sx={{ minWidth: 140, flex: '1 1 140px', border: appsNeedingReview > 0 ? '1px solid #FEDF89' : undefined }}>
+        <Card sx={{ minWidth: 140, flex: '1 1 140px', border: queueCounts.NEEDS_VERIFICATION > 0 ? '1px solid #FEDF89' : undefined }}>
           <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
             <Typography variant="caption" color="text.secondary">{t("Cần HR xác minh")}</Typography>
-            <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: appsNeedingReview > 0 ? '#B54708' : '#667085' }}>
-              {appsNeedingReview}
+            <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: queueCounts.NEEDS_VERIFICATION > 0 ? '#B54708' : '#667085' }}>
+              {queueCounts.NEEDS_VERIFICATION}
             </Typography>
           </CardContent>
         </Card>
-        {duplicateCount > 0 && (
+        {queueCounts.DUPLICATE > 0 && (
           <Card sx={{ minWidth: 140, flex: '1 1 140px', border: '1px solid #FECDCA' }}>
             <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
               <Typography variant="caption" color="text.secondary">{t("Cảnh báo trùng lặp")}</Typography>
               <Typography variant="h4" sx={{ fontSize: 24, fontWeight: 'bold', color: '#C72127' }}>
-                {duplicateCount}
+                {queueCounts.DUPLICATE}
               </Typography>
             </CardContent>
           </Card>
         )}
       </Stack>
 
-      {/* Filters */}
+      {/* Review queues and filters */}
+      <QueueFilterChips value={queue} counts={queueCounts} onChange={setQueue} />
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
         <OutlinedInput
           placeholder={t("Tìm kiếm theo tên ứng viên...")}
@@ -452,27 +456,35 @@ export default function ApplicantsRankingPage() {
             '&.Mui-focused': { backgroundColor: '#FFFFFF' }
           }}
           size="small"
+          inputProps={{ 'aria-label': t("Tìm kiếm theo tên ứng viên...") }}
         />
-        <FormControl size="small" sx={{ minWidth: 220 }}>
-          <InputLabel id="status-filter-label">{t("Lọc theo nhóm matching")}</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 230 }}>
+          <InputLabel id="applicant-sort-label">{t("Sắp xếp danh sách")}</InputLabel>
           <Select
-            labelId="status-filter-label"
-            value={filterStatus}
-            label={t("Lọc theo nhóm matching")}
-            onChange={(e) => setFilterStatus(e.target.value)}
+            labelId="applicant-sort-label"
+            value={sort}
+            label={t("Sắp xếp danh sách")}
+            onChange={(e) => setSort(e.target.value as ApplicantSort)}
+            startAdornment={<SortIcon fontSize="small" sx={{ mr: 0.5, color: 'text.secondary' }} />}
           >
-            <MenuItem value="ALL">{t("Tất cả (")}{totalApplications})</MenuItem>
-            <MenuItem value="MEETS_MANDATORY">{t("              Đáp ứng bắt buộc (")}{rankingItems.filter(i => displayCategory(i) === 'MEETS_MANDATORY').length})
-            </MenuItem>
-            <MenuItem value="NEEDS_HR_VERIFICATION">{t("              Cần xác minh (")}{rankingItems.filter(i => displayCategory(i) === 'NEEDS_HR_VERIFICATION').length})
-            </MenuItem>
-            <MenuItem value="POSSIBLE_MISMATCH">{t("              Có dấu hiệu miss-match (")}{rankingItems.filter(i => displayCategory(i) === 'POSSIBLE_MISMATCH').length})
-            </MenuItem>
-            <MenuItem value="NOT_ASSESSED">{t("Chưa có trong xếp hạng (")}{rankingItems.filter(i => displayCategory(i) === 'NOT_ASSESSED').length})</MenuItem>
-            <MenuItem value="OUT_OF_SCREENING">{t("Ngoài sàng lọc (")}{rankingItems.filter(i => displayCategory(i) === 'OUT_OF_SCREENING').length})</MenuItem>
+            <MenuItem value="REVIEW_PRIORITY">{t("Ưu tiên rà soát")}</MenuItem>
+            <MenuItem value="RANK">{t("Thứ hạng")}</MenuItem>
+            <MenuItem value="SCORE_DESC">{t("Điểm matching cao nhất")}</MenuItem>
+            <MenuItem value="COVERAGE_ASC">{t("Độ phủ thấp trước")}</MenuItem>
+            <MenuItem value="NEWEST">{t("Mới nhất")}</MenuItem>
           </Select>
         </FormControl>
+        <Typography variant="caption" color="text.secondary">{t("Đang hiển thị {0} hồ sơ trong hàng đợi.", filteredItems.length)}</Typography>
       </Box>
+
+      {selectedIds.size > 0 && (
+        <Box sx={{ position: 'sticky', top: { xs: 72, md: 76 }, zIndex: 4, mb: 3, p: 1.5, border: '1px solid #B9CBE2', borderRadius: 2, backgroundColor: '#EFF8FF', display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+          <Typography variant="body2" fontWeight={700}>{t("Đã chọn {0} hồ sơ shortlist", selectedIds.size)}</Typography>
+          <Box sx={{ flex: 1 }} />
+          <Button size="small" onClick={() => setSelectedIds(new Set())}>{t("Bỏ chọn")}</Button>
+          <Button size="small" variant="contained" color="secondary" startIcon={<ShareIcon />} onClick={handleOpenShare}>{t("Chia sẻ Shortlist")}</Button>
+        </Box>
+      )}
 
       {/* Cards keep the primary actions visible on narrow screens. */}
       <Box sx={{ display: { xs: 'grid', md: 'none' }, gap: 2 }}>
@@ -496,7 +508,7 @@ export default function ApplicantsRankingPage() {
               <Typography variant="body2" sx={{ mt: 1.5 }}>{t("Điểm: ")}<strong>{item.matching_score == null ? '—' : `${item.matching_score}%`}</strong>{t("· Độ phủ: ")}<strong>{item.evidence_coverage == null ? '—' : `${Math.round(item.evidence_coverage * 100)}%`}</strong></Typography>
               {item.is_shortlisted && <FormControlLabel sx={{ display: 'flex', mt: 0.5 }} control={<Checkbox checked={selectedIds.has(item.application_id)} onChange={() => handleToggleSelect(item.application_id)} />} label={t("Chọn để chia sẻ")} />}
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5 }}>
-                <Button component={Link} href={`/positions/${positionId}/applicants/${item.application_id}`} variant="outlined" size="small">{t("Xem chi tiết")}</Button>
+                <Button component={Link} href={`/positions/${positionId}/applicants/${item.application_id}`} onClick={storeNavigationContext} variant="outlined" size="small">{t("Xem chi tiết")}</Button>
                 {(item.is_shortlisted || item.application_status === 'IN_REVIEW') && <Button size="small" onClick={() => handleToggleShortlist(item.application_id, !!item.is_shortlisted)}>{item.is_shortlisted ? t("Bỏ shortlist") : t("Thêm vào shortlist")}</Button>}
               </Box>
             </CardContent>
@@ -504,8 +516,8 @@ export default function ApplicantsRankingPage() {
         ))}
       </Box>
       {/* Ranking Table */}
-      <TableContainer component={Paper} sx={{ display: { xs: 'none', md: 'block' }, borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-        <Table aria-label={t("Danh sách ưu tiên ứng viên")}>
+      <TableContainer component={Paper} sx={{ display: { xs: 'none', md: 'block' }, borderRadius: 2, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', maxHeight: '72vh' }}>
+        <Table stickyHeader aria-label={t("Danh sách ưu tiên ứng viên")}>
           <TableHead>
             <TableRow>
               <TableCell padding="checkbox" width="40">
@@ -656,6 +668,7 @@ export default function ApplicantsRankingPage() {
                       <IconButton
                         component={Link}
                         href={`/positions/${positionId}/applicants/${item.application_id}`}
+                        onClick={storeNavigationContext}
                         aria-label={t("Xem chi tiết hồ sơ {0}", item.candidate_name || t("ứng viên"))}
                         sx={{ color: '#0A2B57' }}
                       >

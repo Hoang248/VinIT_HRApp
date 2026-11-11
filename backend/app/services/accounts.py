@@ -89,3 +89,44 @@ def provision_user(db, *, email: str, password: str, display_name: str,
             raise
         logger.error("Account provisioning failed", error_type=type(exc).__name__, user_id=user_id)
         raise HTTPException(status_code=503, detail="Không xác nhận được việc tạo tài khoản. Kiểm tra Supabase Auth trước khi thử lại.") from None
+
+
+def reset_user_password(db, *, target_user_id: str, new_password: str, actor_id: str) -> None:
+    """Reset a member password through the Supabase Auth Admin API.
+
+    The target profile is marked as requiring a change and every access token
+    issued earlier is rejected by ``tokens_valid_after``. The password itself
+    is never logged or written into audit metadata. If the DB finalize fails
+    after Auth has accepted the password, the caller must not retry blindly:
+    the new temporary password may already be effective while the account was
+    not marked for a forced change.
+    """
+    client = get_supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Dịch vụ đặt lại mật khẩu chưa được cấu hình.")
+    target = db.execute(text("""
+        SELECT account_status FROM app_private.user_profiles
+        WHERE user_id = :id FOR UPDATE
+    """), {"id": target_user_id}).mappings().first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
+    if target["account_status"] != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Chỉ đặt lại mật khẩu cho tài khoản đang hoạt động.")
+    try:
+        client.auth.admin.update_user_by_id(target_user_id, {"password": new_password})
+    except Exception as exc:
+        if getattr(exc, "code", None) == "weak_password" or getattr(exc, "status", None) in (400, 422):
+            raise HTTPException(status_code=400, detail="Mật khẩu tạm thời không đáp ứng chính sách của dịch vụ xác thực.") from None
+        logger.warning("Admin password reset failed or has an unknown outcome", error_type=type(exc).__name__, user_id=target_user_id)
+        raise HTTPException(status_code=503, detail="Không xác nhận được việc đặt lại mật khẩu. Kiểm tra Supabase Auth trước khi thử lại.") from None
+    db.execute(text("""
+        UPDATE app_private.user_profiles
+        SET must_change_password = TRUE,
+            tokens_valid_after = clock_timestamp(), updated_at = NOW()
+        WHERE user_id = :id
+    """), {"id": target_user_id})
+    db.execute(text("""
+        INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, outcome)
+        VALUES (:actor, 'RESET_USER_PASSWORD', 'USER', :target, 'SUCCESS')
+    """), {"actor": actor_id, "target": target_user_id})
+    db.commit()

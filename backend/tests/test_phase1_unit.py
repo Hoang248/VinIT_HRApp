@@ -20,9 +20,49 @@ def test_matching_uses_weights_confidence_and_coverage():
     score, coverage, status, _, review = matching_engine.calculate_assessment_scores(criteria, findings)
     assert (score, coverage, status, review) == (94.0, 1.0, "MEETS_MANDATORY", False)
     score, coverage, status, _, review = matching_engine.calculate_assessment_scores(criteria, findings[1:])
-    assert (score, coverage, status, review) == (24.0, 0.3, "NEEDS_HR_VERIFICATION", True)
+    assert (score, coverage, status, review) == (80.0, 0.3, "NEEDS_HR_VERIFICATION", True)
     findings[0]["outcome"] = "NO_MATCH"
     assert matching_engine.calculate_assessment_scores(criteria, findings)[2] == "POSSIBLE_MISMATCH"
+
+
+def test_unclear_is_excluded_from_score_but_counts_against_coverage():
+    criteria = [
+        {"criterion_id": "must", "category": "MUST_HAVE", "weight_in_group": 100},
+        {"criterion_id": "nice", "category": "NICE_TO_HAVE", "weight_in_group": 100},
+    ]
+    group_weights = {"MUST_HAVE": .5, "NICE_TO_HAVE": .5}
+    findings = [
+        {"criterion_id": "must", "outcome": "STRONG_MATCH", "confidence": .9,
+         "confidence_band": "HIGH"},
+    ]
+    score, coverage, status, augmented, review = matching_engine.calculate_assessment_scores(
+        criteria, findings, group_weights)
+    assert score == 100.0
+    assert coverage == 0.5
+    assert status == "NEEDS_HR_VERIFICATION"
+    assert review is True
+    assert augmented[1]["outcome"] == "UNCLEAR"
+    assert augmented[1]["score"] is None
+
+
+def test_no_scored_criteria_has_no_score_and_scored_no_match_is_zero():
+    criteria = [
+        {"criterion_id": "must", "category": "MUST_HAVE", "weight_in_group": 100},
+        {"criterion_id": "nice", "category": "NICE_TO_HAVE", "weight_in_group": 100},
+    ]
+    score, coverage, status, _, _ = matching_engine.calculate_assessment_scores(criteria, [])
+    assert score is None
+    assert coverage == 0
+    assert status == "NEEDS_HR_VERIFICATION"
+
+    findings = [
+        {"criterion_id": "must", "outcome": "NO_MATCH", "confidence": .9,
+         "confidence_band": "HIGH"},
+    ]
+    score, coverage, status, _, _ = matching_engine.calculate_assessment_scores(criteria, findings)
+    assert score == 0.0
+    assert coverage == 0.7
+    assert status == "POSSIBLE_MISMATCH"
 
 
 def test_unverified_quotes_and_duplicates_are_not_authoritative():
@@ -36,6 +76,30 @@ def test_unverified_quotes_and_duplicates_are_not_authoritative():
             {"application_id": "b", "identity": {"email": "test@example.com"}},
             {"application_id": "c", "identity": {}}]
     assert matching_engine.detect_duplicates(apps) == [("a", "b", .98, "EMAIL_MATCH")]
+
+
+def test_quote_span_tolerates_accents_punctuation_and_spacing():
+    text = "--- Page 1 ---\nKinh nghiệm: xây dựng Python, FastAPI cho 5 năm."
+    quote = "xay dung python fastapi cho 5 nam"
+    span = matching_engine.find_quote_span(quote, text)
+    assert span is not None
+    assert "Python, FastAPI" in text[span[0]:span[1]]
+    assert matching_engine.quote_pages(quote, text) == [1]
+
+
+def test_matching_canonicalizes_findings_and_has_no_confidence_cliff():
+    criteria = [
+        {"criterion_id": "must", "category": "MUST_HAVE", "weight_in_group": 100},
+        {"criterion_id": "nice", "category": "NICE_TO_HAVE", "weight_in_group": 100},
+    ]
+    low = [{"criterion_id": "must", "outcome": "MATCH", "confidence": .59, "confidence_band": "LOW"}]
+    high = [{"criterion_id": "must", "outcome": "MATCH", "confidence": .61, "confidence_band": "MEDIUM"}]
+    low_result = matching_engine.calculate_assessment_scores(criteria, low)
+    high_result = matching_engine.calculate_assessment_scores(criteria, high)
+    assert low_result[3][0]["outcome"] == high_result[3][0]["outcome"] == "MATCH"
+    assert low_result[0] == high_result[0] == 80.0
+    assert [item["criterion_id"] for item in low_result[3]] == ["must", "nice"]
+    assert low_result[3][1]["outcome"] == "UNCLEAR"
 
 
 @pytest.mark.asyncio
@@ -103,8 +167,8 @@ def test_versioned_group_weights_are_used_and_invalid_confidence_is_unclear():
     assert result[:3] == (90.0, 1.0, "MEETS_MANDATORY")
     findings[0]["confidence_band"] = "not a real band"
     result = matching_engine.calculate_assessment_scores(criteria, findings, {"MUST_HAVE": .5, "NICE_TO_HAVE": .5})
-    assert result[2] == "NEEDS_HR_VERIFICATION"
-    assert result[3][0]["outcome"] == "UNCLEAR" and result[3][0]["requires_verification"]
+    assert result[2] == "MEETS_MANDATORY"
+    assert result[3][0]["outcome"] == "STRONG_MATCH" and not result[3][0]["requires_verification"]
     findings[0].update(confidence=5, confidence_band="HIGH")
     assert matching_engine.calculate_assessment_scores(criteria, findings)[3][0]["outcome"] == "UNCLEAR"
 
