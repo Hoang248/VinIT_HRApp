@@ -158,11 +158,11 @@
         "phone": "+84 000 000 003"
       },
       "expected_criteria": {
-        "python_backend": "NO_MATCH",
+        "python_backend": "UNCLEAR",
         "postgresql": "UNCLEAR",
         "docker": "UNCLEAR"
       },
-      "expected_gate": "Explicit no-Python evidence supports NO_MATCH for the mandatory Python criterion; HR reviews before rejection."
+      "expected_gate": "Explicit no-Python evidence remains UNCLEAR under the conservative policy; HR verifies manually before any rejection."
     },
     {
       "key": "vietnamese_backend",

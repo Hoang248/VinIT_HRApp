@@ -35,6 +35,11 @@ def test_staging_manifest_is_synthetic_and_complete():
     assert all(
         user["email"].endswith("@example.test") for user in manifest["users"]
     )
+    java_only = next(candidate for candidate in manifest["candidates"] if candidate["key"] == "java_only")
+    # Conservative policy: explicit negative evidence is not an automatic
+    # NO_MATCH; HR must verify before any rejection.
+    assert java_only["expected_criteria"]["python_backend"] == "UNCLEAR"
+    assert "remains UNCLEAR" in java_only["expected_gate"]
 
 
 def test_generate_staging_docx_fixtures(tmp_path):
