@@ -37,10 +37,11 @@ import GetAppIcon from '@mui/icons-material/GetApp';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ReplayIcon from '@mui/icons-material/Replay';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { applicationsApi } from '@/lib/api';
+import { applicationsApi, operationsApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
 import StickyActionBar from '@/components/common/StickyActionBar';
 import CandidateProfilePanel from '@/components/candidates/CandidateProfilePanel';
@@ -77,6 +78,10 @@ export default function ApplicantDetailPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusSubmitting, setStatusSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessError, setReprocessError] = useState<string | null>(null);
+  const [reprocessOperationId, setReprocessOperationId] = useState<string | null>(null);
+  const [reprocessNotice, setReprocessNotice] = useState(false);
   const [history, setHistory] = useState<StatusEvent[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState(1);
@@ -157,6 +162,41 @@ export default function ApplicantDetailPage() {
       setStatusError(err.response?.data?.detail || t("Cập nhật trạng thái không thành công"));
     } finally { setStatusSubmitting(false); }
   };
+
+  const handleReprocess = async () => {
+    if (reprocessing) return;
+    try {
+      setReprocessing(true);
+      setReprocessError(null);
+      const res = await applicationsApi.reprocess(applicantId);
+      setReprocessOperationId(res.data.operation_id);
+      setReprocessNotice(true);
+    } catch (err: any) {
+      setReprocessError(err.response?.data?.detail || t("Không thể đưa CV vào hàng đợi xử lý lại."));
+      setReprocessing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!reprocessOperationId) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await operationsApi.getStatus(reprocessOperationId);
+        if (res.data.status === 'COMPLETED') {
+          setReprocessOperationId(null);
+          setReprocessing(false);
+          await loadData();
+        } else if (res.data.status === 'FAILED') {
+          setReprocessOperationId(null);
+          setReprocessing(false);
+          setReprocessError(t("Không thể xử lý lại CV. Vui lòng kiểm tra và thử lại sau."));
+        }
+      } catch {
+        // Keep polling; a transient status read must not cancel the job.
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [reprocessOperationId, loadData, t]);
 
   const jumpToPage = (page: number) => { if (page >= 1) setSelectedPage(page); };
 
@@ -239,9 +279,19 @@ export default function ApplicantDetailPage() {
           sx={{ mb: 2, border: '1px solid #FEDF89' }}
         >
           {application.file_processing_status === 'NEEDS_HR_REVIEW' && (
-            <Typography variant="body2">
-              <strong>{t("CV cần được HR xem lại:")}</strong> {application.file_error ? localizeServerMessage(application.file_error, locale) : t("File CV có vấn đề (lỗi xử lý, định dạng quét/OCR cần thiết, hoặc bị mã hóa).")}
-            </Typography>
+            <>
+              <Typography variant="body2">
+                <strong>{t("CV cần được HR xem lại:")}</strong> {application.file_error ? localizeServerMessage(application.file_error, locale) : t("File CV có vấn đề (lỗi xử lý, định dạng quét/OCR cần thiết, hoặc bị mã hóa).")}
+              </Typography>
+              {application.can_update_status && (
+                <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Button size="small" variant="contained" color="warning" startIcon={<ReplayIcon />} disabled={reprocessing} onClick={handleReprocess}>
+                    {reprocessing ? t("Đang xử lý lại…") : t("Xử lý lại CV")}
+                  </Button>
+                  {reprocessError && <Typography variant="body2" color="error">{reprocessError}</Typography>}
+                </Box>
+              )}
+            </>
           )}
           {application.has_duplicate_warning && (
             <Typography variant="body2" sx={{ mt: application.file_processing_status === 'NEEDS_HR_REVIEW' ? 0.5 : 0 }}>
@@ -478,6 +528,8 @@ export default function ApplicantDetailPage() {
       </Dialog>
       <Snackbar open={success} autoHideDuration={4000} onClose={() => setSuccess(false)}
         message={t("Đã cập nhật trạng thái hồ sơ")} />
+      <Snackbar open={reprocessNotice} autoHideDuration={4000} onClose={() => setReprocessNotice(false)}
+        message={t("Đã đưa CV vào hàng đợi xử lý lại.")} />
     </Box>
   );
 }

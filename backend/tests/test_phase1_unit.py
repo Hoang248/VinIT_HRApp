@@ -307,6 +307,30 @@ Professional experience: 2015 - 2024.
     assert "name" not in structured["work_history"][0]
 
 
+def test_profile_page_numbers_are_sanitized_before_database_insert():
+    from app.services.llm_client import normalize_profile_page_number, sanitize_profile_page_numbers
+
+    assert normalize_profile_page_number(1) == 1
+    assert normalize_profile_page_number("2") == 2
+    assert normalize_profile_page_number(3.0) == 3
+    assert normalize_profile_page_number("Page 1") is None
+    assert normalize_profile_page_number(["1"]) is None
+    assert normalize_profile_page_number(True) is None
+    assert normalize_profile_page_number(0) is None
+
+    profile = sanitize_profile_page_numbers({
+        "education": [{"page_number": "Page 1"}],
+        "work_history": [{"page_number": "2"}],
+        "certifications": [{"page_number": 1.0}],
+        "languages": [{"page_number": {"page": 1}}],
+        "projects": ["Synthetic project"],
+    })
+    assert profile["education"][0]["page_number"] is None
+    assert profile["work_history"][0]["page_number"] == 2
+    assert profile["certifications"][0]["page_number"] == 1
+    assert profile["languages"][0]["page_number"] is None
+
+
 @pytest.mark.asyncio
 async def test_real_llm_boundary_redacts_cv_profile_and_rubric_and_sets_guardrails(monkeypatch):
     from app.services.llm_client import LLMClient

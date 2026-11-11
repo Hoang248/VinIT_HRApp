@@ -15,13 +15,16 @@ from contextlib import ExitStack
 from typing import Optional
 from uuid import UUID, uuid4
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal, engine
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services import langfuse_observability as observability
 from app.services.document_processor import document_processor
-from app.services.llm_client import llm_client, LLMError
+from app.services.llm_client import (
+    llm_client, LLMError, normalize_profile_page_number, sanitize_profile_page_numbers,
+)
 from app.services.matching import matching_engine
 from app.services.deterministic_matching import deterministic_matcher
 from app.services.embedding import (
@@ -38,6 +41,24 @@ from app.services.ai_config import (
 from datetime import date
 
 logger = get_logger(__name__)
+
+
+def _database_error_metadata(exc: BaseException) -> dict:
+    """Safe PostgreSQL diagnostics for logs: identifiers only, never values."""
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    metadata = {}
+    for key, attr in (
+        ("db_pgcode", "pgcode"),
+        ("db_table", "table_name"),
+        ("db_column", "column_name"),
+        ("db_constraint", "constraint_name"),
+    ):
+        value = getattr(diag, attr, None) if diag is not None else None
+        if value:
+            metadata[key] = str(value)
+    return metadata
+
 
 # Processing queue polling interval (seconds)
 POLL_INTERVAL_SECONDS = 5
@@ -398,16 +419,19 @@ class ProcessingWorker:
         docs_result = db.execute(text("""
             SELECT d.document_id, d.application_id, d.bucket, d.storage_path,
                    d.original_filename, d.mime_type, d.size_bytes,
+                   (SELECT run_id FROM app_private.document_processing_runs
+                    WHERE document_id = d.document_id AND operation_id = :operation_id
+                    ORDER BY created_at DESC LIMIT 1) AS processing_run_id,
                    a.created_by
             FROM app_private.application_documents d
             JOIN app_private.applications a ON d.application_id = a.application_id
             JOIN app_private.cv_batch_items bi ON bi.application_id = a.application_id
             WHERE bi.batch_id = :batch_id
               AND d.file_processing_status = 'RECEIVED'
-        """), {"batch_id": str(batch_id)})
+        """), {"batch_id": str(batch_id), "operation_id": str(operation_id)})
 
         documents = [dict(zip(["document_id", "application_id", "bucket", "storage_path",
-                               "original_filename", "mime_type", "size_bytes", "created_by"], row))
+                               "original_filename", "mime_type", "size_bytes", "processing_run_id", "created_by"], row))
                      for row in docs_result.fetchall()]
 
         logger.info("Processing documents in batch", batch_id=batch_id, count=len(documents))
@@ -471,15 +495,18 @@ class ProcessingWorker:
                                                            db.info["owner"]["token"])
 
                 # Update document processing run
-                db.execute(text("""
+                run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
+                db.execute(text(f"""
                     UPDATE app_private.document_processing_runs
                     SET status = 'COMPLETED',
                         extraction_type = :extraction_type,
                         processor_version = 'v1.0',
+                        error_code = NULL,
                         extracted_text_storage_path = :extracted_path
-                    WHERE document_id = :document_id
+                    WHERE {run_filter}
                 """), {
                     "document_id": document_id,
+                    "run_id": doc.get("processing_run_id"),
                     "extraction_type": doc_type.value,
                     "extracted_path": extracted_path
                 })
@@ -490,6 +517,9 @@ class ProcessingWorker:
                     SET file_processing_status = 'COMPLETED'
                     WHERE document_id = :document_id
                 """), {"document_id": document_id})
+                # Extraction is durable on its own.  A later profile failure
+                # must roll back only profile rows, not this completed run.
+                db.commit()
 
                 extracted_texts[application_id] = (full_text, pages, document_id)
 
@@ -505,20 +535,29 @@ class ProcessingWorker:
                     provider_metadata = candidate_profile.pop("_provider_metadata", {})
                     profile_prompt_version = candidate_profile.pop(
                         "_prompt_version", settings.PROFILE_PROMPT_VERSION)
+                    candidate_profile = sanitize_profile_page_numbers(candidate_profile)
                     extraction_config = {
                         "prompt_version": profile_prompt_version,
                         "provider_metadata": provider_metadata,
                         "cv_text_sha256": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
                         "extractor": "llm-profile",
                     }
-                    # Create profile version
+                    # Create the next profile version.  Reprocessing a CV
+                    # whose earlier attempt already produced a profile must
+                    # not collide with the UNIQUE(application_id, version).
+                    next_version = db.execute(text("""
+                        SELECT COALESCE(MAX(version_number), 0) + 1
+                        FROM app_private.profile_versions
+                        WHERE application_id = :application_id
+                    """), {"application_id": application_id}).scalar_one()
                     profile_ver_result = db.execute(text("""
                         INSERT INTO app_private.profile_versions
                         (application_id, source_document_id, version_number, extraction_config, status, created_at)
                         VALUES
-                        (:application_id, :document_id, 1, CAST(:extraction_config AS jsonb), 'COMPLETED', NOW())
+                        (:application_id, :document_id, :version_number, CAST(:extraction_config AS jsonb), 'COMPLETED', NOW())
                         RETURNING profile_version_id
                     """), {"application_id": application_id, "document_id": document_id,
+                            "version_number": int(next_version),
                             "extraction_config": json.dumps(extraction_config)})
                     profile_version_id = profile_ver_result.fetchone()[0]
 
@@ -528,25 +567,33 @@ class ProcessingWorker:
                     email = email_match.group(0).lower() if email_match else None
                     phone = re.sub(r"\D", "", phone_match.group(0)) if phone_match else None
 
-                    # Insert profile facts
+                    # Insert profile facts.  Model output is untrusted: only
+                    # dict-shaped items are persisted, and the INTEGER page
+                    # column always receives a coerced value or NULL.
                     facts = []
                     for edu in candidate_profile.get("education", []):
+                        if not isinstance(edu, dict):
+                            continue
                         facts.append({
                             "profile_version_id": profile_version_id,
                             "fact_type": "EDUCATION",
                             "fact_value": json.dumps(edu),
-                            "source_page_number": edu.get("page_number"),
+                            "source_page_number": normalize_profile_page_number(edu.get("page_number")),
                             "confidence": 0.9
                         })
                     for work in candidate_profile.get("work_history", []):
+                        if not isinstance(work, dict):
+                            continue
                         facts.append({
                             "profile_version_id": profile_version_id,
                             "fact_type": "WORK_EXPERIENCE",
                             "fact_value": json.dumps(work),
-                            "source_page_number": work.get("page_number"),
+                            "source_page_number": normalize_profile_page_number(work.get("page_number")),
                             "confidence": 0.9
                         })
                     for skill in candidate_profile.get("skills", []):
+                        if not isinstance(skill, str):
+                            continue
                         facts.append({
                             "profile_version_id": profile_version_id,
                             "fact_type": "SKILL",
@@ -555,22 +602,26 @@ class ProcessingWorker:
                             "confidence": 0.85
                         })
                     for cert in candidate_profile.get("certifications", []):
+                        if not isinstance(cert, dict):
+                            continue
                         facts.append({
                             "profile_version_id": profile_version_id,
                             "fact_type": "CERTIFICATION",
                             "fact_value": json.dumps(cert),
-                            "source_page_number": cert.get("page_number"),
+                            "source_page_number": normalize_profile_page_number(cert.get("page_number")),
                             "confidence": 0.85
                         })
 
                     for section, fact_type in (("languages", "LANGUAGE"), ("projects", "PROJECT")):
                         for item in candidate_profile.get(section, []):
                             value = {"name": item} if isinstance(item, str) else item
+                            if not isinstance(value, dict):
+                                continue
                             facts.append({
                                 "profile_version_id": profile_version_id,
                                 "fact_type": fact_type,
                                 "fact_value": json.dumps(value),
-                                "source_page_number": value.get("page_number"),
+                                "source_page_number": normalize_profile_page_number(value.get("page_number")),
                                 "confidence": 0.85,
                             })
 
@@ -604,6 +655,41 @@ class ProcessingWorker:
                         SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
                         WHERE document_id = :document_id
                     """), {"document_id": document_id, "error": "Không thể trích xuất hồ sơ; HR cần kiểm tra"})
+                    run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
+                    db.execute(text(f"""
+                        UPDATE app_private.document_processing_runs
+                        SET error_code = 'PROFILE_EXTRACTION_FAILED'
+                        WHERE {run_filter}
+                    """), {"document_id": document_id, "run_id": doc.get("processing_run_id")})
+                    needs_review_count += 1
+                    db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
+                    db.commit()
+                    loop.close()
+                    continue
+                except LostOwnership:
+                    db.rollback()
+                    loop.close()
+                    raise
+                except Exception as e:
+                    # Persistence and other non-LLM failures must not bubble
+                    # into the extraction handler: extraction already
+                    # committed, so only the profile attempt is rolled back.
+                    logger.error("Profile persistence failed, marking for HR review",
+                                 application_id=application_id, document_id=document_id,
+                                 error_type=type(e).__name__, **_database_error_metadata(e))
+                    db.rollback()
+                    db.execute(text("""
+                        UPDATE app_private.application_documents
+                        SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
+                        WHERE document_id = :document_id
+                    """), {"document_id": document_id, "error": "Không thể xử lý tài liệu; HR cần kiểm tra"})
+                    run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
+                    db.execute(text(f"""
+                        UPDATE app_private.document_processing_runs
+                        SET error_code = :error_code
+                        WHERE {run_filter}
+                    """), {"document_id": document_id, "run_id": doc.get("processing_run_id"),
+                            "error_code": "PROFILE_DATA_ERROR" if isinstance(e, SQLAlchemyError) else "PROFILE_PROCESSING_FAILED"})
                     needs_review_count += 1
                     db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
                     db.commit()
@@ -620,13 +706,21 @@ class ProcessingWorker:
                 loop.close()
                 raise
             except Exception as e:
-                logger.error("Document processing failed", document_id=document_id, error_type=type(e).__name__)
+                logger.error("Document processing failed", document_id=document_id,
+                             error_type=type(e).__name__, **_database_error_metadata(e))
                 db.rollback()
                 db.execute(text("""
                     UPDATE app_private.application_documents
                     SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
                     WHERE document_id = :document_id
                 """), {"document_id": document_id, "error": "Không thể xử lý tài liệu; HR cần kiểm tra"})
+                run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
+                db.execute(text(f"""
+                    UPDATE app_private.document_processing_runs
+                    SET status = CASE WHEN status = 'COMPLETED' THEN 'COMPLETED' ELSE 'FAILED' END,
+                        error_code = COALESCE(error_code, 'DOCUMENT_PROCESSING_FAILED')
+                    WHERE {run_filter}
+                """), {"document_id": document_id, "run_id": doc.get("processing_run_id")})
                 needs_review_count += 1
                 db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
                 db.commit()

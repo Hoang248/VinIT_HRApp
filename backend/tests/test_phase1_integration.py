@@ -1093,6 +1093,68 @@ def test_recovery_resumes_processing_document_and_reconciles_batch(client, seed,
         assert set(conn.execute(text("SELECT fact_type FROM app_private.profile_facts WHERE fact_type IN ('LANGUAGE','PROJECT')")).scalars()) == {'LANGUAGE', 'PROJECT'}
 
 
+def test_reprocess_failed_cv_sanitizes_profile_page_and_recovers(client, seed, tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.workers.processor import ProcessingWorker, llm_client
+    monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path))
+
+    async def extract(cv_text, candidate_identifier):
+        return {"candidate_identifier": candidate_identifier, "total_years_experience": 2,
+                "education": [], "work_history": [{"role": "Backend Engineer", "page_number": "Page 1"}],
+                "skills": ["Python"], "certifications": [], "languages": [], "projects": []}
+    async def match(**kwargs):
+        return {"findings": [{"criterion_id": kwargs["rubric"][0]["criterion_id"], "outcome": "MATCH",
+                              "confidence": .9, "confidence_band": "HIGH", "reasoning": "Evidence provided",
+                              "evidence": {"verbatim_quote": "Built Python services for two years", "page_number": None}}]}
+    monkeypatch.setattr(llm_client, "extract_candidate_profile", extract)
+    monkeypatch.setattr(llm_client, "match_criterion_evidence", match)
+
+    document = Document(); document.add_paragraph("Built Python services for two years and developed several reliable applications.")
+    content = io.BytesIO(); document.save(content)
+    storage_path = f"{seed['pos']}/{seed['app']}/retry.docx"
+    file_path = tmp_path / "cv-originals" / storage_path
+    file_path.parent.mkdir(parents=True)
+    file_path.write_bytes(content.getvalue())
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.criteria_versions SET status='APPROVED' WHERE criteria_version_id=:id"), {"id": seed["cv"]})
+        conn.execute(text("""
+            INSERT INTO app_private.application_documents
+                (application_id, bucket, storage_path, original_filename, mime_type, size_bytes,
+                 file_processing_status, processing_error)
+            VALUES (:app, 'cv-originals', :path, 'retry.docx',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', :size,
+                    'NEEDS_HR_REVIEW', 'Synthetic failure')
+        """), {"app": seed["app"], "path": storage_path, "size": len(content.getvalue())})
+
+    route = f"/v1/applications/{seed['app']}/reprocess"
+    assert client.post(route, headers=headers(seed["hm"])).status_code == 403
+    response = client.post(route, headers=headers(seed["hr"]))
+    assert response.status_code == 202, response.text
+    operation_id = response.json()["operation_id"]
+    assert client.post(route, headers=headers(seed["hr"])).status_code == 409
+
+    ProcessingWorker()._process_pending_operations()
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT status FROM app_private.operations WHERE operation_id=:id"), {"id": operation_id}).scalar_one() == "COMPLETED"
+        document_row = conn.execute(text("""
+            SELECT d.file_processing_status, r.status AS run_status, r.error_code
+            FROM app_private.application_documents d
+            JOIN app_private.document_processing_runs r ON r.document_id = d.document_id
+            WHERE d.application_id = :app ORDER BY r.created_at DESC LIMIT 1
+        """), {"app": seed["app"]}).mappings().one()
+        assert document_row["file_processing_status"] == "COMPLETED"
+        assert document_row["run_status"] == "COMPLETED" and document_row["error_code"] is None
+        fact = conn.execute(text("""
+            SELECT pf.source_page_number, pf.fact_value ->> 'page_number' AS fact_page
+            FROM app_private.profile_facts pf
+            JOIN app_private.profile_versions pv ON pv.profile_version_id = pf.profile_version_id
+            WHERE pv.application_id = :app AND pf.fact_type = 'WORK_EXPERIENCE'
+        """), {"app": seed["app"]}).mappings().one()
+        assert fact["source_page_number"] is None and fact["fact_page"] is None
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.assessment_runs WHERE application_id=:app AND status='COMPLETED'"), {"app": seed["app"]}).scalar_one() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM app_private.audit_events WHERE action_type='REPROCESS_CV_DOCUMENT' AND object_id=:app"), {"app": seed["app"]}).scalar_one() == 1
+
+
 def test_worker_health_is_admin_only_and_reports_stale_work(client, seed):
     op = uid()
     with engine.begin() as conn:

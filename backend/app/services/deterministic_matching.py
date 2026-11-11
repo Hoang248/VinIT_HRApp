@@ -141,6 +141,18 @@ LANGUAGE_NAMES = (
     "french", "german", "spanish",
 )
 
+# Negation cues are compared after normalize_text(), so Vietnamese cues are
+# written without diacritics ("khong" = không, "chua" = chưa).  A keyword
+# that only appears after one of these cues is absence evidence, not proof
+# that the candidate has the skill.
+NEGATION_CUES = (
+    "does not", "do not", "did not", "is not", "are not", "was not", "were not",
+    "doesnt", "dont", "didnt", "isnt", "arent", "wasnt", "werent", "cannot",
+    "never", "without", "no", "not", "none", "lack", "lacking",
+    "khong co", "chua co", "khong", "chua", "thieu",
+)
+CONTRAST_CUES = ("but", "however", "instead", "nhung", "tuy nhien")
+
 DEGREE_PATTERNS: tuple[tuple[int, tuple[str, ...]], ...] = (
     (5, ("phd", "ph d", "doctorate", "doctoral degree", "tien si")),
     (4, ("master", "masters", "msc", "mba", "meng", "thac si")),
@@ -734,6 +746,63 @@ class DeterministicMatchingEngine:
         ]
 
     @staticmethod
+    def _cue_positions(padded_text: str, cues: tuple[str, ...]) -> list[tuple[int, int]]:
+        positions: list[tuple[int, int]] = []
+        for cue in cues:
+            needle = f" {cue} "
+            start = padded_text.find(needle)
+            while start != -1:
+                positions.append((start, start + len(needle)))
+                start = padded_text.find(needle, start + 1)
+        return positions
+
+    @classmethod
+    def _is_negated_occurrence(cls, padded_sentence: str, term_start: int) -> bool:
+        negation_ends = [
+            end for _start, end in cls._cue_positions(padded_sentence, NEGATION_CUES)
+            if end <= term_start
+        ]
+        if not negation_ends:
+            return False
+        last_negation_end = max(negation_ends)
+        # "No Docker, but deployed Kubernetes" negates only the first clause.
+        return not any(
+            last_negation_end <= start and end <= term_start
+            for start, end in cls._cue_positions(padded_sentence, CONTRAST_CUES)
+        )
+
+    @classmethod
+    def _positive_labels_in_sentence(
+        cls, spec: RequirementSpec, sentence: str,
+    ) -> list[str]:
+        """Term labels with at least one non-negated mention in a sentence."""
+        padded = f" {normalize_text(sentence)} "
+        labels: list[str] = []
+        for term in spec.terms:
+            for variant in term.variants:
+                needle = f" {normalize_text(variant)} "
+                start = padded.find(needle)
+                found_positive = False
+                while start != -1:
+                    if not cls._is_negated_occurrence(padded, start):
+                        found_positive = True
+                        break
+                    start = padded.find(needle, start + 1)
+                if found_positive:
+                    labels.append(term.label)
+                    break
+        return labels
+
+    @classmethod
+    def _positive_matched_labels(
+        cls, spec: RequirementSpec, chunk: DocumentChunk,
+    ) -> list[str]:
+        found: set[str] = set()
+        for sentence in cls._sentences(chunk.text):
+            found.update(cls._positive_labels_in_sentence(spec, sentence))
+        return [term.label for term in spec.terms if term.label in found]
+
+    @staticmethod
     def _section_factor(kind: str, section: str) -> float:
         relevant = {
             "SKILL": {"WORK", "PROJECT", "SKILL"},
@@ -754,7 +823,7 @@ class DeterministicMatchingEngine:
         candidates: list[_Candidate] = []
         total_terms = max(1, len(spec.terms))
         for chunk in chunks:
-            matched = self._matched_labels(spec, chunk.normalized)
+            matched = self._positive_matched_labels(spec, chunk)
             if not matched:
                 continue
             coverage = len(matched) / total_terms
@@ -854,10 +923,7 @@ class DeterministicMatchingEngine:
 
         def sentence_score(sentence: str) -> tuple[int, int, int]:
             normalized = normalize_text(sentence)
-            matched = sum(
-                1 for term in spec.terms
-                if any(_contains_phrase(normalized, variant) for variant in term.variants)
-            )
+            matched = len(DeterministicMatchingEngine._positive_labels_in_sentence(spec, sentence))
             has_duration = bool(
                 DeterministicMatchingEngine._explicit_years_in(sentence)
                 or DeterministicMatchingEngine._date_intervals_in(sentence, date.today().year)

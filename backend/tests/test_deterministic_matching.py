@@ -99,6 +99,48 @@ def test_absent_skill_is_unresolved_not_no_match():
     assert result["unresolved_criterion_ids"] == ["c1"]
 
 
+def test_negated_skill_mention_is_unresolved_not_a_rule_match():
+    criteria = [criterion(
+        "docker", "Docker/container delivery", "Docker or containerised deployment experience",
+        category="NICE_TO_HAVE", keywords=["Docker", "container", "Kubernetes"],
+    )]
+    text = (
+        "WORK EXPERIENCE\n"
+        "Developed Python backend APIs and PostgreSQL reports.\n\n"
+        "Skills\nPython, PostgreSQL, SQL, Linux, Git.\n\n"
+        "Note: this synthetic CV intentionally does not claim Docker or container delivery experience."
+    )
+    result = deterministic_matcher.evaluate_criteria(text, criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["docker"]
+
+
+def test_positive_skill_still_matches_when_another_sentence_is_negated():
+    criteria = [criterion(
+        "docker", "Docker/container delivery", "Docker or containerised deployment experience",
+        category="NICE_TO_HAVE", keywords=["Docker", "container", "Kubernetes"],
+    )]
+    text = (
+        "WORK EXPERIENCE\n"
+        "No Docker use in the first role. Delivered services with Docker container deployments in the second role."
+    )
+    result = deterministic_matcher.evaluate_criteria(text, criteria, {})
+    assert result["findings"]
+    assert result["findings"][0]["decision_source"] == "RULE"
+    assert "Docker container deployments" in result["findings"][0]["evidence"]["verbatim_quote"]
+
+
+def test_vietnamese_negated_skill_mention_is_unresolved():
+    criteria = [criterion(
+        "docker", "Docker/container delivery", "Docker or containerised deployment experience",
+        category="NICE_TO_HAVE", keywords=["Docker", "container", "Kubernetes"],
+    )]
+    result = deterministic_matcher.evaluate_criteria(
+        "KINH NGHIỆM\nChưa có kinh nghiệm Docker hoặc triển khai container.", criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["docker"]
+
+
 def test_requirement_spec_detects_measurable_kinds():
     years = deterministic_matcher.build_requirement_spec(
         criterion("y", "Python", "At least 3 years of Python experience"))

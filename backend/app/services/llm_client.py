@@ -47,6 +47,45 @@ def _usage_details(data: Dict[str, Any]) -> Dict[str, int]:
     return details
 
 
+def normalize_profile_page_number(value: Any) -> Optional[int]:
+    """Return a DB-safe page number from untrusted model output.
+
+    Page numbers are auxiliary provenance metadata.  A malformed value such
+    as ``"Page 1"`` or a list must never make an otherwise usable profile
+    fail when it is inserted into the INTEGER source_page_number column.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        candidate = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        candidate = int(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text.isdigit():
+            return None
+        candidate = int(text)
+    else:
+        return None
+    return candidate if 1 <= candidate <= 10000 else None
+
+
+def sanitize_profile_page_numbers(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalise page_number fields in profile sections before persistence."""
+    if not isinstance(profile, dict):
+        return profile
+    for section in ("education", "work_history", "certifications", "languages", "projects"):
+        items = profile.get(section)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and "page_number" in item:
+                item["page_number"] = normalize_profile_page_number(item.get("page_number"))
+    return profile
+
+
 def _parsed_output_summary(parsed: Any) -> Dict[str, Any]:
     """Counts-only output summary for observability; never raw model text."""
     if not isinstance(parsed, dict):
@@ -514,7 +553,7 @@ STRICT PRIVACY & ANTI-BIAS RULES:
             logger.error("LLM profile extraction failed schema validation")
             raise LLMError("Extracted candidate profile failed validation")
 
-        result = redact_professional_profile(result)
+        result = sanitize_profile_page_numbers(redact_professional_profile(result))
         result["candidate_identifier"] = candidate_identifier
         result["_provider_metadata"] = metadata
         result["_prompt_version"] = PROFILE_PROMPT_VERSION

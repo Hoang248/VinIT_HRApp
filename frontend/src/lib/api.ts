@@ -131,6 +131,7 @@ export const applicationsApi = {
   getPrivateNotes: (id: string) => apiClient.get(`/applications/${id}/private-notes`),
   addPrivateNote: (id: string, content: string) => apiClient.post(`/applications/${id}/private-notes`, { content }),
   getStatusEvents: (id: string) => apiClient.get(`/applications/${id}/status-events`),
+  reprocess: (id: string) => apiClient.post(`/applications/${id}/reprocess`),
   updateStatus: (id: string, newStatus: string, reason?: string, note?: string) =>
     apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note }),
   getCvUrl: (id: string) => apiClient.get(`/applications/${id}/cv-download-url`),
