@@ -53,6 +53,9 @@ def login(base, key, label):
     if status != 200 or not isinstance(profile, dict):
         print(f"Khong kiem tra duoc vai tro: HTTP {status}")
         return None, None
+    if profile.get("must_change_password") is not False:
+        print("Tai khoan can doi mat khau tren giao dien truoc khi kiem tra quyen. Dung lai.")
+        return None, None
     print("Dang nhap OK; vai tro:", ", ".join(profile.get("system_roles", [])) or "(khong co)")
     return headers, profile
 

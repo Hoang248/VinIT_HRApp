@@ -65,6 +65,9 @@ def main():
     if status != 200 or not isinstance(profile, dict):
         print(f"Khong kiem tra duoc vai tro: HTTP {status}")
         return 1
+    if profile.get("must_change_password") is not False:
+        print("Tai khoan can doi mat khau tren giao dien truoc khi tiep tuc. Dung lai.")
+        return 1
     roles = set(profile.get("system_roles", []))
     if "HR_LEAD" not in roles or "ADMIN" in roles:
         print("Can tai khoan HR_LEAD khong co vai tro ADMIN de kiem thu. Dung lai.")
