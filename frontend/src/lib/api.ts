@@ -2,6 +2,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { localizeServerMessage } from '@/i18n/serverMessages';
+import type { CriterionInput } from '@/types';
 
 // The browser always uses the same origin. Next.js proxies /v1 to the backend,
 // which also works when the UI is viewed through a remote preview host.
@@ -51,8 +52,8 @@ export const authApi = {
 };
 
 export const positionsApi = {
-  list: (status?: string) =>
-    apiClient.get('/positions', { params: { status } }),
+  list: (status?: string, q?: string) =>
+    apiClient.get('/positions', { params: { status, q: q || undefined } }),
   listAll: async () => {
     const all: any[] = [];
     for (let page = 1; ; page += 1) {
@@ -64,7 +65,9 @@ export const positionsApi = {
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
+  getStatusEvents: (id: string) => apiClient.get(`/positions/${id}/status-events`),
   getJdVersions: (id: string) => apiClient.get(`/positions/${id}/jd-versions`),
+  getJdVersion: (id: string, jdVersionId: string) => apiClient.get(`/positions/${id}/jd-versions/${jdVersionId}`),
   createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
 };
 
@@ -77,8 +80,14 @@ export const criteriaApi = {
   approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
-  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; weight_in_group: number }) =>
+  updateItem: (versionId: string, itemId: string, data: Partial<CriterionInput>) =>
     apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
+  addItem: (versionId: string, data: CriterionInput) =>
+    apiClient.post(`/criteria/${versionId}/items`, data),
+  deleteItem: (versionId: string, itemId: string) =>
+    apiClient.delete(`/criteria/${versionId}/items/${itemId}`),
+  createNewVersion: (versionId: string) =>
+    apiClient.post(`/criteria/${versionId}/new-version`),
   updateWeights: (versionId: string, mandatory: number, nice: number) =>
     apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>

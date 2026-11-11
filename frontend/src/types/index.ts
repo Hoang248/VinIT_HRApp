@@ -57,6 +57,34 @@ export interface CriteriaVersion {
   approved_by_hm_at?: string;
   created_at: string;
   criteria: Criterion[];
+  fairness_warnings?: FairnessWarning[];
+}
+
+export interface FairnessWarning {
+  criterion_id?: string | null;
+  name?: string | null;
+  attributes: string[];
+}
+
+export interface PositionStatusEvent {
+  event_id: string;
+  position_id: string;
+  previous_status?: Position['status'] | null;
+  new_status: Position['status'];
+  changed_by: string;
+  changed_by_name?: string | null;
+  reason?: string | null;
+  changed_at: string;
+}
+
+export interface CriterionInput {
+  name: string;
+  description: string;
+  category: Criterion['category'];
+  weight_in_group: number;
+  expected_evidence_keywords: string[];
+  evidence_guidance?: string | null;
+  jd_reference_text?: string | null;
 }
 
 export interface Application {

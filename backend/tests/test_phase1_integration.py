@@ -1102,3 +1102,82 @@ def test_ai_config_writes_recheck_active_admin_inside_transaction(client, seed, 
     # assertions specifically exercise the transactional write recheck.
     assert client.post('/v1/admin/ai/config', headers=headers(seed['other']), json=body).status_code == 403
     assert client.post(f"/v1/admin/ai/config/{created.json()['config_id']}/enable", headers=headers(seed['other'])).status_code == 403
+
+
+def test_hr_can_add_edit_and_delete_draft_criteria(client, seed):
+    base = f"/v1/criteria/{seed['cv']}"
+    payload = {"name": "SQL", "description": "Thiết kế CSDL quan hệ", "category": "NICE_TO_HAVE", "weight_in_group": 100,
+               "expected_evidence_keywords": [" PostgreSQL ", "postgresql", "", "MySQL"],
+               "jd_reference_text": "Experience with SQL databases", "evidence_guidance": "Dự án có thiết kế schema"}
+    assert client.post(base + "/items", headers=headers(seed["hm"]), json=payload).status_code == 403
+    added = client.post(base + "/items", headers=headers(seed["hr"]), json=payload)
+    assert added.status_code == 201, added.text
+    item = added.json()
+    assert item["expected_evidence_keywords"] == ["PostgreSQL", "MySQL"] and item["display_order"] == 2
+    route = f"{base}/items/{item['criterion_id']}"
+    assert client.patch(route, headers=headers(seed["hr"]), json={"category": "MUST_HAVE", "evidence_guidance": None}).status_code == 200
+    version = client.get(base, headers=headers(seed["hr"])).json()
+    sql = next(c for c in version["criteria"] if c["criterion_id"] == item["criterion_id"])
+    assert sql["category"] == "MUST_HAVE" and sql["evidence_guidance"] is None and sql["jd_reference_text"]
+    assert client.delete(route, headers=headers(seed["hm"])).status_code == 403
+    assert client.delete(route, headers=headers(seed["hr"])).status_code == 200
+    # The last remaining criterion cannot be removed.
+    assert client.delete(f"{base}/items/{seed['criterion']}", headers=headers(seed["hr"])).status_code == 400
+    assert client.post(base + "/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"}).status_code == 200
+    # Pending and approved rubrics are immutable.
+    assert client.post(base + "/items", headers=headers(seed["hr"]), json=payload).status_code == 400
+    with engine.connect() as conn:
+        actions = conn.execute(text("SELECT action_type FROM app_private.audit_events WHERE position_id=:id"), {"id": seed["pos"]}).scalars().all()
+    assert {"ADD_CRITERION", "UPDATE_CRITERION", "DELETE_CRITERION"} <= set(actions)
+
+
+def test_criteria_relying_on_personal_attributes_cannot_be_approved(client, seed):
+    base = f"/v1/criteria/{seed['cv']}"
+    client.post(base + "/items", headers=headers(seed["hr"]), json={
+        "name": "Độ tuổi", "description": "Ứng viên dưới 30 tuổi", "category": "NICE_TO_HAVE", "weight_in_group": 100})
+    version = client.get(base, headers=headers(seed["hr"])).json()
+    assert [w["attributes"] for w in version["fairness_warnings"]] == [["AGE"]]
+    blocked = client.post(base + "/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"})
+    assert blocked.status_code == 400 and "Độ tuổi" in blocked.json()["detail"]
+    flagged = version["fairness_warnings"][0]["criterion_id"]
+    assert client.delete(f"{base}/items/{flagged}", headers=headers(seed["hr"])).status_code == 200
+    assert client.post(base + "/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"}).json()["status"] == "PENDING_HM_APPROVAL"
+
+
+def test_new_criteria_version_copies_approved_rubric_into_fresh_draft(client, seed):
+    base = f"/v1/criteria/{seed['cv']}"
+    # A draft must be edited directly, not copied.
+    assert client.post(base + "/new-version", headers=headers(seed["hr"])).status_code == 400
+    client.post(base + "/approve", headers=headers(seed["hr"]), json={"action": "APPROVE"})
+    client.post(base + "/approve", headers=headers(seed["hm"]), json={"action": "APPROVE"})
+    assert client.post(base + "/new-version", headers=headers(seed["hm"])).status_code == 403
+    copy = client.post(base + "/new-version", headers=headers(seed["hr"]))
+    assert copy.status_code == 201, copy.text
+    body = copy.json()
+    assert body["status"] == "DRAFT" and body["origin"] == "HR_CREATED" and body["version_number"] == 2
+    assert body["approved_by_hr"] is None and body["approved_by_hm"] is None
+    assert [c["name"] for c in body["criteria"]] == ["Python"] and body["criteria"][0]["criterion_id"] != seed["criterion"]
+    # Only one open draft per position.
+    assert client.post(base + "/new-version", headers=headers(seed["hr"])).status_code == 409
+    # The approved version stays active until the copy is approved.
+    approved = client.get(f"/v1/criteria/position/{seed['pos']}/approved", headers=headers(seed["hr"])).json()
+    assert approved["criteria_version_id"] == seed["cv"]
+
+
+def test_position_search_status_reason_history_and_single_jd_version(client, seed):
+    hr = headers(seed["hr"])
+    assert [p["position_id"] for p in client.get("/v1/positions", headers=hr, params={"q": "po"}).json()] == [seed["pos"]]
+    assert client.get("/v1/positions", headers=hr, params={"q": "%"}).json() == []
+    route = f"/v1/positions/{seed['pos']}"
+    assert client.patch(route, headers=hr, json={"status": "PAUSED", "status_reason": "  Chờ ngân sách  "}).status_code == 200
+    assert client.patch(route, headers=hr, json={"status": "OPEN"}).status_code == 200
+    events = client.get(route + "/status-events", headers=headers(seed["hm"]))
+    assert events.status_code == 200
+    assert [(e["previous_status"], e["new_status"], e["reason"]) for e in events.json()] == [
+        ("OPEN", "PAUSED", "Chờ ngân sách"), ("PAUSED", "OPEN", None)]
+    assert events.json()[0]["changed_by_name"] == "HR"
+    assert client.get(route + "/status-events", headers=headers(seed["other"])).status_code == 403
+    jd = client.get(f"{route}/jd-versions/{seed['jd']}", headers=hr)
+    assert jd.status_code == 200 and jd.json()["content_text"] == "JD"
+    assert client.get(f"{route}/jd-versions/{uid()}", headers=hr).status_code == 404
+    assert client.get(f"/v1/positions/{seed['pos2']}/jd-versions/{seed['jd']}", headers=headers(seed["hr2"])).status_code == 404

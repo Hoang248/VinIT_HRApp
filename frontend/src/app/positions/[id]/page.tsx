@@ -38,12 +38,29 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { positionsApi, criteriaApi, applicationsApi, operationsApi, authApi, dashboardApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import type { Position, CriteriaVersion, Criterion, JDVersion } from '@/types';
+import type { Position, CriteriaVersion, Criterion, CriterionInput, JDVersion, PositionStatusEvent } from '@/types';
+
+// Draft criterion in the add/edit dialog; keywords are edited as one comma-separated field.
+type CriterionForm = CriterionInput & { criterion_id?: string; keywordsText: string };
+
+const EMPTY_CRITERION = (category: Criterion['category']): CriterionForm => ({
+  name: '', description: '', category, weight_in_group: 0, expected_evidence_keywords: [],
+  evidence_guidance: '', jd_reference_text: '', keywordsText: '',
+});
+
+// Protected attributes reported by the backend fairness screen (F1.02).
+const FAIRNESS_ATTRIBUTE_LABELS: Record<string, string> = {
+  AGE: 'Tuổi', GENDER: 'Giới tính', APPEARANCE: 'Ngoại hình', MARITAL_STATUS: 'Hôn nhân/gia đình',
+  PERSONALITY: 'Tính cách', CULTURE_FIT: 'Phù hợp văn hóa', NATIONALITY_ETHNICITY: 'Quốc tịch/dân tộc', RELIGION: 'Tôn giáo',
+};
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -76,7 +93,7 @@ export default function PositionDetailPage() {
   const [selectedJdId, setSelectedJdId] = useState('');
   const [jdDialogOpen, setJdDialogOpen] = useState(false);
   const [jdContent, setJdContent] = useState('');
-  const [jdLanguage, setJdLanguage] = useState<'vi' | 'en'>('vi');
+  const [jdLanguage, setJdLanguage] = useState<'vi' | 'en'>('en');
   const [jdExpected, setJdExpected] = useState('');
   const [jdError, setJdError] = useState<string | null>(null);
   const [savingJd, setSavingJd] = useState(false);
@@ -94,9 +111,14 @@ export default function PositionDetailPage() {
   const [approvalAction, setApprovalAction] = useState<'REJECT' | 'REQUEST_CHANGES' | null>(null);
   const [approvalComment, setApprovalComment] = useState('');
   const [approving, setApproving] = useState(false);
-  const [editingCriterion, setEditingCriterion] = useState<Criterion | null>(null);
+  const [editingCriterion, setEditingCriterion] = useState<CriterionForm | null>(null);
   const [savingCriterion, setSavingCriterion] = useState(false);
   const [criterionError, setCriterionError] = useState<string | null>(null);
+  const [deletingCriterion, setDeletingCriterion] = useState<Criterion | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
+  const [creatingVersion, setCreatingVersion] = useState(false);
+  const [positionStatusReason, setPositionStatusReason] = useState('');
+  const [statusEvents, setStatusEvents] = useState<PositionStatusEvent[]>([]);
   const [weightDialogOpen, setWeightDialogOpen] = useState(false);
   const [mandatoryWeight, setMandatoryWeight] = useState('70');
   const [savingWeights, setSavingWeights] = useState(false);
@@ -135,6 +157,8 @@ export default function PositionDetailPage() {
       setJdVersions(jdRes.data);
       setSelectedJdId(previous => jdRes.data.some((item: JDVersion) => item.jd_version_id === previous) ? previous : (jdRes.data[0]?.jd_version_id || ''));
       setMe(meRes.data);
+      try { setStatusEvents((await positionsApi.getStatusEvents(positionId)).data || []); }
+      catch { setStatusEvents([]); }
       const latestVersion = criteriaRes.data[0];
       if (latestVersion) {
         try { setApprovalHistory((await criteriaApi.getApprovalEvents(latestVersion.criteria_version_id)).data || []); }
@@ -218,19 +242,67 @@ export default function PositionDetailPage() {
     } finally { setApproving(false); }
   };
 
+  const openEditCriterion = (crit: Criterion) => {
+    setCriterionError(null);
+    setEditingCriterion({
+      criterion_id: crit.criterion_id, name: crit.name, description: crit.description, category: crit.category,
+      weight_in_group: Number(crit.weight_in_group), expected_evidence_keywords: crit.expected_evidence_keywords || [],
+      evidence_guidance: crit.evidence_guidance || '', jd_reference_text: crit.jd_reference_text || '',
+      keywordsText: (crit.expected_evidence_keywords || []).join(', '),
+    });
+  };
+
+  const openAddCriterion = (category: Criterion['category']) => {
+    setCriterionError(null);
+    setEditingCriterion(EMPTY_CRITERION(category));
+  };
+
   const saveCriterion = async () => {
     if (!editingCriterion || !currentCriteria) return;
+    const payload: CriterionInput = {
+      name: editingCriterion.name.trim(), description: editingCriterion.description.trim(),
+      category: editingCriterion.category, weight_in_group: Number(editingCriterion.weight_in_group),
+      expected_evidence_keywords: editingCriterion.keywordsText.split(',').map(k => k.trim()).filter(Boolean),
+      evidence_guidance: editingCriterion.evidence_guidance?.trim() || null,
+      jd_reference_text: editingCriterion.jd_reference_text?.trim() || null,
+    };
     try {
       setSavingCriterion(true); setCriterionError(null);
-      await criteriaApi.updateItem(currentCriteria.criteria_version_id, editingCriterion.criterion_id, {
-        name: editingCriterion.name, description: editingCriterion.description,
-        weight_in_group: Number(editingCriterion.weight_in_group),
-      });
+      if (editingCriterion.criterion_id) {
+        await criteriaApi.updateItem(currentCriteria.criteria_version_id, editingCriterion.criterion_id, payload);
+      } else {
+        await criteriaApi.addItem(currentCriteria.criteria_version_id, payload);
+      }
       setEditingCriterion(null);
       await loadData();
     } catch (err: any) {
-      setCriterionError(err.response?.data?.detail || t("Không thể lưu tiêu chí"));
+      const detail = err.response?.data?.detail;
+      setCriterionError(typeof detail === 'string' ? detail : t("Không thể lưu tiêu chí"));
     } finally { setSavingCriterion(false); }
+  };
+
+  const confirmDeleteCriterion = async () => {
+    if (!deletingCriterion || !currentCriteria || deletingBusy) return;
+    try {
+      setDeletingBusy(true); setError(null);
+      await criteriaApi.deleteItem(currentCriteria.criteria_version_id, deletingCriterion.criterion_id);
+      setDeletingCriterion(null);
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t("Không thể xóa tiêu chí"));
+      setDeletingCriterion(null);
+    } finally { setDeletingBusy(false); }
+  };
+
+  const handleCreateNewVersion = async () => {
+    if (!currentCriteria || creatingVersion) return;
+    try {
+      setCreatingVersion(true); setError(null);
+      await criteriaApi.createNewVersion(currentCriteria.criteria_version_id);
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t("Không thể tạo phiên bản tiêu chí mới"));
+    } finally { setCreatingVersion(false); }
   };
 
   const weightValue = Number(mandatoryWeight);
@@ -266,7 +338,11 @@ export default function PositionDetailPage() {
     if (!positionTitle.trim() || savingPosition) return;
     try {
       setSavingPosition(true); setPositionEditError(null);
-      await positionsApi.update(positionId, { title: positionTitle.trim(), status: positionStatus });
+      const statusChanged = position?.status !== positionStatus;
+      await positionsApi.update(positionId, {
+        title: positionTitle.trim(), status: positionStatus,
+        ...(statusChanged && positionStatusReason.trim() ? { status_reason: positionStatusReason.trim() } : {}),
+      });
       setPositionDialogOpen(false);
       await loadData();
     } catch (err: any) {
@@ -281,6 +357,48 @@ export default function PositionDetailPage() {
   const isHR = myPositionRoles.has('HR_RECRUITER') || myPositionRoles.has('HR_LEAD') || mySystemRoles.has('ADMIN') || mySystemRoles.has('HR_LEAD');
   const isHM = myPositionRoles.has('HIRING_MANAGER');
   const isSameApprover = !!currentCriteria?.approved_by_hr && currentCriteria.approved_by_hr === me?.user_id;
+  const canEditCriteria = isHR && !!currentCriteria && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status);
+  const fairnessIssues = currentCriteria?.fairness_warnings || [];
+  const flaggedIds = new Set(fairnessIssues.map(w => w.criterion_id).filter(Boolean));
+  const hasOpenCriteria = criteriaVersions.some(c => ['DRAFT', 'PENDING_HR_REVIEW', 'PENDING_HM_APPROVAL'].includes(c.status));
+  const canCreateNewVersion = isHR && !!currentCriteria && ['APPROVED', 'REJECTED'].includes(currentCriteria.status) && !hasOpenCriteria;
+
+  const renderCriterion = (crit: Criterion, idx: number) => (
+    <ListItem key={crit.criterion_id} sx={{ px: 0, py: 1, flexDirection: 'column', alignItems: 'flex-start' }}>
+      <Box sx={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+        <Typography variant="body2" fontWeight={600}>
+          {idx + 1}. {crit.name}
+        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+          {flaggedIds.has(crit.criterion_id) && <Chip label={t("Cần xem lại")} size="small" color="error" sx={{ height: 20, fontSize: 11 }} />}
+          <Chip label={`${crit.weight_in_group}%`} size="small" sx={{ height: 20, fontSize: 11, backgroundColor: '#F3EEEE' }} />
+          {canEditCriteria && (
+            <>
+              <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => openEditCriterion(crit)}>{t("Sửa")}</Button>
+              <Button size="small" color="error" startIcon={<DeleteOutlineIcon />} aria-label={t("Xóa tiêu chí")}
+                onClick={() => setDeletingCriterion(crit)} disabled={(currentCriteria?.criteria.length ?? 0) <= 1}>{t("Xóa")}</Button>
+            </>
+          )}
+        </Box>
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        {crit.description}
+      </Typography>
+      {crit.jd_reference_text && (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, pl: 1, borderLeft: '2px solid #D0D5DD', fontStyle: 'italic' }}>
+          {t("Căn cứ JD:")} “{crit.jd_reference_text}”
+        </Typography>
+      )}
+      {crit.evidence_guidance && (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>{t("Hướng dẫn bằng chứng:")} {crit.evidence_guidance}</Typography>
+      )}
+      {crit.expected_evidence_keywords?.length > 0 && (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+          {crit.expected_evidence_keywords.map(keyword => <Chip key={keyword} label={keyword} size="small" variant="outlined" sx={{ height: 20, fontSize: 11 }} />)}
+        </Box>
+      )}
+    </ListItem>
+  );
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -351,8 +469,14 @@ export default function PositionDetailPage() {
         </Box>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
           {isHR && <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={() => {
-            setPositionTitle(position.title); setPositionStatus(position.status); setPositionEditError(null); setPositionDialogOpen(true);
+            setPositionTitle(position.title); setPositionStatus(position.status); setPositionStatusReason(''); setPositionEditError(null); setPositionDialogOpen(true);
           }}>{t("Chỉnh sửa vị trí")}</Button>}
+          {canCreateNewVersion && (
+            <Button variant="outlined" startIcon={creatingVersion ? <CircularProgress size={16} /> : <ContentCopyIcon />}
+              onClick={handleCreateNewVersion} disabled={creatingVersion} sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}>
+              {t("Tạo phiên bản tiêu chí mới")}
+            </Button>
+          )}
           <Button
             variant="outlined"
             startIcon={<AutoAwesomeIcon />}
@@ -361,7 +485,7 @@ export default function PositionDetailPage() {
             sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}
           >
             {generating ? <CircularProgress size={20} sx={{ mr: 1 }} /> : null}
-            {currentCriteria?.status === 'APPROVED' ? t("Tạo phiên bản tiêu chí mới") : t("Đề xuất tiêu chí AI")}
+            {t("Đề xuất tiêu chí AI")}
           </Button>
           <Button
             variant="contained"
@@ -442,6 +566,7 @@ export default function PositionDetailPage() {
           <Tab label={t("Danh sách ứng viên")} />
           <Tab label={t("Shortlist đã chia sẻ")} />
           <Tab label={t("Mô tả công việc (JD)")} />
+          <Tab label={t("Lịch sử trạng thái")} />
         </Tabs>
       </Box>
 
@@ -449,6 +574,22 @@ export default function PositionDetailPage() {
       <TabPanel value={activeTab} index={0}>
         {criteriaStale && <Alert severity="warning" sx={{ mb: 2 }}>{t("JD đã thay đổi. Cần tạo và duyệt bộ tiêu chí cho phiên bản mới trước khi tải hoặc đánh giá CV.")}</Alert>}
         {isHM && isSameApprover && currentCriteria?.status === 'PENDING_HM_APPROVAL' && <Alert severity="warning" sx={{ mb: 2 }}>{t("Hai bước duyệt phải do hai tài khoản khác nhau thực hiện. Vui lòng nhờ Hiring Manager khác được phân công duyệt.")}</Alert>}
+        {currentCriteria && currentCriteria.status !== 'APPROVED' && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {currentCriteria.origin === 'AI_DRAFT' ? t("AI đề xuất — chưa được phê duyệt.") : t("HR tạo — chưa được phê duyệt.")}{' '}
+            {t("Phiên bản")} {currentCriteria.version_number}. {t("Chỉ dùng để đánh giá sau khi HR và Hiring Manager duyệt.")}
+          </Alert>
+        )}
+        {fairnessIssues.length > 0 && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            <Typography variant="body2" fontWeight={600}>{t("Có tiêu chí dựa trên thông tin cá nhân không liên quan đến công việc. Cần sửa hoặc xóa trước khi duyệt.")}</Typography>
+            {fairnessIssues.map((warning, index) => (
+              <Typography key={`${warning.criterion_id}-${index}`} variant="body2">
+                • {warning.name}: {warning.attributes.map(code => t(FAIRNESS_ATTRIBUTE_LABELS[code] || code)).join(', ')}
+              </Typography>
+            ))}
+          </Alert>
+        )}
         {!currentCriteria ? (
           <Card>
             <CardContent sx={{ textAlign: 'center', py: 8 }}>
@@ -499,25 +640,11 @@ export default function PositionDetailPage() {
                   <List disablePadding>
                     {currentCriteria.criteria
                       .filter(c => c.category === 'MUST_HAVE')
-                      .map((crit, idx) => (
-                        <ListItem key={crit.criterion_id} sx={{ px: 0, py: 1, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <Box sx={{ width: '100%', display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2" fontWeight={600}>
-                              {idx + 1}. {crit.name}
-                            </Typography>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-                              <Chip label={`${crit.weight_in_group}%`} size="small" sx={{ height: 20, fontSize: 11, backgroundColor: '#F3EEEE' }} />
-                              {isHR && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status) && (
-                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit }); }}>{t("Sửa")}</Button>
-                              )}
-                            </Box>
-                          </Box>
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                            {crit.description}
-                          </Typography>
-                        </ListItem>
-                      ))}
+                      .map(renderCriterion)}
                   </List>
+                  {canEditCriteria && (
+                    <Button size="small" startIcon={<AddIcon />} sx={{ mt: 1 }} onClick={() => openAddCriterion('MUST_HAVE')}>{t("Thêm tiêu chí bắt buộc")}</Button>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -544,25 +671,11 @@ export default function PositionDetailPage() {
                   <List disablePadding>
                     {currentCriteria.criteria
                       .filter(c => c.category === 'NICE_TO_HAVE')
-                      .map((crit, idx) => (
-                        <ListItem key={crit.criterion_id} sx={{ px: 0, py: 1, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <Box sx={{ width: '100%', display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2" fontWeight={600}>
-                              {idx + 1}. {crit.name}
-                            </Typography>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-                              <Chip label={`${crit.weight_in_group}%`} size="small" sx={{ height: 20, fontSize: 11, backgroundColor: '#F3EEEE' }} />
-                              {isHR && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status) && (
-                                <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => { setCriterionError(null); setEditingCriterion({ ...crit }); }}>{t("Sửa")}</Button>
-                              )}
-                            </Box>
-                          </Box>
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                            {crit.description}
-                          </Typography>
-                        </ListItem>
-                      ))}
+                      .map(renderCriterion)}
                   </List>
+                  {canEditCriteria && (
+                    <Button size="small" startIcon={<AddIcon />} sx={{ mt: 1 }} onClick={() => openAddCriterion('NICE_TO_HAVE')}>{t("Thêm tiêu chí ưu tiên")}</Button>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -615,7 +728,10 @@ export default function PositionDetailPage() {
                       </Box>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         {currentCriteria.status === 'REJECTED' ? (
-                          <Button variant="contained" color="secondary" onClick={handleGenerateCriteria} disabled={generating || !isHR}>{t("Tạo lại đề xuất tiêu chí")}</Button>
+                          <>
+                            {canCreateNewVersion && <Button variant="outlined" startIcon={<ContentCopyIcon />} onClick={handleCreateNewVersion} disabled={creatingVersion}>{t("Sao chép để chỉnh sửa")}</Button>}
+                            <Button variant="contained" color="secondary" onClick={handleGenerateCriteria} disabled={generating || !isHR}>{t("Tạo lại đề xuất tiêu chí")}</Button>
+                          </>
                         ) : (currentCriteria.status === 'DRAFT' || currentCriteria.status === 'PENDING_HR_REVIEW') ? (
                           <>
                             {isHR && (
@@ -631,7 +747,7 @@ export default function PositionDetailPage() {
                                   color="secondary"
                                   startIcon={<CheckCircleIcon />}
                                   onClick={() => handleApprove('APPROVE')}
-                                  disabled={approving || criteriaStale}
+                                  disabled={approving || criteriaStale || fairnessIssues.length > 0}
                                 >{t("HR duyệt & gửi HM")}</Button>
                               </>
                             )}
@@ -655,7 +771,7 @@ export default function PositionDetailPage() {
                                 color="secondary"
                                 startIcon={<CheckCircleIcon />}
                                 onClick={() => handleApprove('APPROVE')}
-                                  disabled={approving || criteriaStale || isSameApprover}
+                                  disabled={approving || criteriaStale || isSameApprover || fairnessIssues.length > 0}
                               >{t("HM duyệt chuyên môn")}</Button>
                             )}
                             {!isHM && (
@@ -758,6 +874,26 @@ export default function PositionDetailPage() {
         </CardContent></Card>
       </TabPanel>
 
+      <TabPanel value={activeTab} index={4}>
+        <Card variant="outlined"><CardContent>
+          <Typography variant="h4" sx={{ mb: 1.5 }}>{t("Lịch sử trạng thái vị trí")}</Typography>
+          {statusEvents.length === 0 ? (
+            <Typography color="text.secondary">{t("Vị trí chưa thay đổi trạng thái kể từ khi tạo.")}</Typography>
+          ) : statusEvents.map(event => {
+            const label = (s?: string | null) => s === 'OPEN' ? t("Đang mở") : s === 'PAUSED' ? t("Tạm dừng") : s === 'CLOSED' ? t("Đã đóng") : '—';
+            return (
+              <Box key={event.event_id} sx={{ py: 1, borderTop: '1px solid #EDF1F5' }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {label(event.previous_status)} → {label(event.new_status)} · {event.changed_by_name || t("Người thay đổi")}
+                </Typography>
+                <Typography variant="caption">{new Date(event.changed_at).toLocaleString(dateLocale)}</Typography>
+                {event.reason && <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{event.reason}</Typography>}
+              </Box>
+            );
+          })}
+        </CardContent></Card>
+      </TabPanel>
+
       <Dialog open={jdDialogOpen} onClose={() => !savingJd && setJdDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>{t("Tạo phiên bản mô tả công việc mới")}</DialogTitle>
         <DialogContent>
@@ -788,6 +924,11 @@ export default function PositionDetailPage() {
                 <MenuItem value="CLOSED">{t("Đã đóng")}</MenuItem>
               </Select>
             </FormControl>
+            {positionStatus !== position.status && (
+              <TextField fullWidth multiline minRows={2} label={t("Lý do thay đổi trạng thái")} value={positionStatusReason}
+                onChange={e => setPositionStatusReason(e.target.value)} inputProps={{ maxLength: 1000 }}
+                helperText={t("Được lưu trong lịch sử trạng thái của vị trí.")} />
+            )}
             {positionStatus !== 'OPEN' && <Alert severity="info">{t("Vị trí tạm dừng hoặc đóng sẽ không nhận thêm CV; tác vụ đã chạy không tự hủy. Việc lưu trữ và xóa dữ liệu chưa được tự động thực hiện.")}</Alert>}
           </Box>
         </DialogContent>
@@ -814,7 +955,7 @@ export default function PositionDetailPage() {
       </Dialog>
 
       <Dialog open={!!editingCriterion} onClose={() => !savingCriterion && setEditingCriterion(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>{t("Chỉnh sửa tiêu chí nháp")}</DialogTitle>
+        <DialogTitle>{editingCriterion?.criterion_id ? t("Chỉnh sửa tiêu chí nháp") : t("Thêm tiêu chí")}</DialogTitle>
         <DialogContent>
           {criterionError && <Alert severity="error" sx={{ mb: 2 }}>{t(criterionError)}</Alert>}
           {editingCriterion && <Box sx={{ display: 'grid', gap: 2, pt: 1 }}>
@@ -822,14 +963,39 @@ export default function PositionDetailPage() {
               onChange={e => setEditingCriterion({ ...editingCriterion, name: e.target.value })} inputProps={{ maxLength: 200 }} />
             <TextField label={t("Mô tả")} required fullWidth multiline minRows={3} value={editingCriterion.description}
               onChange={e => setEditingCriterion({ ...editingCriterion, description: e.target.value })} inputProps={{ maxLength: 4000 }} />
+            <FormControl fullWidth>
+              <InputLabel id="criterion-category-label">{t("Nhóm tiêu chí")}</InputLabel>
+              <Select labelId="criterion-category-label" label={t("Nhóm tiêu chí")} value={editingCriterion.category}
+                onChange={e => setEditingCriterion({ ...editingCriterion, category: e.target.value as Criterion['category'] })}>
+                <MenuItem value="MUST_HAVE">{t("Bắt buộc")}</MenuItem>
+                <MenuItem value="NICE_TO_HAVE">{t("Ưu tiên")}</MenuItem>
+              </Select>
+            </FormControl>
             <TextField label={t("Trọng số tương đối trong nhóm (%)")} type="number" value={editingCriterion.weight_in_group}
               onChange={e => setEditingCriterion({ ...editingCriterion, weight_in_group: Number(e.target.value) })}
               inputProps={{ min: 0, max: 100, step: 0.1 }} helperText={t("Đây là trọng số tương đối giữa các tiêu chí trong cùng nhóm.")} />
+            <TextField label={t("Từ khóa bằng chứng")} fullWidth value={editingCriterion.keywordsText}
+              onChange={e => setEditingCriterion({ ...editingCriterion, keywordsText: e.target.value })}
+              helperText={t("Phân tách bằng dấu phẩy, tối đa 20 từ khóa.")} />
+            <TextField label={t("Đoạn JD làm căn cứ")} fullWidth multiline minRows={2} value={editingCriterion.jd_reference_text || ''}
+              onChange={e => setEditingCriterion({ ...editingCriterion, jd_reference_text: e.target.value })} inputProps={{ maxLength: 4000 }} />
+            <TextField label={t("Hướng dẫn xác định bằng chứng")} fullWidth multiline minRows={2} value={editingCriterion.evidence_guidance || ''}
+              onChange={e => setEditingCriterion({ ...editingCriterion, evidence_guidance: e.target.value })} inputProps={{ maxLength: 4000 }} />
+            <Typography variant="caption" color="text.secondary">{t("Không dùng tuổi, giới tính, ngoại hình, hôn nhân, tính cách hoặc “phù hợp văn hóa” làm tiêu chí.")}</Typography>
           </Box>}
         </DialogContent>
         <DialogActions><Button onClick={() => setEditingCriterion(null)} disabled={savingCriterion}>{t("Hủy")}</Button>
           <Button variant="contained" color="secondary" onClick={saveCriterion} disabled={savingCriterion || !editingCriterion?.name.trim() || !editingCriterion?.description.trim() || editingCriterion.weight_in_group < 0 || editingCriterion.weight_in_group > 100}>
             {savingCriterion ? t("Đang lưu…") : t("Lưu tiêu chí")}</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={!!deletingCriterion} onClose={() => !deletingBusy && setDeletingCriterion(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{t("Xóa tiêu chí")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("Xóa tiêu chí “{0}” khỏi bản nháp này?", deletingCriterion?.name || '')}</Typography>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setDeletingCriterion(null)} disabled={deletingBusy}>{t("Hủy")}</Button>
+          <Button variant="contained" color="error" onClick={confirmDeleteCriterion} disabled={deletingBusy}>{t("Xóa")}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={!!approvalAction} onClose={() => !approving && setApprovalAction(null)} maxWidth="sm" fullWidth>

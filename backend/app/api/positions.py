@@ -4,9 +4,8 @@ from uuid import UUID
 from app.core.security import get_current_user
 from app.core.exceptions import NotFoundError
 from app.core.permissions import check_position_access, can_update_application_status
-from app.schemas.positions import Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus, JDVersionCreate
-from app.schemas.common import ErrorResponse
-from app.db.supabase import get_supabase_client
+from app.schemas.positions import (Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus,
+                                   PositionStatusEvent, JDVersionCreate)
 from app.db.database import SessionLocal
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -66,22 +65,28 @@ _POSITION_WITH_STATS = """
 @router.get("", response_model=List[PositionWithStats])
 async def list_positions(
     status_filter: Optional[PositionStatus] = Query(None, alias="status"),
+    q: Optional[str] = Query(None, max_length=200, description="Search by position title or code"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: dict = Depends(get_current_user)
 ):
     """List only positions assigned to the user or shared with them."""
+    search = (q or "").strip()
+    # Escape LIKE wildcards so the search is a plain substring match.
+    pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" if search else None
     db = SessionLocal()
     try:
         rows = db.execute(text(_POSITION_WITH_STATS + """
             WHERE (CAST(:status_filter AS text) IS NULL OR p.status = :status_filter)
+              AND (CAST(:pattern AS text) IS NULL
+                   OR p.title ILIKE :pattern ESCAPE '\\' OR p.position_code ILIKE :pattern ESCAPE '\\')
               AND (priv.global_access OR EXISTS (
                   SELECT 1 FROM app_private.position_assignments pa
                   WHERE pa.position_id = p.position_id AND pa.user_id = :user_id AND pa.revoked_at IS NULL
               ))
             ORDER BY p.created_at DESC, p.position_id DESC LIMIT :page_size OFFSET :offset
         """), {"user_id": current_user["user_id"], "status_filter": status_filter.value if status_filter else None,
-                "page_size": page_size, "offset": (page - 1) * page_size}).mappings().all()
+                "pattern": pattern, "page_size": page_size, "offset": (page - 1) * page_size}).mappings().all()
         return [dict(row) for row in rows]
     finally:
         db.close()
@@ -183,6 +188,7 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
     if not can_update_application_status(user_id, str(position_id)):
         raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể cập nhật vị trí")
     values = update.model_dump(exclude_unset=True)
+    status_reason = (values.pop("status_reason", None) or "").strip() or None
     if "status" in values and values["status"] is not None:
         values["status"] = values["status"].value
     allowed = {k: v for k, v in values.items() if k in {"title", "job_family", "org_unit", "level", "work_location", "work_mode", "employment_type", "headcount", "status"} and v is not None}
@@ -206,9 +212,10 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
                              {**allowed, "id": str(position_id)}).mappings().one()
         if "status" in allowed and previous != allowed["status"]:
             db.execute(text("""
-                INSERT INTO app_private.position_status_events (position_id, previous_status, new_status, changed_by)
-                VALUES (:id, :previous, :new_status, :user_id)
-            """), {"id": str(position_id), "previous": previous, "new_status": allowed["status"], "user_id": user_id})
+                INSERT INTO app_private.position_status_events (position_id, previous_status, new_status, changed_by, reason)
+                VALUES (:id, :previous, :new_status, :user_id, :reason)
+            """), {"id": str(position_id), "previous": previous, "new_status": allowed["status"], "user_id": user_id,
+                    "reason": status_reason})
         db.execute(text("""
             INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
             VALUES (:user_id, 'UPDATE_POSITION', 'POSITION', :id, :id, 'SUCCESS', CAST(:metadata AS jsonb))
@@ -218,6 +225,40 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
     except Exception:
         db.rollback()
         raise
+    finally:
+        db.close()
+
+
+@router.get("/{position_id}/status-events", response_model=List[PositionStatusEvent])
+async def list_position_status_events(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Open/Paused/Closed history of a position, oldest first."""
+    await check_position_access(position_id, current_user)
+    db = SessionLocal()
+    try:
+        return [dict(row) for row in db.execute(text("""
+            SELECT e.event_id, e.position_id, e.previous_status, e.new_status, e.changed_by, e.reason, e.changed_at,
+                   p.display_name AS changed_by_name
+            FROM app_private.position_status_events e
+            LEFT JOIN app_private.user_profiles p ON p.user_id = e.changed_by
+            WHERE e.position_id = :id ORDER BY e.changed_at, e.event_id
+        """), {"id": str(position_id)}).mappings().all()]
+    finally:
+        db.close()
+
+
+@router.get("/{position_id}/jd-versions/{jd_version_id}")
+async def get_jd_version(position_id: UUID, jd_version_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Read one immutable JD version (F-11)."""
+    await check_position_access(position_id, current_user)
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT jd_version_id, position_id, version_number, content_text, language_code, created_by, created_at
+            FROM app_private.jd_versions WHERE position_id = :position_id AND jd_version_id = :jd_version_id
+        """), {"position_id": str(position_id), "jd_version_id": str(jd_version_id)}).mappings().first()
+        if not row:
+            raise NotFoundError("JD version")
+        return dict(row)
     finally:
         db.close()
 

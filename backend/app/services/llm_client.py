@@ -174,8 +174,9 @@ RULES:
 2. Assign default weights: Total of all MUST_HAVE criteria = 70.0. Total of all NICE_TO_HAVE criteria = 30.0. Sum must equal 100.0.
 3. For each criterion, identify 3-5 explicit evidence keywords expected in candidate resumes.
 4. DO NOT invent requirements not mentioned in the JD.
-5. STRICTLY FORBIDDEN: Do not generate criteria related to age, gender, marital status, nationality, appearance, or personality traits.
+5. STRICTLY FORBIDDEN: Do not generate criteria related to age, gender, marital status, nationality, religion, appearance, personality traits or "culture fit".
 6. Return JSON with keys requisition_id, job_title and criteria. Each criterion must have name, description, category, numeric weight (0 to 100), and expected_evidence_keywords (an array of strings).
+7. Each criterion should also have jd_reference_text (a short verbatim excerpt of the JD it is derived from) and evidence_guidance (one sentence telling a recruiter what CV evidence satisfies it).
 """
 
         user_prompt = json.dumps({"requisition_id": requisition_id, "job_title": redact_text(job_title),

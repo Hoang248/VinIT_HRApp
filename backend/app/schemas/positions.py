@@ -42,8 +42,21 @@ class PositionCreate(PositionBase):
 class PositionUpdate(BaseSchema):
     title: Optional[str] = None
     status: Optional[PositionStatus] = None
+    # Stored on the status-change history; required when pausing or closing.
+    status_reason: Optional[str] = Field(default=None, max_length=1000)
     work_location: Optional[str] = None
     work_mode: Optional[str] = None
+
+
+class PositionStatusEvent(BaseModel):
+    event_id: UUID
+    position_id: UUID
+    previous_status: Optional[str] = None
+    new_status: str
+    changed_by: UUID
+    changed_by_name: Optional[str] = None
+    reason: Optional[str] = None
+    changed_at: datetime
 
 
 class Position(PositionBase, TimestampMixin):
@@ -65,5 +78,6 @@ class PositionWithStats(Position):
 
 class JDVersionCreate(BaseModel):
     content_text: str = Field(min_length=1, max_length=100_000)
-    language_code: str = Field(default="vi", pattern="^(vi|en)$")
+    # F1.01: JDs are English by default; Vietnamese is still accepted.
+    language_code: str = Field(default="en", pattern="^(vi|en)$")
     expected_jd_version_id: UUID

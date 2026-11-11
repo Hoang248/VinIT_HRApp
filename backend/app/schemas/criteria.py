@@ -37,8 +37,15 @@ class CriterionBase(BaseSchema):
     jd_reference_text: Optional[str] = None
 
 
-class CriterionCreate(CriterionBase):
-    pass
+class CriterionCreate(BaseSchema):
+    """A criterion HR adds by hand to a draft rubric."""
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=4000)
+    category: CriteriaCategory
+    weight_in_group: float = Field(..., ge=0, le=100)
+    expected_evidence_keywords: List[str] = Field(default_factory=list, max_length=20)
+    evidence_guidance: Optional[str] = Field(default=None, max_length=4000)
+    jd_reference_text: Optional[str] = Field(default=None, max_length=4000)
 
 
 class CriterionUpdate(BaseSchema):
@@ -46,7 +53,15 @@ class CriterionUpdate(BaseSchema):
     description: Optional[str] = None
     category: Optional[CriteriaCategory] = None
     weight_in_group: Optional[float] = Field(default=None, ge=0, le=100)
-    expected_evidence_keywords: Optional[List[str]] = None
+    expected_evidence_keywords: Optional[List[str]] = Field(default=None, max_length=20)
+    evidence_guidance: Optional[str] = Field(default=None, max_length=4000)
+    jd_reference_text: Optional[str] = Field(default=None, max_length=4000)
+
+
+class FairnessWarning(BaseModel):
+    criterion_id: Optional[UUID] = None
+    name: Optional[str] = None
+    attributes: List[str]
 
 
 class Criterion(CriterionBase, TimestampMixin):
@@ -90,6 +105,9 @@ class CriteriaVersion(CriteriaVersionBase, TimestampMixin):
     approved_by_hr: Optional[UUID] = None
     approved_by_hm: Optional[UUID] = None
     criteria: List[Criterion] = Field(default_factory=list)
+    # Criteria that appear to use non-job-related personal attributes. A
+    # version with warnings cannot move past HR review (F1.02).
+    fairness_warnings: List[FairnessWarning] = Field(default_factory=list)
 
 
 class GenerateCriteriaRequest(BaseSchema):

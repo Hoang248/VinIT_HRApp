@@ -28,6 +28,7 @@ import {
   TextField,
   Autocomplete,
   Tooltip,
+  MenuItem,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -41,6 +42,8 @@ export default function PositionsPage() {
   const { t } = useI18n();
   const router = useRouter();
   const [positions, setPositions] = useState<Position[]>([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | Position['status']>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -148,6 +151,11 @@ export default function PositionsPage() {
     );
   };
 
+  const searchTerm = search.trim().toLowerCase();
+  const visiblePositions = positions.filter(p =>
+    (statusFilter === 'ALL' || p.status === statusFilter) &&
+    (!searchTerm || p.title.toLowerCase().includes(searchTerm) || p.position_code.toLowerCase().includes(searchTerm)));
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 10 }}>
@@ -224,11 +232,24 @@ export default function PositionsPage() {
         </Grid>
       </Grid>
 
+      {/* S-03: search by title/code and filter by position status. */}
+      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+        <TextField size="small" label={t("Tìm theo tên hoặc mã vị trí")} value={search}
+          onChange={e => setSearch(e.target.value)} sx={{ minWidth: 260, flex: 1, maxWidth: 420 }} inputProps={{ maxLength: 200 }} />
+        <TextField size="small" select label={t("Trạng thái")} value={statusFilter} sx={{ minWidth: 180 }}
+          onChange={e => setStatusFilter(e.target.value as 'ALL' | Position['status'])}>
+          <MenuItem value="ALL">{t("Tất cả")}</MenuItem>
+          <MenuItem value="OPEN">{t("Đang mở")}</MenuItem>
+          <MenuItem value="PAUSED">{t("Tạm dừng")}</MenuItem>
+          <MenuItem value="CLOSED">{t("Đã đóng")}</MenuItem>
+        </TextField>
+      </Box>
+
       {/* On small screens cards keep the actions and status visible without horizontal scrolling. */}
       <Box sx={{ display: { xs: 'grid', md: 'none' }, gap: 2 }}>
-        {positions.length === 0 ? (
+        {visiblePositions.length === 0 ? (
           <Paper sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{t("Chưa có vị trí trong phạm vi của bạn")}</Paper>
-        ) : positions.map(pos => (
+        ) : visiblePositions.map(pos => (
           <Card key={pos.position_id} sx={{ border: '1px solid #E9EEF4' }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
@@ -261,12 +282,12 @@ export default function PositionsPage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {positions.length === 0 ? (
+            {visiblePositions.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>{t("Chưa có vị trí nào được tạo")}</TableCell>
               </TableRow>
             ) : (
-              positions.map((pos) => (
+              visiblePositions.map((pos) => (
                 <TableRow key={pos.position_id} hover>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
