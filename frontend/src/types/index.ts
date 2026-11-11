@@ -310,3 +310,81 @@ export interface RosterItem {
 }
 
 
+
+// F2.04 QA sample inspection
+export type QaReason = 'RANDOM' | 'SINGLE_MUST_HAVE_FAIL' | 'COVERAGE_NEAR_THRESHOLD';
+export type QaItemStatus = 'PENDING' | 'PASSED' | 'FLAGGED';
+export type QaFlagType = 'INCORRECT_EVIDENCE' | 'MISSED_CONTENT' | 'OCR_ERROR';
+
+export interface QaQueueItem {
+  sample_item_id: string;
+  sample_run_id: string;
+  application_id: string;
+  assessment_id: string;
+  position_id: string;
+  position_title: string;
+  display_name: string | null;
+  reasons: QaReason[];
+  status: QaItemStatus;
+  matching_status: string | null;
+  evidence_coverage: number | null;
+  flag_count: number;
+  overdue: boolean;
+  created_at: string;
+}
+
+export interface QaRate {
+  count: number;
+  rate: number | null;
+  wilson95: [number, number] | null;
+}
+
+export interface QaSummary {
+  reviewed_items: number;
+  pending_items: number;
+  overdue_items: number;
+  flagged_items: QaRate;
+  by_flag_type: Record<string, QaRate>;
+  small_sample_warning: boolean;
+}
+
+export interface QaEvidence {
+  evidence_id: string;
+  verbatim_quote: string;
+  page_number: number | null;
+  verification_status: string | null;
+}
+
+export interface QaCriterionResult {
+  result_id: string;
+  criterion_name: string;
+  category: 'MUST_HAVE' | 'NICE_TO_HAVE';
+  outcome: 'STRONG_MATCH' | 'MATCH' | 'UNCLEAR' | 'NO_MATCH';
+  reasoning: string | null;
+  evidence: QaEvidence[];
+}
+
+export interface QaFlag {
+  flag_id: string;
+  criterion_result_id: string | null;
+  evidence_id: string | null;
+  flag_type: QaFlagType;
+  expected_outcome: string | null;
+  note: string | null;
+  author_name: string | null;
+  created_at: string;
+}
+
+export interface QaItemDetail {
+  sample_item_id: string;
+  application_id: string;
+  position_id: string;
+  reasons: QaReason[];
+  status: QaItemStatus;
+  can_review: boolean;
+  assessment: { matching_status: string | null; evidence_coverage: number | null; summary: string | null } | null;
+  criterion_results: QaCriterionResult[];
+  document: { original_filename: string; mime_type: string; extraction_type: string | null } | null;
+  extracted_text: string | null;
+  flags: QaFlag[];
+}

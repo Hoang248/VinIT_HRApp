@@ -176,6 +176,18 @@ export const dashboardApi = {
   getPosition: (id: string) => apiClient.get(`/dashboard/position/${id}`),
 };
 
+export const qaApi = {
+  getQueue: (params?: { position_id?: string; status?: string; reason?: string }) =>
+    apiClient.get('/qa/queue', { params }),
+  getItem: (id: string) => apiClient.get(`/qa/items/${id}`),
+  addFlag: (id: string, data: { flag_type: string; criterion_result_id?: string; evidence_id?: string; expected_outcome?: string; note?: string }) =>
+    apiClient.post(`/qa/items/${id}/flags`, data),
+  markPassed: (id: string) => apiClient.post(`/qa/items/${id}/review`, { decision: 'PASSED' }),
+  getSummary: (positionId?: string) => apiClient.get('/qa/summary', { params: { position_id: positionId } }),
+  createSampleRun: (positionId: string, batchId: string) =>
+    apiClient.post(`/qa/positions/${positionId}/sample-runs`, { batch_id: batchId }),
+};
+
 export const adminApi = {
   listUsers: (params: { search?: string; role?: string; account_status?: string; page?: number }) =>
     apiClient.get('/admin/users', { params }),
