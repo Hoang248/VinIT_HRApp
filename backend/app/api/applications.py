@@ -3,7 +3,10 @@ from fastapi.responses import FileResponse
 from typing import List, Optional
 from uuid import UUID, uuid4
 from app.core.security import get_current_user
-from app.core.permissions import check_position_access, can_update_application_status, application_access
+from app.core.permissions import (
+    application_access, can_update_application_status, check_position_access, is_system_admin,
+)
+from app.services.ai_config import sanitize_provider_snapshot
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.exceptions import (
@@ -171,6 +174,105 @@ async def create_cv_batch(position_id: UUID, files: List[UploadFile] = File(...)
         db.close()
 
 
+@router.post("/{application_id}/reprocess", response_model=OperationResponse, status_code=status.HTTP_202_ACCEPTED)
+async def reprocess_application_cv(application_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Queue one failed CV document for extraction/profile/assessment again.
+
+    A new operation and one-item batch are created for traceability; the
+    original upload batch remains unchanged as historical evidence.
+    """
+    user_id, app_id = current_user["user_id"], str(application_id)
+    db = SessionLocal()
+    try:
+        app = db.execute(text("""
+            SELECT application_id, position_id FROM app_private.applications
+            WHERE application_id = :app_id FOR UPDATE
+        """), {"app_id": app_id}).mappings().first()
+        if not app:
+            raise NotFoundError("Application")
+        position_id = str(app["position_id"])
+        if not can_update_application_status(user_id, position_id):
+            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới được xử lý lại CV")
+
+        position_status = db.execute(text("""
+            SELECT status FROM app_private.positions WHERE position_id = :id FOR UPDATE
+        """), {"id": position_id}).scalar_one_or_none()
+        if position_status is None:
+            raise NotFoundError("Position")
+        if position_status != "OPEN":
+            raise HTTPException(status_code=400, detail="Không thể xử lý lại CV cho vị trí đã đóng hoặc tạm dừng")
+        approved = db.execute(text("""
+            SELECT 1 FROM app_private.criteria_versions WHERE position_id = :id AND status = 'APPROVED'
+              AND jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                                   WHERE position_id = :id ORDER BY version_number DESC LIMIT 1) LIMIT 1
+        """), {"id": position_id}).first()
+        if not approved:
+            raise HTTPException(status_code=400, detail="Tiêu chí cần được HR và Hiring Manager duyệt trước khi tải CV")
+        active = db.execute(text("""
+            SELECT 1 FROM app_private.operations WHERE position_id = :id
+              AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING')
+              AND status IN ('PENDING', 'PROCESSING') LIMIT 1
+        """), {"id": position_id}).first()
+        if active:
+            raise HTTPException(status_code=409, detail="Vị trí đang có tác vụ xử lý. Vui lòng đợi tác vụ hoàn tất trước khi xử lý lại CV.")
+
+        doc = db.execute(text("""
+            SELECT * FROM app_private.application_documents
+            WHERE application_id = :app_id AND document_type = 'CV'
+            ORDER BY created_at DESC, document_id DESC LIMIT 1 FOR UPDATE
+        """), {"app_id": app_id}).mappings().first()
+        if not doc:
+            raise NotFoundError("CV document")
+        if doc["file_processing_status"] not in ("NEEDS_HR_REVIEW", "ERROR_UNSUPPORTED"):
+            raise HTTPException(status_code=409, detail="Hồ sơ không ở trạng thái cần xử lý lại")
+
+        operation_id = db.execute(text("""
+            INSERT INTO app_private.operations (position_id, capability, status, requested_by)
+            VALUES (:position_id, 'CV_PROCESSING', 'PENDING', :user_id) RETURNING operation_id
+        """), {"position_id": position_id, "user_id": user_id}).scalar_one()
+        batch_id = db.execute(text("""
+            INSERT INTO app_private.cv_batches
+                (position_id, uploaded_by, operation_id, status, total_files, total_size_bytes)
+            VALUES (:position_id, :user_id, :operation_id, 'PROCESSING', 1, :size) RETURNING batch_id
+        """), {"position_id": position_id, "user_id": user_id, "operation_id": operation_id,
+                "size": doc["size_bytes"]}).scalar_one()
+        db.execute(text("""
+            INSERT INTO app_private.cv_batch_items
+                (batch_id, original_filename, declared_mime_type, detected_mime_type,
+                 size_bytes, validation_result, application_id)
+            VALUES (:batch_id, :filename, :mime, :mime, :size, 'ACCEPTED', :app_id)
+        """), {"batch_id": batch_id, "filename": doc["original_filename"], "mime": doc["mime_type"],
+                "size": doc["size_bytes"], "app_id": app_id})
+        db.execute(text("""
+            INSERT INTO app_private.application_identities (application_id) VALUES (:id)
+            ON CONFLICT (application_id) DO NOTHING
+        """), {"id": app_id})
+        db.execute(text("""
+            UPDATE app_private.application_documents
+            SET file_processing_status = 'RECEIVED', processing_error = NULL
+            WHERE document_id = :document_id
+        """), {"document_id": doc["document_id"]})
+        db.execute(text("""
+            INSERT INTO app_private.document_processing_runs (document_id, operation_id, extraction_type, status)
+            VALUES (:document_id, :operation_id, 'INITIAL_EXTRACTION', 'PENDING')
+        """), {"document_id": doc["document_id"], "operation_id": operation_id})
+        db.execute(text("""
+            INSERT INTO app_private.audit_events
+                (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
+            VALUES (:user_id, 'REPROCESS_CV_DOCUMENT', 'APPLICATION', :app_id, :position_id, 'SUCCESS',
+                    CAST(:metadata AS jsonb))
+        """), {"user_id": user_id, "app_id": app_id, "position_id": position_id,
+                "metadata": json.dumps({"document_id": str(doc["document_id"]), "batch_id": str(batch_id)})})
+        db.commit()
+        return OperationResponse(operation_id=operation_id, status="pending",
+                                 message="Đã đưa CV vào hàng đợi xử lý lại.")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def _enrich_file_status(app: dict) -> None:
     docs = app.get("documents") or []
     if not docs:
@@ -238,6 +340,9 @@ async def list_applications(
                 "matching_status": matching_status, "page_size": page_size, "offset": (page - 1) * page_size}).mappings().all()
         applications = [dict(row) for row in rows]
         for item in applications:
+            if isinstance(item.get("latest_assessment"), dict):
+                item["latest_assessment"]["provider_model_snapshot"] = sanitize_provider_snapshot(
+                    item["latest_assessment"].get("provider_model_snapshot"))
             _normalize_application(item)
             item.update({"can_view_cv": True, "can_view_assessment_evidence": bool(item["latest_assessment"]), "can_update_status": True})
         return applications
@@ -290,6 +395,11 @@ async def get_application(application_id: UUID, current_user: dict = Depends(get
             ORDER BY ar.created_at DESC, ar.assessment_id DESC LIMIT 1
         """), {"id": app_id, "hr_access": access["can_update_status"], "user_id": current_user["user_id"]}).mappings().first()
         latest = dict(assessment) if assessment else None
+        if latest:
+            latest["provider_model_snapshot"] = sanitize_provider_snapshot(
+                latest.get("provider_model_snapshot"),
+                operations_access=is_system_admin(current_user["user_id"]),
+            )
         app["can_view_assessment_evidence"] = False
         if latest:
             latest["criterion_results"] = []

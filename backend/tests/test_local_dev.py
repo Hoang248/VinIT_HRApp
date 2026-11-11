@@ -110,9 +110,10 @@ def local_client(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_BACKEND", "local")
     monkeypatch.setattr(settings, "SUPABASE_JWT_SECRET", SECRET)
     monkeypatch.setattr(settings, "ADMIN_BOOTSTRAP_TOKEN", "b" * 40)
-    with engine.begin() as conn:
-        conn.execute(text("TRUNCATE auth.users CASCADE"))
-        conn.execute(text("UPDATE app_private.account_initialization SET initialized_at = NULL, initialized_by = NULL"))
+    # TRUNCATE auth.users CASCADE also empties policy tables that reference
+    # users; reuse the shared reset that restores them for later tests.
+    from test_accounts import reset_disposable_database
+    reset_disposable_database()
     client = TestClient(app)
     yield client, engine
     client.close()

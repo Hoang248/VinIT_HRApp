@@ -2,7 +2,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { localizeServerMessage } from '@/i18n/serverMessages';
-import type { CriterionInput, TemplateItemInput, ScorecardUpdateInput } from '@/types';
+import type { TemplateItemInput, ScorecardUpdateInput } from '@/types';
 
 // The browser always uses the same origin. Next.js proxies /v1 to the backend,
 // which also works when the UI is viewed through a remote preview host.
@@ -64,11 +64,19 @@ export const positionsApi = {
   },
   create: (data: any) => apiClient.post('/positions', data),
   getById: (id: string) => apiClient.get(`/positions/${id}`),
+  getWorkspace: (id: string) => apiClient.get(`/positions/${id}/workspace`),
   update: (id: string, data: any) => apiClient.patch(`/positions/${id}`, data),
   getStatusEvents: (id: string) => apiClient.get(`/positions/${id}/status-events`),
   getJdVersions: (id: string) => apiClient.get(`/positions/${id}/jd-versions`),
   getJdVersion: (id: string, jdVersionId: string) => apiClient.get(`/positions/${id}/jd-versions/${jdVersionId}`),
   createJdVersion: (id: string, data: { content_text: string; language_code: string; expected_jd_version_id: string }) => apiClient.post(`/positions/${id}/jd-versions`, data),
+};
+
+export const departmentsApi = {
+  list: (includeInactive = false) => apiClient.get('/departments', { params: { include_inactive: includeInactive } }),
+  create: (data: { name: string; code_format: string; is_active: boolean }) => apiClient.post('/departments', data),
+  update: (id: string, data: { name?: string; code_format?: string; is_active?: boolean }) => apiClient.patch(`/departments/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/departments/${id}`),
 };
 
 export const criteriaApi = {
@@ -77,21 +85,24 @@ export const criteriaApi = {
   getById: (id: string) => apiClient.get(`/criteria/${id}`),
   generateDraft: (positionId: string) =>
     apiClient.post(`/criteria/generate/${positionId}`),
-  approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
+  approve: (id: string, action: 'APPROVE' | 'DIRECT_APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
-  updateItem: (versionId: string, itemId: string, data: Partial<CriterionInput>) =>
-    apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
-  addItem: (versionId: string, data: CriterionInput) =>
+  createItem: (versionId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
     apiClient.post(`/criteria/${versionId}/items`, data),
+  updateItem: (versionId: string, itemId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>
+    apiClient.patch(`/criteria/${versionId}/items/${itemId}`, data),
   deleteItem: (versionId: string, itemId: string) =>
     apiClient.delete(`/criteria/${versionId}/items/${itemId}`),
-  createNewVersion: (versionId: string) =>
-    apiClient.post(`/criteria/${versionId}/new-version`),
+  updateItemWeights: (versionId: string, items: { criterion_id: string; weight_in_group: number }[]) =>
+    apiClient.patch(`/criteria/${versionId}/items/weights`, { items }),
   updateWeights: (versionId: string, mandatory: number, nice: number) =>
     apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/approved`),
+  // F1.02: copy an approved/rejected rubric into a new HR draft.
+  createNewVersion: (versionId: string) =>
+    apiClient.post(`/criteria/${versionId}/new-version`),
   // F2.01: apply a published rubric template as a criteria draft.
   getTemplateMatches: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/template-matches`),
@@ -171,6 +182,7 @@ export const applicationsApi = {
   getPrivateNotes: (id: string) => apiClient.get(`/applications/${id}/private-notes`),
   addPrivateNote: (id: string, content: string) => apiClient.post(`/applications/${id}/private-notes`, { content }),
   getStatusEvents: (id: string) => apiClient.get(`/applications/${id}/status-events`),
+  reprocess: (id: string) => apiClient.post(`/applications/${id}/reprocess`),
   updateStatus: (id: string, newStatus: string, reason?: string, note?: string) =>
     apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note }),
   getCvUrl: (id: string) => apiClient.get(`/applications/${id}/cv-download-url`),
@@ -212,6 +224,7 @@ export const shortlistApi = {
 
 export const dashboardApi = {
   getSummary: () => apiClient.get('/dashboard/summary'),
+  getWorkQueue: () => apiClient.get('/dashboard/work-queue'),
   getPosition: (id: string) => apiClient.get(`/dashboard/position/${id}`),
 };
 
@@ -222,7 +235,10 @@ export const adminApi = {
     apiClient.post('/admin/users', data),
   updateUser: (id: string, data: { display_name: string; account_status: string; roles: string[] }) =>
     apiClient.patch(`/admin/users/${id}`, data),
+  resetUserPassword: (id: string, new_password: string) =>
+    apiClient.post(`/admin/users/${id}/reset-password`, { new_password }),
   listAiConfigs: () => apiClient.get('/admin/ai/config'),
+  testAiConnection: (data: any) => apiClient.post('/admin/ai/test-connection', data),
   createAiConfig: (data: any) => apiClient.post('/admin/ai/config', data),
   enableAiConfig: (id: string) => apiClient.post(`/admin/ai/config/${id}/enable`),
   getActiveAiConfig: () => apiClient.get('/admin/ai/active-config'),

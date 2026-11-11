@@ -100,6 +100,10 @@ class CriterionResult(BaseSchema):
     confidence_band: Optional[str] = None
     reasoning: Optional[str] = None
     requires_verification: bool = False
+    decision_source: str | None = None
+    evidence_strength: float | None = None
+    evidence_chunk_id: str | None = None
+    rule_version: str | None = None
     verbatim_quote: Optional[str] = None
     page_number: Optional[int] = None
     evidence: List[EvidenceItem] = Field(default_factory=list)
@@ -116,6 +120,10 @@ class AssessmentRun(BaseSchema, TimestampMixin):
     evidence_coverage: Optional[float] = None
     confidence: Optional[float] = None
     summary: Optional[str] = None
+    assessment_fingerprint: str | None = None
+    matching_policy_version: str | None = None
+    prompt_version: str | None = None
+    provider_model_snapshot: dict | None = None
     criterion_results: List[CriterionResult] = Field(default_factory=list)
 
 
@@ -138,6 +146,23 @@ class ApplicationWithAssessment(Application):
     can_manage_hr_notes: bool = False
 
 
+class RankingCriterionResult(BaseSchema):
+    """Per-criterion summary shown next to a ranking row.
+
+    ``effective_weight`` is the criterion's share of the whole rubric in
+    percent (group total x weight inside the group), so HR can see why a
+    partial score only covers part of the rubric.
+    """
+
+    criterion_id: UUID
+    criterion_name: str
+    category: str
+    outcome: str
+    score: Optional[float] = None
+    effective_weight: Optional[float] = None
+    requires_verification: bool = False
+
+
 class RankingItem(BaseSchema):
     rank_number: Optional[int]
     application_id: UUID
@@ -145,5 +170,7 @@ class RankingItem(BaseSchema):
     matching_status: MatchingStatus
     matching_score: Optional[float]
     evidence_coverage: Optional[float]
+    ltr_score: Optional[float] = None
     needs_verification: bool
     has_mismatch: bool
+    criterion_results: List[RankingCriterionResult] = Field(default_factory=list)

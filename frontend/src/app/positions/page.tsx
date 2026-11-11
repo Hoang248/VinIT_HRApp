@@ -28,15 +28,22 @@ import {
   TextField,
   Autocomplete,
   Tooltip,
+  FormControl,
+  InputLabel,
   MenuItem,
+  Select,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { positionsApi, usersApi, dashboardApi, authApi, rubricApi } from '@/lib/api';
+import { positionsApi, usersApi, dashboardApi, authApi, departmentsApi, rubricApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import { JobFamily, Position, UserSummary } from '@/types';
+import { Department, JobFamily, Position, UserSummary } from '@/types';
+
+const renderDepartmentCode = (codeFormat: string, sequence: number) =>
+  codeFormat.replace(/\{SEQ(?::(0+))?\}/, (_match, zeros: string | undefined) =>
+    String(sequence).padStart((zeros || '').length || 1, '0'));
 
 export default function PositionsPage() {
   const { t } = useI18n();
@@ -44,6 +51,7 @@ export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | Position['status']>('ALL');
+  const [families, setFamilies] = useState<JobFamily[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -51,20 +59,24 @@ export default function PositionsPage() {
   const [canCreate, setCanCreate] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [formData, setFormData] = useState({
-    position_code: '',
+    department_id: '',
     title: '',
-    org_unit: '',
     jd_content: '',
     hiring_manager_user_id: '',
     job_family_id: '',
     level: '',
   });
-  const [families, setFamilies] = useState<JobFamily[]>([]);
   const [hmSearchQuery, setHmSearchQuery] = useState('');
   const [hmOptions, setHmOptions] = useState<UserSummary[]>([]);
   const [hmLoading, setHmLoading] = useState(false);
   const [hmSelectedName, setHmSelectedName] = useState('');
+  const selectedDepartment = departments.find((department) => department.department_id === formData.department_id);
+  const positionCodePreview = selectedDepartment
+    ? renderDepartmentCode(selectedDepartment.code_format, selectedDepartment.next_sequence)
+    : '';
 
   const loadPositions = useCallback(async () => {
     try {
@@ -90,11 +102,17 @@ export default function PositionsPage() {
   const handleCreatePosition = async () => {
     try {
       setCreateLoading(true); setCreateError(null);
-      const { job_family_id, level, ...rest } = formData;
-      const payload = { ...rest, ...(job_family_id ? { job_family_id } : {}), ...(level.trim() ? { level: level.trim() } : {}) };
+      const payload = {
+        department_id: formData.department_id,
+        title: formData.title,
+        jd_content: formData.jd_content,
+        hiring_manager_user_id: formData.hiring_manager_user_id,
+        ...(formData.job_family_id ? { job_family_id: formData.job_family_id } : {}),
+        ...(formData.level.trim() ? { level: formData.level.trim() } : {}),
+      };
       await positionsApi.create(payload);
       setCreateDialogOpen(false);
-      setFormData({ position_code: '', title: '', org_unit: '', jd_content: '', hiring_manager_user_id: '', job_family_id: '', level: '' });
+      setFormData({ department_id: '', title: '', jd_content: '', hiring_manager_user_id: '', job_family_id: '', level: '' });
       setHmSelectedName('');
       setHmSearchQuery('');
       setHmOptions([]);
@@ -106,27 +124,37 @@ export default function PositionsPage() {
     }
   };
 
-  // HM search
+  // Preload the department dropdown and the Hiring Manager list as soon as
+  // the create dialog opens, so both choices are visible without typing.
   useEffect(() => {
     if (!createDialogOpen) return;
-    const q = hmSearchQuery.trim();
-    if (q.length < 1) {
-      setHmOptions([]);
-      return;
-    }
+    let active = true;
+    setDepartmentsLoading(true);
     setHmLoading(true);
-    const t = setTimeout(async () => {
-      try {
-        const res = await usersApi.list({ search: q, role: 'HIRING_MANAGER' });
-        setHmOptions(res.data || []);
-      } catch {
+    Promise.allSettled([
+      departmentsApi.list(false),
+      usersApi.list({ role: 'HIRING_MANAGER' }),
+    ]).then(([departmentResult, hmResult]) => {
+      if (!active) return;
+      if (departmentResult.status === 'fulfilled') {
+        setDepartments(departmentResult.value.data || []);
+      } else {
+        setDepartments([]);
+        setCreateError(departmentResult.reason?.response?.data?.detail || t("Không thể tải danh sách phòng ban."));
+      }
+      if (hmResult.status === 'fulfilled') {
+        setHmOptions(hmResult.value.data || []);
+      } else {
         setHmOptions([]);
-      } finally {
+      }
+    }).finally(() => {
+      if (active) {
+        setDepartmentsLoading(false);
         setHmLoading(false);
       }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [hmSearchQuery, createDialogOpen]);
+    });
+    return () => { active = false; };
+  }, [createDialogOpen, t]);
 
   const getPositionStatusBadge = (status: string) => {
     switch (status) {
@@ -161,6 +189,7 @@ export default function PositionsPage() {
   const visiblePositions = positions.filter(p =>
     (statusFilter === 'ALL' || p.status === statusFilter) &&
     (!searchTerm || p.title.toLowerCase().includes(searchTerm) || p.position_code.toLowerCase().includes(searchTerm)));
+  const emptyMessage = positions.length === 0 ? t("Chưa có vị trí trong phạm vi của bạn") : t("Không có vị trí phù hợp với bộ lọc");
 
   if (loading) {
     return (
@@ -254,14 +283,14 @@ export default function PositionsPage() {
       {/* On small screens cards keep the actions and status visible without horizontal scrolling. */}
       <Box sx={{ display: { xs: 'grid', md: 'none' }, gap: 2 }}>
         {visiblePositions.length === 0 ? (
-          <Paper sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{t("Chưa có vị trí trong phạm vi của bạn")}</Paper>
+          <Paper sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{emptyMessage}</Paper>
         ) : visiblePositions.map(pos => (
           <Card key={pos.position_id} sx={{ border: '1px solid #E9EEF4' }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
                 <Box sx={{ minWidth: 0 }}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#0A2B57', overflowWrap: 'anywhere' }}>{pos.title}</Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{pos.position_code} · {pos.org_unit || t("Chưa có đơn vị")}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{pos.position_code} · {pos.department_name || pos.org_unit || t("Chưa có đơn vị")}</Typography>
                 </Box>
                 {getPositionStatusBadge(pos.status)}
               </Box>
@@ -290,7 +319,7 @@ export default function PositionsPage() {
           <TableBody>
             {visiblePositions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>{t("Chưa có vị trí nào được tạo")}</TableCell>
+                <TableCell colSpan={6} align="center" sx={{ py: 8, color: 'text.secondary' }}>{emptyMessage}</TableCell>
               </TableRow>
             ) : (
               visiblePositions.map((pos) => (
@@ -304,7 +333,7 @@ export default function PositionsPage() {
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>{pos.title}</Typography>
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2" color="text.secondary">{pos.org_unit || '-'}</Typography>
+                    <Typography variant="body2" color="text.secondary">{pos.department_name || pos.org_unit || '-'}</Typography>
                   </TableCell>
                   <TableCell>{getPositionStatusBadge(pos.status)}</TableCell>
                   <TableCell>
@@ -339,15 +368,38 @@ export default function PositionsPage() {
         <DialogContent dividers>
           {createError && <Alert severity="error" sx={{ mb: 2 }}>{t(createError)}</Alert>}
           <Grid container spacing={3} sx={{ pt: 1 }}>
+            <Grid item xs={12}>
+              <FormControl fullWidth required>
+                <InputLabel id="create-position-department-label">{t("Đơn vị / Phòng ban")}</InputLabel>
+                <Select
+                  labelId="create-position-department-label"
+                  label={t("Đơn vị / Phòng ban")}
+                  value={formData.department_id}
+                  onChange={(e) => setFormData({ ...formData, department_id: e.target.value })}
+                  disabled={departmentsLoading}
+                >
+                  {departments.map((department) => (
+                    <MenuItem key={department.department_id} value={department.department_id}>
+                      {department.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              {departmentsLoading && <Typography variant="caption" color="text.secondary">{t("Đang tải danh sách phòng ban...")}</Typography>}
+              {!departmentsLoading && departments.length === 0 && (
+                <Alert severity="warning" sx={{ mt: 1 }}>{t("Chưa có phòng ban đang hoạt động. Admin cần tạo phòng ban trước.")}</Alert>
+              )}
+            </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
-                label={t("Mã vị trí")}
+                label={t("Mã vị trí (tự sinh)")}
                 fullWidth
-                required
-                value={formData.position_code}
-                onChange={(e) => setFormData({ ...formData, position_code: e.target.value })}
-                placeholder="REQ-IT-001"
-                helperText={t("Mã định danh duy nhất cho vị trí")}
+                value={positionCodePreview}
+                placeholder={t("Chọn phòng ban để sinh mã")}
+                helperText={selectedDepartment
+                  ? t("Sinh theo mã định dạng {0}", selectedDepartment.code_format)
+                  : t("Mã được sinh theo mã định dạng của phòng ban, ví dụ REQ-IT-001")}
+                InputProps={{ readOnly: true }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -358,15 +410,6 @@ export default function PositionsPage() {
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="Senior Software Engineer"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                label={t("Đơn vị / Phòng ban")}
-                fullWidth
-                value={formData.org_unit}
-                onChange={(e) => setFormData({ ...formData, org_unit: e.target.value })}
-                placeholder={t("Phòng Công nghệ thông tin")}
               />
             </Grid>
             <Grid item xs={12} sm={7}>
@@ -389,7 +432,9 @@ export default function PositionsPage() {
                 isOptionEqualToValue={(opt: any, val: any) => opt.user_id === val?.user_id}
                 inputValue={hmSearchQuery}
                 onInputChange={(_, val) => setHmSearchQuery(val)}
-                value={formData.hiring_manager_user_id ? { user_id: formData.hiring_manager_user_id, display_name: hmSelectedName } : null}
+                noOptionsText={t("Không tìm thấy Hiring Manager đang hoạt động")}
+                value={hmOptions.find((option) => option.user_id === formData.hiring_manager_user_id)
+                  || (formData.hiring_manager_user_id ? { user_id: formData.hiring_manager_user_id, display_name: hmSelectedName } as UserSummary : null)}
                 onChange={(_, val: any) => {
                   if (val && typeof val === 'object') {
                     setFormData({ ...formData, hiring_manager_user_id: val.user_id });
@@ -403,8 +448,8 @@ export default function PositionsPage() {
                   <TextField
                     {...params}
                     label="Hiring Manager" required
-                    placeholder={t("Tìm theo tên người dùng...")}
-                    helperText={t("Chỉ chọn HM đang hoạt động và khác tài khoản HR; người này sẽ duyệt chuyên môn.")}
+                    placeholder={t("Chọn Hiring Manager")}
+                    helperText={t("Danh sách Hiring Manager đang hoạt động đã tải sẵn; nhập tên để lọc nhanh. Chỉ chọn HM khác tài khoản HR; người này sẽ duyệt chuyên môn.")}
                     InputProps={{
                       ...params.InputProps,
                       endAdornment: (
@@ -439,7 +484,7 @@ export default function PositionsPage() {
             onClick={handleCreatePosition}
             variant="contained"
             color="secondary"
-            disabled={createLoading || !formData.position_code.trim() || !formData.title.trim() || !formData.jd_content.trim() || !formData.hiring_manager_user_id}
+            disabled={createLoading || !formData.department_id || !formData.title.trim() || !formData.jd_content.trim() || !formData.hiring_manager_user_id}
           >
             {createLoading ? <CircularProgress size={20} color="inherit" /> : t("Tạo vị trí")}
           </Button>

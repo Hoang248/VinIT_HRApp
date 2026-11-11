@@ -183,14 +183,20 @@ def get_current_user_info(current_user: dict = Depends(get_active_user)):
 
 
 @router.post("/change-password")
-def change_temporary_password(request: PasswordChange, current_user: dict = Depends(get_active_user)):
-    """Reauthenticate the owner before exchanging a temporary password."""
+def change_own_password(request: PasswordChange, current_user: dict = Depends(get_active_user)):
+    """Reauthenticate the owner before changing their own password.
+
+    This serves both the forced temporary-password flow and voluntary
+    password changes from the account menu. The current password is always
+    verified (Supabase Auth, or the local scrypt hash with AUTH_BACKEND=local);
+    a bearer token alone is not enough.
+    """
     if settings.AUTH_BACKEND != "local" and (not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY):
         raise HTTPException(status_code=503, detail="Authentication service is not configured")
     old_password = request.current_password.get_secret_value()
     new_password = request.new_password.get_secret_value()
     if hmac.compare_digest(old_password.encode("utf-8"), new_password.encode("utf-8")):
-        raise HTTPException(status_code=400, detail="Mật khẩu mới phải khác mật khẩu tạm thời.")
+        raise HTTPException(status_code=400, detail="Mật khẩu mới phải khác mật khẩu hiện tại.")
     if not current_user.get("email"):
         raise HTTPException(status_code=403, detail="Không thể xác minh email của tài khoản.")
     db = SessionLocal()
@@ -202,8 +208,7 @@ def change_temporary_password(request: PasswordChange, current_user: dict = Depe
         if not profile or profile["account_status"] != "ACTIVE":
             raise HTTPException(status_code=403, detail="Tài khoản chưa được kích hoạt hoặc đã bị khóa")
         ensure_token_is_current(current_user["token_payload"], profile["tokens_valid_after"])
-        if not profile["must_change_password"]:
-            raise HTTPException(status_code=409, detail="Tài khoản không cần đổi mật khẩu tạm thời.")
+        was_forced_change = bool(profile["must_change_password"])
         if settings.AUTH_BACKEND == "local":
             if not local_auth.verify_user_password(db, current_user["user_id"], old_password):
                 raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.")
@@ -216,8 +221,9 @@ def change_temporary_password(request: PasswordChange, current_user: dict = Depe
         """), {"id": current_user["user_id"]})
         db.execute(text("""
             INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, outcome)
-            VALUES (:id, 'CHANGE_TEMPORARY_PASSWORD', 'USER', :id, 'SUCCESS')
-        """), {"id": current_user["user_id"]})
+            VALUES (:id, :action, 'USER', :id, 'SUCCESS')
+        """), {"id": current_user["user_id"],
+              "action": "CHANGE_TEMPORARY_PASSWORD" if was_forced_change else "CHANGE_OWN_PASSWORD"})
         db.commit()
         return {"changed": True}
     except HTTPException:
@@ -225,7 +231,7 @@ def change_temporary_password(request: PasswordChange, current_user: dict = Depe
         raise
     except Exception as exc:
         db.rollback()
-        logger.error("Unable to finalize temporary password change", error_type=type(exc).__name__, user_id=current_user["user_id"])
+        logger.error("Unable to finalize password change", error_type=type(exc).__name__, user_id=current_user["user_id"])
         raise HTTPException(status_code=503, detail="Không xác nhận được việc đổi mật khẩu. Hãy kiểm tra mật khẩu mới trước khi thử lại.") from None
     finally:
         db.close()

@@ -101,29 +101,42 @@ def _profile_from_cv(payload: dict) -> dict:
     }
 
 
+def _candidate_passages(payload: dict, criterion_id: str) -> list[dict]:
+    """Either the whole redacted CV or, when the backend pre-selected them, the
+    CV chunks retrieved for this criterion (with chunk_id/page_number)."""
+    chunk_map = payload.get("untrusted_candidate_chunks_by_criterion")
+    if isinstance(chunk_map, dict):
+        return [{"text": c.get("text") or "", "chunk_id": c.get("chunk_id"), "page_number": c.get("page_number")}
+                for c in chunk_map.get(criterion_id, []) if isinstance(c, dict)]
+    return [{"text": payload.get("untrusted_redacted_cv", ""), "chunk_id": None, "page_number": None}]
+
+
 def _match_criteria(payload: dict) -> dict:
-    cv = payload.get("untrusted_redacted_cv", "")
-    sentences = _sentences(cv)
-    flat_cv = re.sub(r"\s+", " ", cv)  # quote verification also normalises whitespace
     findings = []
     for criterion in payload.get("untrusted_rubric", []):
+        criterion_id = str(criterion.get("criterion_id") or "")
         keywords = [k for k in (criterion.get("expected_evidence_keywords") or []) if isinstance(k, str) and k.strip()]
         if not keywords:
             keywords = _keywords(f"{criterion.get('name', '')} {criterion.get('description', '')}")
-        best, hits = None, 0
-        for sentence in sentences:
-            count = sum(1 for k in keywords if k.lower() in sentence.lower())
-            if count > hits and sentence in flat_cv:  # the quote must be verbatim CV text
-                best, hits = sentence, count
+        best, hits, source = None, 0, None
+        for passage in _candidate_passages(payload, criterion_id):
+            flat = re.sub(r"\s+", " ", passage["text"])  # quote verification also normalises whitespace
+            for sentence in _sentences(passage["text"]):
+                count = sum(1 for k in keywords if k.lower() in sentence.lower())
+                if count > hits and sentence in flat:  # the quote must be verbatim CV text
+                    best, hits, source = sentence, count, passage
         if best:
             strong = hits >= 2
+            evidence = {"verbatim_quote": best, "page_number": source["page_number"]}
+            if source["chunk_id"] is not None:
+                evidence["chunk_id"] = source["chunk_id"]
             findings.append({
                 "criterion_id": criterion.get("criterion_id"),
                 "outcome": "STRONG_MATCH" if strong else "MATCH",
                 "confidence": 0.8 if strong else 0.65,
                 "confidence_band": "HIGH" if strong else "MEDIUM",
                 "reasoning": f"{MOCK_MARK} CV nhắc tới {hits} từ khóa của tiêu chí.",
-                "evidence": {"verbatim_quote": best, "page_number": None},
+                "evidence": evidence,
             })
         else:
             findings.append({

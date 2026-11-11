@@ -7,6 +7,8 @@ from app.core.permissions import check_position_access, can_update_application_s
 from app.schemas.positions import (Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus,
                                    PositionStatusEvent, JDVersionCreate)
 from app.db.database import SessionLocal
+from app.services.departments import DepartmentError, next_position_code
+from app.services.workspace import build_workflow
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import json
@@ -25,7 +27,7 @@ _POSITION_WITH_STATS = """
               AND role_code IN ('ADMIN', 'HR_LEAD')
         ) AS global_access
     )
-    SELECT p.*, latest.status AS criteria_status,
+    SELECT p.*, d.name AS department_name, d.code_format AS department_code_format, latest.status AS criteria_status,
         EXISTS (SELECT 1 FROM app_private.criteria_versions approved
                 WHERE approved.position_id = p.position_id AND approved.status = 'APPROVED'
                   AND approved.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
@@ -33,6 +35,7 @@ _POSITION_WITH_STATS = """
         stats.total_applications, stats.new_applications, stats.in_review, stats.shortlisted
     FROM app_private.positions p
     CROSS JOIN privileges priv
+    LEFT JOIN app_private.departments d ON d.department_id = p.department_id
     LEFT JOIN LATERAL (
         SELECT status FROM app_private.criteria_versions
         WHERE position_id = p.position_id ORDER BY version_number DESC LIMIT 1
@@ -109,10 +112,10 @@ async def create_position(
 ):
     """Create the position, JD and assignments atomically."""
     user_id = current_user["user_id"]
-    for field in ("position_code", "title", "jd_content"):
+    for field in ("title", "jd_content"):
         value = getattr(position_data, field).strip()
         if not value or (field != "jd_content" and len(value) > 200):
-            raise HTTPException(status_code=400, detail="Mã vị trí, tên vị trí và nội dung JD không được để trống")
+            raise HTTPException(status_code=400, detail="Tên vị trí và nội dung JD không được để trống")
         setattr(position_data, field, value)
     if not position_data.hiring_manager_user_id:
         raise HTTPException(status_code=400, detail="Vui lòng chọn Hiring Manager phụ trách vị trí")
@@ -143,18 +146,42 @@ async def create_position(
         """), {"user_id": hm_id}).scalars().all()
         if hm_status != 'ACTIVE' or not hm_roles:
             raise HTTPException(status_code=400, detail="Hiring Manager phải có tài khoản hoạt động và vai trò HM.")
+        department = db.execute(text("""
+            SELECT * FROM app_private.departments
+            WHERE department_id = :department_id FOR UPDATE
+        """), {"department_id": str(position_data.department_id)}).mappings().first()
+        if not department:
+            raise HTTPException(status_code=400, detail="Không tìm thấy đơn vị/phòng ban")
+        if not department["is_active"]:
+            raise HTTPException(status_code=400, detail="Đơn vị/phòng ban đã ngừng hoạt động")
+        position_code, department_sequence = next_position_code(db, dict(department))
         params = position_data.model_dump(exclude={"jd_content", "hiring_manager_user_id"})
-        params["created_by"] = user_id
+        params.update({
+            "position_code": position_code,
+            "org_unit": department["name"],
+            "department_id": str(position_data.department_id),
+            "department_sequence": department_sequence,
+            "created_by": user_id,
+        })
+        # F2.01: an ACTIVE job family drives rubric template suggestions; its
+        # name is mirrored into the legacy job_family text column.
         if params.get("job_family_id"):
             params["job_family"] = _active_family_name(db, params["job_family_id"])
             params["job_family_id"] = str(params["job_family_id"])
+        else:
+            params["job_family_id"] = None
         new_position = db.execute(text("""
             INSERT INTO app_private.positions (position_code, title, job_family, job_family_id, org_unit, level, work_location,
-                work_mode, employment_type, headcount, created_by)
+                work_mode, employment_type, headcount, created_by, department_id, department_sequence)
             VALUES (:position_code, :title, :job_family, :job_family_id, :org_unit, :level, :work_location,
-                :work_mode, :employment_type, :headcount, :created_by) RETURNING *
+                :work_mode, :employment_type, :headcount, :created_by, :department_id, :department_sequence) RETURNING *
         """), params).mappings().one()
         position_id = new_position["position_id"]
+        db.execute(text("""
+            UPDATE app_private.departments
+            SET next_sequence = :next_sequence, updated_at = NOW()
+            WHERE department_id = :department_id
+        """), {"next_sequence": department_sequence + 1, "department_id": str(position_data.department_id)})
         db.execute(text("""
             INSERT INTO app_private.jd_versions (position_id, version_number, content_text, language_code, created_by)
             VALUES (:position_id, 1, :content, 'en', :user_id)
@@ -165,10 +192,16 @@ async def create_position(
                 VALUES (:position_id, :assigned_user, :role, :user_id)
             """), {"position_id": position_id, "assigned_user": assigned_user, "role": role, "user_id": user_id})
         db.commit()
-        return dict(new_position)
+        created = dict(new_position)
+        created["department_name"] = department["name"]
+        created["department_code_format"] = department["code_format"]
+        return created
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mã vị trí đã tồn tại hoặc dữ liệu vị trí không hợp lệ")
+    except DepartmentError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     except Exception:
         db.rollback()
         raise
@@ -192,6 +225,128 @@ async def get_position(
         return dict(result)
     finally:
         db.close()
+
+
+@router.get("/{position_id}/workspace")
+async def get_position_workspace(
+    position_id: UUID,
+    current_user: dict = Depends(get_current_user)
+):
+    """Workspace summary, workflow stepper and next action for one position."""
+    await check_position_access(position_id, current_user)
+    from app.api.dashboard import load_position_application_counts
+
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT p.position_id, p.position_code, p.title, p.status, d.name AS department_name,
+                jd.jd_version_id AS latest_jd_version_id, jd.version_number AS latest_jd_version,
+                crit.criteria_version_id AS current_criteria_version_id,
+                crit.status AS current_criteria_status, crit.version_number AS current_criteria_version,
+                crit.jd_version_id AS current_criteria_jd_version_id,
+                EXISTS (SELECT 1 FROM app_private.criteria_versions approved
+                        WHERE approved.position_id = p.position_id AND approved.status = 'APPROVED'
+                          AND approved.jd_version_id = jd.jd_version_id) AS criteria_approved,
+                COALESCE((SELECT array_remove(array_agg(pa.position_role), NULL)
+                          FROM app_private.position_assignments pa
+                          WHERE pa.position_id = p.position_id AND pa.user_id = :user_id
+                            AND pa.revoked_at IS NULL), ARRAY[]::text[]) AS position_roles,
+                COALESCE((SELECT array_remove(array_agg(ur.role_code), NULL)
+                          FROM app_private.user_role_assignments ur
+                          WHERE ur.user_id = :user_id AND ur.revoked_at IS NULL), ARRAY[]::text[]) AS system_roles,
+                op.operation_id AS active_operation_id, op.status AS active_operation_status,
+                op.capability AS active_operation_stage,
+                (SELECT COUNT(DISTINCT si.application_id) FROM app_private.shortlist_shares s
+                 JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
+                 WHERE s.position_id = p.position_id AND s.status = 'ACTIVE') AS shared_shortlisted_any,
+                (SELECT COUNT(DISTINCT si.application_id) FROM app_private.shortlist_shares s
+                 JOIN app_private.shortlist_share_items si ON si.share_id = s.share_id
+                 WHERE s.position_id = p.position_id AND s.status = 'ACTIVE'
+                   AND (s.created_by = :user_id OR s.shared_with = :user_id)) AS shared_shortlisted_own
+            FROM app_private.positions p
+            LEFT JOIN app_private.departments d ON d.department_id = p.department_id
+            LEFT JOIN LATERAL (
+                SELECT jd_version_id, version_number FROM app_private.jd_versions
+                WHERE position_id = p.position_id ORDER BY version_number DESC LIMIT 1
+            ) jd ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT criteria_version_id, status, version_number, jd_version_id FROM app_private.criteria_versions
+                WHERE position_id = p.position_id ORDER BY version_number DESC LIMIT 1
+            ) crit ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT operation_id, status, capability FROM app_private.operations
+                WHERE position_id = p.position_id AND capability IN ('CV_PROCESSING', 'ASSESSMENT', 'RANKING')
+                  AND status IN ('PENDING', 'PROCESSING')
+                ORDER BY created_at ASC LIMIT 1
+            ) op ON TRUE
+            WHERE p.position_id = :id
+        """), {"id": str(position_id), "user_id": current_user["user_id"]}).mappings().first()
+        if not row:
+            raise NotFoundError("Position")
+        row = dict(row)
+    finally:
+        db.close()
+
+    counts = load_position_application_counts(current_user["user_id"], position_id)
+    position_roles = {str(role) for role in (row.get("position_roles") or []) if role}
+    system_roles = {str(role) for role in (row.get("system_roles") or []) if role}
+    is_hr = bool(position_roles & {"HR_RECRUITER", "HR_LEAD"} or system_roles & {"ADMIN", "HR_LEAD"})
+    is_hm = "HIRING_MANAGER" in position_roles
+    criteria_stale = bool(
+        row.get("current_criteria_jd_version_id")
+        and row.get("latest_jd_version_id")
+        and str(row["current_criteria_jd_version_id"]) != str(row["latest_jd_version_id"])
+    )
+    active_operation = None
+    if row.get("active_operation_id"):
+        active_operation = {
+            "operation_id": str(row["active_operation_id"]),
+            "status": row.get("active_operation_status"),
+            "stage": row.get("active_operation_stage"),
+        }
+    shared_shortlisted = int(row.get("shared_shortlisted_any") or 0) if is_hr else int(row.get("shared_shortlisted_own") or 0)
+    workflow = build_workflow(
+        position_id=str(position_id),
+        position_status=row.get("status"),
+        jd_exists=bool(row.get("latest_jd_version_id")),
+        criteria_status=row.get("current_criteria_status"),
+        criteria_stale=criteria_stale,
+        criteria_approved=bool(row.get("criteria_approved")),
+        counts=counts,
+        active_operation=active_operation,
+        is_hr=is_hr,
+        is_hm=is_hm,
+        shared_shortlisted=shared_shortlisted,
+    )
+    return {
+        "position": {
+            "position_id": str(row["position_id"]),
+            "position_code": row.get("position_code"),
+            "title": row.get("title"),
+            "status": row.get("status"),
+            "department_name": row.get("department_name"),
+        },
+        "jd": {
+            "latest_version_id": str(row["latest_jd_version_id"]) if row.get("latest_jd_version_id") else None,
+            "version_number": row.get("latest_jd_version"),
+        },
+        "criteria": {
+            "current_version_id": str(row["current_criteria_version_id"]) if row.get("current_criteria_version_id") else None,
+            "current_status": row.get("current_criteria_status"),
+            "version_number": row.get("current_criteria_version"),
+            "approved_for_latest_jd": bool(row.get("criteria_approved")),
+            "is_stale_for_latest_jd": criteria_stale,
+        },
+        "counts": counts,
+        "active_operation": active_operation,
+        "workflow": workflow,
+        "viewer": {
+            "is_hr": is_hr,
+            "is_hm": is_hm,
+            "position_roles": sorted(position_roles),
+            "system_roles": sorted(system_roles),
+        },
+    }
 
 
 @router.patch("/{position_id}", response_model=Position)
