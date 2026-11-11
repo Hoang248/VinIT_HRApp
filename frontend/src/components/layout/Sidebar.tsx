@@ -11,6 +11,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import HistoryIcon from '@mui/icons-material/History';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
@@ -23,6 +25,7 @@ const menuGroups = [
       { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
       { text: 'Shortlist & phản hồi', icon: <PeopleIcon />, href: '/shortlist' },
       { text: 'Thư viện rubric', icon: <LibraryBooksIcon />, href: '/rubric-library', hrOnly: true },
+      { text: 'Lưu trữ & xóa dữ liệu', icon: <DeleteSweepIcon />, href: '/retention', hrOnly: true },
     ],
   },
   {
@@ -32,6 +35,7 @@ const menuGroups = [
       { text: 'Quản trị AI', icon: <SettingsIcon />, href: '/admin' },
       { text: 'Quản lý tài khoản', icon: <ManageAccountsIcon />, href: '/admin/users' },
       { text: 'Quản lý phòng ban', icon: <ApartmentIcon />, href: '/admin/departments' },
+      { text: 'Nhật ký audit', icon: <HistoryIcon />, href: '/admin/audit' },
     ],
   },
 ];

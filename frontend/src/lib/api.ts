@@ -245,3 +245,20 @@ export const adminApi = {
   getWorkerHealth: () => apiClient.get('/admin/worker/health'),
   getAiOptions: () => apiClient.get('/admin/ai/options'),
 };
+
+// F1.10 / S-19 — retention queue and explicit, audited deletion.
+export const retentionApi = {
+  queue: (status?: 'PENDING' | 'SCHEDULED_FOR_DELETION' | 'DELETED' | 'CANCELLED') =>
+    apiClient.get('/retention/queue', { params: { status } }),
+  generate: (positionId: string) => apiClient.post(`/retention/positions/${positionId}/cases/generate`),
+  confirm: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/confirm`, {}),
+  cancel: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/cancel`, {}),
+  execute: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/execute`),
+};
+
+// F1.10 / S-20 — audit trail (Admin only; metadata is never returned).
+export const auditApi = {
+  list: (params: { action_type?: string; actor_user_id?: string; position_id?: string; date_from?: string; date_to?: string; page?: number; page_size?: number }) =>
+    apiClient.get('/admin/audit/events', { params }),
+  verify: () => apiClient.get('/admin/audit/verify'),
+};

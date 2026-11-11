@@ -64,6 +64,55 @@ def _require_confirm(db, current_user: dict, position_id: str | None) -> None:
         raise HTTPException(status_code=403, detail="Bạn không có quyền xác nhận xóa dữ liệu của vị trí này")
 
 
+@router.get("/queue")
+async def retention_queue(status: str | None = None, current_user: dict = Depends(get_current_user)):
+    """S-19: retention cases across every position the caller may view.
+
+    Global ADMIN/HR_LEAD see all positions; HR assigned to a position sees
+    that position. Each row says whether the caller may confirm/execute it.
+    Closed positions are listed so HR can scan them for newly due cases.
+    """
+    if status is not None and status not in ("PENDING", "SCHEDULED_FOR_DELETION", "DELETED", "CANCELLED"):
+        raise HTTPException(status_code=400, detail="Trạng thái retention không hợp lệ")
+    user_id = current_user["user_id"]
+    db = SessionLocal()
+    try:
+        visible = """
+            (EXISTS (SELECT 1 FROM app_private.user_role_assignments ur WHERE ur.user_id = :user_id
+                     AND ur.revoked_at IS NULL AND ur.role_code IN ('ADMIN', 'HR_LEAD'))
+             OR EXISTS (SELECT 1 FROM app_private.position_assignments pa WHERE pa.position_id = p.position_id
+                        AND pa.user_id = :user_id AND pa.revoked_at IS NULL AND pa.position_role IN ('HR_RECRUITER', 'HR_LEAD')))
+        """
+        rows = db.execute(text(f"""
+            SELECT c.retention_case_id, c.application_id, c.position_id, c.application_opaque_id,
+                   c.policy_version, c.position_closed_at, c.due_date, c.status,
+                   c.confirmed_by, c.confirmed_at, c.created_at,
+                   p.title AS position_title, p.position_code
+            FROM app_private.application_retention_cases c
+            JOIN app_private.positions p ON p.position_id = c.position_id
+            WHERE {visible} AND (CAST(:status AS text) IS NULL OR c.status = :status)
+            ORDER BY c.due_date, c.created_at, c.retention_case_id
+            LIMIT 500
+        """), {"user_id": user_id, "status": status}).mappings().all()
+        confirm_cache: dict[str, bool] = {}
+        cases = []
+        for row in rows:
+            position_id = str(row["position_id"])
+            if position_id not in confirm_cache:
+                confirm_cache[position_id] = can_confirm_retention(db, user_id, position_id)
+            cases.append({**public_case(dict(row)), "position_title": row["position_title"],
+                          "position_code": row["position_code"], "can_confirm": confirm_cache[position_id]})
+        positions = db.execute(text(f"""
+            SELECT p.position_id, p.title, p.position_code, p.closed_at
+            FROM app_private.positions p
+            WHERE p.status = 'CLOSED' AND {visible}
+            ORDER BY p.closed_at NULLS LAST, p.title
+        """), {"user_id": user_id}).mappings().all()
+        return {"cases": cases, "closed_positions": [dict(row) for row in positions]}
+    finally:
+        db.close()
+
+
 @router.get("/positions/{position_id}/cases")
 async def list_retention_cases(position_id: UUID, current_user: dict = Depends(get_current_user)):
     db = SessionLocal()

@@ -490,3 +490,64 @@ async def get_worker_health(current_user: dict = Depends(require_admin_role)):
         return {**dict(row), "stale_after_seconds": 120, "long_running_after_seconds": 1800}
     finally:
         db.close()
+
+
+@router.get("/audit/events")
+async def list_audit_events(
+    action_type: str | None = None,
+    actor_user_id: UUID | None = None,
+    position_id: UUID | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    current_user: dict = Depends(require_admin_role),
+):
+    """S-20: browse the audit trail (Admin only, like /audit/verify).
+
+    Returns who did what to which object and the outcome. The free-form
+    metadata column is deliberately NOT returned: it can hold role lists or
+    other context that the audit viewer does not need, and must never be a
+    side channel for CV content or PII.
+    """
+    if page < 1 or not 1 <= page_size <= 200:
+        raise HTTPException(status_code=400, detail="Tham số phân trang không hợp lệ")
+    if action_type is not None and (len(action_type) > 100 or not action_type.replace("_", "").isalnum()):
+        raise HTTPException(status_code=400, detail="Loại thao tác không hợp lệ")
+    from datetime import date as _date
+    bounds = {}
+    for key, value in (("date_from", date_from), ("date_to", date_to)):
+        if value:
+            try:
+                bounds[key] = _date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Ngày phải theo định dạng YYYY-MM-DD") from None
+        else:
+            bounds[key] = None
+    params = {"action": action_type, "actor": str(actor_user_id) if actor_user_id else None,
+              "position": str(position_id) if position_id else None,
+              "from": bounds["date_from"], "to": bounds["date_to"],
+              "limit": page_size, "offset": (page - 1) * page_size}
+    where = """
+        WHERE (CAST(:action AS text) IS NULL OR e.action_type = :action)
+          AND (CAST(:actor AS uuid) IS NULL OR e.actor_user_id = CAST(:actor AS uuid))
+          AND (CAST(:position AS uuid) IS NULL OR e.position_id = CAST(:position AS uuid))
+          AND (CAST(:from AS date) IS NULL OR e.created_at >= CAST(:from AS date))
+          AND (CAST(:to AS date) IS NULL OR e.created_at < CAST(:to AS date) + INTERVAL '1 day')
+    """
+    db = SessionLocal()
+    try:
+        total = db.execute(text("SELECT COUNT(*) FROM app_private.audit_events e" + where), params).scalar_one()
+        rows = db.execute(text("""
+            SELECT e.event_id, e.created_at, e.action_type, e.object_type, e.object_id, e.outcome,
+                   e.actor_user_id, actor.display_name AS actor_name,
+                   e.position_id, p.title AS position_title, p.position_code
+            FROM app_private.audit_events e
+            LEFT JOIN app_private.user_profiles actor ON actor.user_id = e.actor_user_id
+            LEFT JOIN app_private.positions p ON p.position_id = e.position_id
+        """ + where + " ORDER BY e.created_at DESC, e.event_id DESC LIMIT :limit OFFSET :offset"), params).mappings().all()
+        action_types = db.execute(text("SELECT DISTINCT action_type FROM app_private.audit_events ORDER BY action_type")).scalars().all()
+        return {"total": total, "page": page, "page_size": page_size,
+                "items": [dict(row) for row in rows], "action_types": list(action_types)}
+    finally:
+        db.close()
