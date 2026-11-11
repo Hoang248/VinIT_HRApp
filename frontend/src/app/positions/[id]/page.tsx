@@ -44,9 +44,10 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { positionsApi, criteriaApi, applicationsApi, operationsApi, authApi, dashboardApi } from '@/lib/api';
+import { positionsApi, criteriaApi, applicationsApi, operationsApi, authApi, dashboardApi, rubricApi } from '@/lib/api';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import StatusBadge from '@/components/common/StatusBadge';
-import type { Position, CriteriaVersion, Criterion, CriterionInput, JDVersion, PositionStatusEvent } from '@/types';
+import type { Position, CriteriaVersion, Criterion, CriterionInput, JDVersion, PositionStatusEvent, TemplateMatch, JobFamily } from '@/types';
 
 // Draft criterion in the add/edit dialog; keywords are edited as one comma-separated field.
 type CriterionForm = CriterionInput & { criterion_id?: string; keywordsText: string };
@@ -119,6 +120,16 @@ export default function PositionDetailPage() {
   const [creatingVersion, setCreatingVersion] = useState(false);
   const [positionStatusReason, setPositionStatusReason] = useState('');
   const [statusEvents, setStatusEvents] = useState<PositionStatusEvent[]>([]);
+  // F2.01: apply a published rubric template.
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [templateMatches, setTemplateMatches] = useState<TemplateMatch[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [families, setFamilies] = useState<JobFamily[]>([]);
+  const [positionFamilyId, setPositionFamilyId] = useState('');
+  const [positionLevel, setPositionLevel] = useState('');
   const [weightDialogOpen, setWeightDialogOpen] = useState(false);
   const [mandatoryWeight, setMandatoryWeight] = useState('70');
   const [savingWeights, setSavingWeights] = useState(false);
@@ -341,6 +352,8 @@ export default function PositionDetailPage() {
       const statusChanged = position?.status !== positionStatus;
       await positionsApi.update(positionId, {
         title: positionTitle.trim(), status: positionStatus,
+        ...(positionFamilyId && positionFamilyId !== position?.job_family_id ? { job_family_id: positionFamilyId } : {}),
+        ...(positionLevel.trim() !== (position?.level || '') ? { level: positionLevel.trim() } : {}),
         ...(statusChanged && positionStatusReason.trim() ? { status_reason: positionStatusReason.trim() } : {}),
       });
       setPositionDialogOpen(false);
@@ -361,6 +374,43 @@ export default function PositionDetailPage() {
   const fairnessIssues = currentCriteria?.fairness_warnings || [];
   const flaggedIds = new Set(fairnessIssues.map(w => w.criterion_id).filter(Boolean));
   const hasOpenCriteria = criteriaVersions.some(c => ['DRAFT', 'PENDING_HR_REVIEW', 'PENDING_HM_APPROVAL'].includes(c.status));
+
+  const openTemplateDialog = async () => {
+    setTemplateDialogOpen(true); setTemplateError(null); setSelectedTemplateId('');
+    try {
+      setTemplatesLoading(true);
+      const res = await criteriaApi.getTemplateMatches(positionId);
+      setTemplateMatches(res.data || []);
+      if (res.data?.length) setSelectedTemplateId(res.data[0].template_version_id);
+    } catch (err: any) {
+      setTemplateError(err.response?.data?.detail || t("Không thể tải template phù hợp"));
+    } finally { setTemplatesLoading(false); }
+  };
+
+  const applyTemplate = async () => {
+    if (!selectedTemplateId || applyingTemplate) return;
+    try {
+      setApplyingTemplate(true); setTemplateError(null);
+      await criteriaApi.applyTemplate(positionId, selectedTemplateId);
+      setTemplateDialogOpen(false); setActiveTab(0);
+      await loadData();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      setTemplateError(typeof detail === 'string' ? detail : t("Không thể áp dụng template"));
+    } finally { setApplyingTemplate(false); }
+  };
+
+  const openPositionDialog = async () => {
+    if (!position) return;
+    setPositionTitle(position.title); setPositionStatus(position.status); setPositionStatusReason('');
+    setPositionFamilyId(position.job_family_id || ''); setPositionLevel(position.level || '');
+    setPositionEditError(null); setPositionDialogOpen(true);
+    if (!families.length) {
+      try { setFamilies((await rubricApi.listFamilies()).data || []); } catch { setFamilies([]); }
+    }
+  };
+
+  const selectedTemplate = templateMatches.find(m => m.template_version_id === selectedTemplateId);
   const canCreateNewVersion = isHR && !!currentCriteria && ['APPROVED', 'REJECTED'].includes(currentCriteria.status) && !hasOpenCriteria;
 
   const renderCriterion = (crit: Criterion, idx: number) => (
@@ -468,9 +518,11 @@ export default function PositionDetailPage() {
           </Box>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          {isHR && <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={() => {
-            setPositionTitle(position.title); setPositionStatus(position.status); setPositionStatusReason(''); setPositionEditError(null); setPositionDialogOpen(true);
-          }}>{t("Chỉnh sửa vị trí")}</Button>}
+          {isHR && <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={openPositionDialog}>{t("Chỉnh sửa vị trí")}</Button>}
+          {isHR && (
+            <Button variant="outlined" startIcon={<LibraryBooksIcon />} onClick={openTemplateDialog} disabled={hasOpenCriteria}
+              sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}>{t("Áp dụng từ thư viện")}</Button>
+          )}
           {canCreateNewVersion && (
             <Button variant="outlined" startIcon={creatingVersion ? <CircularProgress size={16} /> : <ContentCopyIcon />}
               onClick={handleCreateNewVersion} disabled={creatingVersion} sx={{ borderColor: '#0A2B57', color: '#0A2B57' }}>
@@ -576,7 +628,9 @@ export default function PositionDetailPage() {
         {isHM && isSameApprover && currentCriteria?.status === 'PENDING_HM_APPROVAL' && <Alert severity="warning" sx={{ mb: 2 }}>{t("Hai bước duyệt phải do hai tài khoản khác nhau thực hiện. Vui lòng nhờ Hiring Manager khác được phân công duyệt.")}</Alert>}
         {currentCriteria && currentCriteria.status !== 'APPROVED' && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            {currentCriteria.origin === 'AI_DRAFT' ? t("AI đề xuất — chưa được phê duyệt.") : t("HR tạo — chưa được phê duyệt.")}{' '}
+            {currentCriteria.origin === 'AI_DRAFT' ? t("AI đề xuất — chưa được phê duyệt.")
+              : currentCriteria.origin === 'TEMPLATE_CLONE' ? t("Áp dụng từ thư viện rubric — chưa được phê duyệt.")
+              : t("HR tạo — chưa được phê duyệt.")}{' '}
             {t("Phiên bản")} {currentCriteria.version_number}. {t("Chỉ dùng để đánh giá sau khi HR và Hiring Manager duyệt.")}
           </Alert>
         )}
@@ -603,6 +657,7 @@ export default function PositionDetailPage() {
                 onClick={handleGenerateCriteria}
                 disabled={generating || !isHR}
               >{t("Tạo đề xuất tiêu chí ngay")}</Button>
+              {isHR && <Button variant="outlined" startIcon={<LibraryBooksIcon />} onClick={openTemplateDialog} sx={{ ml: 1 }}>{t("Áp dụng từ thư viện")}</Button>}
             </CardContent>
           </Card>
         ) : (
@@ -908,6 +963,47 @@ export default function PositionDetailPage() {
           <Button variant="contained" onClick={saveJd} disabled={savingJd || !jdContent.trim()}>{t("Lưu phiên bản mới")}</Button></DialogActions>
       </Dialog>
 
+      <Dialog open={templateDialogOpen} onClose={() => !applyingTemplate && setTemplateDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>{t("Áp dụng template từ thư viện rubric")}</DialogTitle>
+        <DialogContent>
+          {templateError && <Alert severity="error" sx={{ mb: 2 }}>{t(templateError)}</Alert>}
+          {hasOpenCriteria && <Alert severity="warning" sx={{ mb: 2 }}>{t("Vị trí đang có bộ tiêu chí chưa hoàn tất duyệt. Vui lòng xử lý bản đó trước khi áp dụng template.")}</Alert>}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{t("Template sẽ được sao chép thành bộ tiêu chí nháp cho vị trí này. Bạn vẫn có thể chỉnh sửa, và bộ tiêu chí vẫn phải được HR và Hiring Manager duyệt trước khi dùng để đánh giá.")}</Typography>
+          {templatesLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={28} /></Box>
+            : templateMatches.length === 0 ? <Alert severity="info">{t("Chưa có template nào được xuất bản trong thư viện.")}</Alert>
+            : (
+              <Box sx={{ display: 'grid', gap: 1 }}>
+                {templateMatches.map(match => (
+                  <Card key={match.template_version_id} variant="outlined"
+                    sx={{ cursor: 'pointer', borderColor: match.template_version_id === selectedTemplateId ? '#941616' : undefined, borderWidth: match.template_version_id === selectedTemplateId ? 2 : 1 }}
+                    onClick={() => setSelectedTemplateId(match.template_version_id)}>
+                    <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                        <Box>
+                          <Typography variant="body1" fontWeight={600}>{match.title} · {t("Phiên bản ")}{match.version_number}</Typography>
+                          <Typography variant="caption" color="text.secondary">{match.job_family_name}{match.level_band ? ` · ${match.level_band}` : ''}</Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                          {match.family_match && <Chip size="small" color="success" label={t("Cùng nhóm ngành")} />}
+                          {match.level_match && <Chip size="small" color="success" label={t("Cùng cấp bậc")} />}
+                        </Box>
+                      </Box>
+                      <Typography variant="body2" sx={{ mt: 0.5 }}>
+                        {t("{0} tiêu chí bắt buộc · {1} tiêu chí ưu tiên", match.must_have_count, match.nice_to_have_count)} · {t("Bắt buộc")} {match.mandatory_weight_total}% / {t("Ưu tiên")} {match.nice_to_have_weight_total}%
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                ))}
+              </Box>
+            )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTemplateDialogOpen(false)} disabled={applyingTemplate}>{t("Hủy")}</Button>
+          <Button variant="contained" color="secondary" onClick={applyTemplate}
+            disabled={!selectedTemplate || applyingTemplate || hasOpenCriteria}>{applyingTemplate ? t("Đang áp dụng…") : t("Áp dụng template")}</Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={positionDialogOpen} onClose={() => !savingPosition && setPositionDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{t("Chỉnh sửa vị trí tuyển dụng")}</DialogTitle>
         <DialogContent>
@@ -915,6 +1011,15 @@ export default function PositionDetailPage() {
           <Box sx={{ display: 'grid', gap: 2, pt: 1 }}>
             <TextField autoFocus fullWidth required label={t("Tên vị trí")} value={positionTitle} inputProps={{ maxLength: 200 }}
               onChange={e => setPositionTitle(e.target.value)} />
+            <TextField select fullWidth label={t("Nhóm ngành")} value={positionFamilyId}
+              onChange={e => setPositionFamilyId(e.target.value)} helperText={t("Dùng để gợi ý template rubric phù hợp.")}>
+              {positionFamilyId && !families.some(f => f.job_family_id === positionFamilyId) && (
+                <MenuItem value={positionFamilyId}>{position.job_family || t("Nhóm ngành hiện tại")}</MenuItem>
+              )}
+              {families.map(f => <MenuItem key={f.job_family_id} value={f.job_family_id}>{f.name}</MenuItem>)}
+            </TextField>
+            <TextField fullWidth label={t("Cấp bậc")} value={positionLevel} inputProps={{ maxLength: 100 }}
+              onChange={e => setPositionLevel(e.target.value)} />
             <FormControl fullWidth>
               <InputLabel id="position-status-label">{t("Trạng thái vị trí")}</InputLabel>
               <Select labelId="position-status-label" label={t("Trạng thái vị trí")} value={positionStatus}

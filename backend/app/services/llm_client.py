@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from app.core.config import settings
 from app.core.logging import get_logger
 from pydantic import BaseModel, Field, ValidationError
+from app.services import mock_ai
 from app.services.redaction import redact_payload, redact_professional_profile, redact_text
 from app.services.ai_config import AIConfigError, get_active_runtime, runtime_context, validate_runtime
 from app.db.database import SessionLocal
@@ -96,6 +97,13 @@ class LLMClient:
         json_schema: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Make LLM API call with retry logic"""
+        if settings.LLM_PROVIDER == "mock":
+            # Development stand-in for AI Core (config refuses it outside
+            # development/testing). Same prompt in, same JSON shape out.
+            try:
+                return mock_ai.respond(user_prompt)
+            except (ValueError, TypeError) as exc:
+                raise LLMError("Mock AI could not handle the request") from exc
         runtime = runtime_context.get()
         if runtime is None:
             db = SessionLocal()

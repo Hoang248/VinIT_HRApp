@@ -62,6 +62,16 @@ _POSITION_WITH_STATS = """
 """
 
 
+def _active_family_name(db, job_family_id) -> str:
+    """Resolve an ACTIVE job family; its name is mirrored into the legacy text column."""
+    name = db.execute(text("""
+        SELECT name FROM app_private.job_families WHERE job_family_id = :id AND status = 'ACTIVE'
+    """), {"id": str(job_family_id)}).scalar_one_or_none()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nhóm ngành không tồn tại hoặc đã ngừng sử dụng")
+    return name
+
+
 @router.get("", response_model=List[PositionWithStats])
 async def list_positions(
     status_filter: Optional[PositionStatus] = Query(None, alias="status"),
@@ -135,10 +145,13 @@ async def create_position(
             raise HTTPException(status_code=400, detail="Hiring Manager phải có tài khoản hoạt động và vai trò HM.")
         params = position_data.model_dump(exclude={"jd_content", "hiring_manager_user_id"})
         params["created_by"] = user_id
+        if params.get("job_family_id"):
+            params["job_family"] = _active_family_name(db, params["job_family_id"])
+            params["job_family_id"] = str(params["job_family_id"])
         new_position = db.execute(text("""
-            INSERT INTO app_private.positions (position_code, title, job_family, org_unit, level, work_location,
+            INSERT INTO app_private.positions (position_code, title, job_family, job_family_id, org_unit, level, work_location,
                 work_mode, employment_type, headcount, created_by)
-            VALUES (:position_code, :title, :job_family, :org_unit, :level, :work_location,
+            VALUES (:position_code, :title, :job_family, :job_family_id, :org_unit, :level, :work_location,
                 :work_mode, :employment_type, :headcount, :created_by) RETURNING *
         """), params).mappings().one()
         position_id = new_position["position_id"]
@@ -191,7 +204,7 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
     status_reason = (values.pop("status_reason", None) or "").strip() or None
     if "status" in values and values["status"] is not None:
         values["status"] = values["status"].value
-    allowed = {k: v for k, v in values.items() if k in {"title", "job_family", "org_unit", "level", "work_location", "work_mode", "employment_type", "headcount", "status"} and v is not None}
+    allowed = {k: v for k, v in values.items() if k in {"title", "job_family", "job_family_id", "org_unit", "level", "work_location", "work_mode", "employment_type", "headcount", "status"} and v is not None}
     if not allowed:
         raise HTTPException(status_code=400, detail="Không có nội dung cần cập nhật")
     if "title" in allowed:
@@ -203,6 +216,11 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
         previous = db.execute(text("SELECT status FROM app_private.positions WHERE position_id = :id FOR UPDATE"), {"id": str(position_id)}).scalar_one_or_none()
         if not previous:
             raise NotFoundError("Position")
+        if "job_family_id" in allowed:
+            allowed["job_family"] = _active_family_name(db, allowed["job_family_id"])
+            allowed["job_family_id"] = str(allowed["job_family_id"])
+        if "level" in allowed:
+            allowed["level"] = allowed["level"].strip() or None
         sets = ", ".join(f"{key} = :{key}" for key in allowed)
         if "status" in allowed:
             # closed_at represents the current closure; the status-event trail

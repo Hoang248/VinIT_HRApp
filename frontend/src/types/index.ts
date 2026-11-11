@@ -13,6 +13,7 @@ export interface Position {
   position_code: string;
   title: string;
   job_family?: string;
+  job_family_id?: string | null;
   org_unit?: string;
   level?: string;
   work_location?: string;
@@ -47,7 +48,8 @@ export interface CriteriaVersion {
   position_id: string;
   jd_version_id: string;
   version_number: number;
-  origin: 'AI_DRAFT' | 'HR_CREATED';
+  origin: 'AI_DRAFT' | 'HR_CREATED' | 'TEMPLATE_CLONE';
+  source_template_version_id?: string | null;
   status: 'DRAFT' | 'PENDING_HR_REVIEW' | 'PENDING_HM_APPROVAL' | 'APPROVED' | 'REJECTED';
   mandatory_weight_total: number;
   nice_to_have_weight_total: number;
@@ -197,3 +199,149 @@ export interface RosterItem {
 }
 
 
+
+// ---------- F2.01 Rubric library ----------
+export interface JobFamily {
+  job_family_id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  status: 'ACTIVE' | 'INACTIVE';
+  display_order: number;
+  template_count?: number;
+}
+
+export interface RubricTemplateSummary {
+  template_id: string;
+  job_family_id: string;
+  job_family_name: string;
+  title: string;
+  level_band?: string | null;
+  created_by_name?: string | null;
+  published_version_id?: string | null;
+  published_version_number?: number | null;
+  published_at?: string | null;
+  published_item_count?: number;
+  draft_version_id?: string | null;
+  draft_version_number?: number | null;
+}
+
+export interface RubricTemplateVersionSummary {
+  template_version_id: string;
+  version_number: number;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  mandatory_weight_total: number;
+  nice_to_have_weight_total: number;
+  change_note?: string | null;
+  created_by: string;
+  created_by_name?: string | null;
+  published_by_name?: string | null;
+  published_at?: string | null;
+  item_count: number;
+}
+
+export interface RubricTemplateDetail extends RubricTemplateSummary {
+  versions: RubricTemplateVersionSummary[];
+}
+
+export interface TemplateItem {
+  template_item_id: string;
+  template_version_id: string;
+  name: string;
+  description: string;
+  category: 'MUST_HAVE' | 'NICE_TO_HAVE';
+  weight_in_group: number;
+  expected_evidence_keywords: string[];
+  evidence_guidance?: string | null;
+  display_order: number;
+}
+
+export interface TemplateItemInput {
+  name: string;
+  description: string;
+  category: 'MUST_HAVE' | 'NICE_TO_HAVE';
+  weight_in_group: number;
+  expected_evidence_keywords: string[];
+  evidence_guidance?: string | null;
+}
+
+export interface RubricTemplateVersion extends Omit<RubricTemplateVersionSummary, 'item_count'> {
+  template_id: string;
+  title: string;
+  level_band?: string | null;
+  job_family_name: string;
+  items: TemplateItem[];
+  review_events: Array<{ event_id: string; decision: 'PUBLISH' | 'ARCHIVE' | 'REQUEST_CHANGES'; comment?: string | null; decided_at: string; reviewer_name?: string | null }>;
+  fairness_warnings: FairnessWarning[];
+  publish_errors: string[];
+}
+
+export interface TemplateMatch {
+  template_version_id: string;
+  template_id: string;
+  version_number: number;
+  title: string;
+  level_band?: string | null;
+  job_family_name: string;
+  mandatory_weight_total: number;
+  nice_to_have_weight_total: number;
+  must_have_count: number;
+  nice_to_have_count: number;
+  family_match: boolean;
+  level_match: boolean;
+  published_at?: string | null;
+}
+
+// ---------- F2.02 Scorecards ----------
+export type ScorecardStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'SUBMITTED';
+export type Recommendation = 'STRONG_YES' | 'YES' | 'NO' | 'STRONG_NO';
+
+export interface ScorecardCriterion {
+  criterion_id: string;
+  name: string;
+  description: string;
+  category: 'MUST_HAVE' | 'NICE_TO_HAVE';
+  weight_in_group: number;
+  rating?: number | null;
+  evidence_assessment?: 'INSUFFICIENT_EVIDENCE' | null;
+  comment?: string | null;
+}
+
+export interface Scorecard {
+  scorecard_id: string;
+  share_id: string;
+  position_id: string;
+  application_id: string;
+  assessment_id?: string | null;
+  criteria_version_id?: string | null;
+  criteria_version_number?: number | null;
+  reviewer_user_id: string;
+  reviewer_name?: string | null;
+  status: ScorecardStatus;
+  overall_recommendation?: Recommendation | null;
+  strengths?: string | null;
+  concerns?: string | null;
+  due_at: string;
+  is_overdue: boolean;
+  submitted_at?: string | null;
+  reopened_at?: string | null;
+  reopened_by_name?: string | null;
+  reopen_reason?: string | null;
+  position_title: string;
+  position_code: string;
+  candidate_name: string;
+  matching_status?: string | null;
+  matching_score?: number | null;
+  share_status: 'ACTIVE' | 'REVOKED';
+  criteria?: ScorecardCriterion[];
+  can_edit?: boolean;
+  can_reopen?: boolean;
+  completion_errors?: string[];
+}
+
+export interface ScorecardUpdateInput {
+  criteria?: Array<{ criterion_id: string; rating?: number | null; insufficient_evidence?: boolean; comment?: string | null }>;
+  overall_recommendation?: Recommendation | null;
+  strengths?: string | null;
+  concerns?: string | null;
+}

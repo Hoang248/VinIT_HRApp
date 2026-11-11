@@ -12,6 +12,7 @@ from app.core.logging import get_logger
 from app.core.security import ensure_token_is_current, get_active_user
 from app.db.database import SessionLocal
 from app.schemas.accounts import BootstrapRequest, PasswordChange
+from app.services import local_auth
 from app.services.accounts import provision_user
 
 router = APIRouter()
@@ -32,7 +33,8 @@ class LoginResponse(BaseModel):
 
 def _bootstrap_configured() -> bool:
     token = settings.ADMIN_BOOTSTRAP_TOKEN
-    return 32 <= len(token) <= 256 and bool(settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY)
+    auth_ready = settings.AUTH_BACKEND == "local" or bool(settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY)
+    return 32 <= len(token) <= 256 and auth_ready
 
 
 @router.get("/bootstrap-status")
@@ -82,9 +84,39 @@ def bootstrap_admin(request: BootstrapRequest):
         db.close()
 
 
+def _local_login(credentials: LoginRequest) -> LoginResponse:
+    """AUTH_BACKEND=local: verify the scrypt hash and issue the app's own token."""
+    db = SessionLocal()
+    try:
+        try:
+            identity = local_auth.authenticate(db, credentials.email, credentials.password.get_secret_value())
+        except local_auth.LocalAuthLocked:
+            raise HTTPException(status_code=429, detail="Tài khoản tạm khóa do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau.") from None
+        if not identity:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email hoặc mật khẩu không đúng")
+        profile = db.execute(text("""
+            SELECT account_status, must_change_password, tokens_valid_after FROM app_private.user_profiles WHERE user_id = :id
+        """), {"id": identity["user_id"]}).mappings().first()
+        if not profile or profile["account_status"] != "ACTIVE":
+            raise HTTPException(status_code=403, detail="Tài khoản chưa được kích hoạt hoặc đã bị khóa")
+        token, expires_in = local_auth.issue_token(identity["user_id"], identity["email"])
+        if profile["tokens_valid_after"] is not None:
+            try:
+                ensure_token_is_current(jwt.decode(token, options={"verify_signature": False}), profile["tokens_valid_after"])
+            except Exception:
+                raise HTTPException(status_code=409, detail="Vui lòng chờ vài giây rồi đăng nhập lại.") from None
+        return LoginResponse(access_token=token, expires_in=expires_in,
+                             user={"id": identity["user_id"], "email": identity["email"],
+                                   "must_change_password": bool(profile["must_change_password"])})
+    finally:
+        db.close()
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(credentials: LoginRequest):
-    """Login with email/password via an isolated Supabase client."""
+    """Login with email/password via an isolated Supabase client, or locally."""
+    if settings.AUTH_BACKEND == "local":
+        return _local_login(credentials)
     if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
         raise HTTPException(status_code=503, detail="Authentication service is not configured")
     try:
@@ -153,7 +185,7 @@ def get_current_user_info(current_user: dict = Depends(get_active_user)):
 @router.post("/change-password")
 def change_temporary_password(request: PasswordChange, current_user: dict = Depends(get_active_user)):
     """Reauthenticate the owner before exchanging a temporary password."""
-    if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
+    if settings.AUTH_BACKEND != "local" and (not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY):
         raise HTTPException(status_code=503, detail="Authentication service is not configured")
     old_password = request.current_password.get_secret_value()
     new_password = request.new_password.get_secret_value()
@@ -172,25 +204,12 @@ def change_temporary_password(request: PasswordChange, current_user: dict = Depe
         ensure_token_is_current(current_user["token_payload"], profile["tokens_valid_after"])
         if not profile["must_change_password"]:
             raise HTTPException(status_code=409, detail="Tài khoản không cần đổi mật khẩu tạm thời.")
-        client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
-        try:
-            verified = client.auth.sign_in_with_password({"email": current_user["email"], "password": old_password})
-            if not verified.user or str(verified.user.id) != str(current_user["user_id"]):
+        if settings.AUTH_BACKEND == "local":
+            if not local_auth.verify_user_password(db, current_user["user_id"], old_password):
                 raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            if getattr(exc, "status", None) in (400, 401, 403):
-                raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.") from None
-            logger.warning("Password reauthentication failed", error_type=type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Không thể xác minh mật khẩu. Vui lòng thử lại.") from None
-        try:
-            client.auth.update_user({"password": new_password})
-        except Exception as exc:
-            if getattr(exc, "code", None) == "weak_password":
-                raise HTTPException(status_code=400, detail="Mật khẩu mới không đáp ứng chính sách của dịch vụ xác thực.") from None
-            logger.warning("Password update failed or has an unknown outcome", error_type=type(exc).__name__, user_id=current_user["user_id"])
-            raise HTTPException(status_code=503, detail="Không xác nhận được việc đổi mật khẩu. Hãy kiểm tra mật khẩu mới trước khi thử lại.") from None
+            local_auth.set_password(db, current_user["user_id"], new_password)
+        else:
+            _change_supabase_password(current_user, old_password, new_password)
         db.execute(text("""
             UPDATE app_private.user_profiles SET must_change_password = FALSE,
                 tokens_valid_after = clock_timestamp(), updated_at = NOW() WHERE user_id = :id
@@ -210,3 +229,25 @@ def change_temporary_password(request: PasswordChange, current_user: dict = Depe
         raise HTTPException(status_code=503, detail="Không xác nhận được việc đổi mật khẩu. Hãy kiểm tra mật khẩu mới trước khi thử lại.") from None
     finally:
         db.close()
+
+
+def _change_supabase_password(current_user: dict, old_password: str, new_password: str) -> None:
+    client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+    try:
+        verified = client.auth.sign_in_with_password({"email": current_user["email"], "password": old_password})
+        if not verified.user or str(verified.user.id) != str(current_user["user_id"]):
+            raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if getattr(exc, "status", None) in (400, 401, 403):
+            raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.") from None
+        logger.warning("Password reauthentication failed", error_type=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Không thể xác minh mật khẩu. Vui lòng thử lại.") from None
+    try:
+        client.auth.update_user({"password": new_password})
+    except Exception as exc:
+        if getattr(exc, "code", None) == "weak_password":
+            raise HTTPException(status_code=400, detail="Mật khẩu mới không đáp ứng chính sách của dịch vụ xác thực.") from None
+        logger.warning("Password update failed or has an unknown outcome", error_type=type(exc).__name__, user_id=current_user["user_id"])
+        raise HTTPException(status_code=503, detail="Không xác nhận được việc đổi mật khẩu. Hãy kiểm tra mật khẩu mới trước khi thử lại.") from None

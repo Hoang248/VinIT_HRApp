@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from . import auth, users, positions, criteria, applications, assessments, shortlist, dashboard, admin, account_admin, operations, candidate_details
+from . import auth, users, positions, criteria, applications, assessments, shortlist, dashboard, admin, account_admin, operations, candidate_details, rubric_library, scorecards
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
@@ -10,7 +10,10 @@ api_router.include_router(criteria.router, prefix="/criteria", tags=["Criteria &
 api_router.include_router(applications.router, prefix="/applications", tags=["Applications & CVs"])
 api_router.include_router(candidate_details.router, prefix="/applications", tags=["Candidate details"])
 api_router.include_router(assessments.router, prefix="/assessments", tags=["AI Assessment & Ranking"])
+# Scorecards first: their literal paths must win over /shortlist/{share_id}.
+api_router.include_router(scorecards.router, prefix="/shortlist", tags=["Shortlist Scorecards"])
 api_router.include_router(shortlist.router, prefix="/shortlist", tags=["Shortlist Sharing"])
+api_router.include_router(rubric_library.router, prefix="/rubric-library", tags=["Rubric Library"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard & Reporting"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin Configuration"])
 api_router.include_router(account_admin.router, prefix="/admin/users", tags=["Admin Accounts"])

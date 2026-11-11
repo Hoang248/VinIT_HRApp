@@ -34,9 +34,9 @@ import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { positionsApi, usersApi, dashboardApi, authApi } from '@/lib/api';
+import { positionsApi, usersApi, dashboardApi, authApi, rubricApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
-import { Position, UserSummary } from '@/types';
+import { JobFamily, Position, UserSummary } from '@/types';
 
 export default function PositionsPage() {
   const { t } = useI18n();
@@ -57,7 +57,10 @@ export default function PositionsPage() {
     org_unit: '',
     jd_content: '',
     hiring_manager_user_id: '',
+    job_family_id: '',
+    level: '',
   });
+  const [families, setFamilies] = useState<JobFamily[]>([]);
   const [hmSearchQuery, setHmSearchQuery] = useState('');
   const [hmOptions, setHmOptions] = useState<UserSummary[]>([]);
   const [hmLoading, setHmLoading] = useState(false);
@@ -73,6 +76,8 @@ export default function PositionsPage() {
         me.data.position_assignments?.some((a: any) => ['HR_RECRUITER', 'HR_LEAD'].includes(a.position_role)) || false);
       setPositions(positions);
       setError(null);
+      // Job families (F2.01) feed rubric template suggestions; HM accounts cannot read them.
+      rubricApi.listFamilies().then(res => setFamilies(res.data || [])).catch(() => setFamilies([]));
       setApplicationTotal(stats?.data?.total_applications ?? null);
     } catch (err: any) {
       setError(err.response?.data?.detail || t("Không thể tải danh sách vị trí"));
@@ -85,10 +90,11 @@ export default function PositionsPage() {
   const handleCreatePosition = async () => {
     try {
       setCreateLoading(true); setCreateError(null);
-      const payload = { ...formData };
+      const { job_family_id, level, ...rest } = formData;
+      const payload = { ...rest, ...(job_family_id ? { job_family_id } : {}), ...(level.trim() ? { level: level.trim() } : {}) };
       await positionsApi.create(payload);
       setCreateDialogOpen(false);
-      setFormData({ position_code: '', title: '', org_unit: '', jd_content: '', hiring_manager_user_id: '' });
+      setFormData({ position_code: '', title: '', org_unit: '', jd_content: '', hiring_manager_user_id: '', job_family_id: '', level: '' });
       setHmSelectedName('');
       setHmSearchQuery('');
       setHmOptions([]);
@@ -362,6 +368,18 @@ export default function PositionsPage() {
                 onChange={(e) => setFormData({ ...formData, org_unit: e.target.value })}
                 placeholder={t("Phòng Công nghệ thông tin")}
               />
+            </Grid>
+            <Grid item xs={12} sm={7}>
+              <TextField select fullWidth label={t("Nhóm ngành")} value={formData.job_family_id}
+                onChange={(e) => setFormData({ ...formData, job_family_id: e.target.value })}
+                helperText={t("Dùng để gợi ý template rubric phù hợp.")}>
+                <MenuItem value="">{t("Chưa chọn")}</MenuItem>
+                {families.map(f => <MenuItem key={f.job_family_id} value={f.job_family_id}>{f.name}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={5}>
+              <TextField fullWidth label={t("Cấp bậc")} value={formData.level} inputProps={{ maxLength: 100 }}
+                onChange={(e) => setFormData({ ...formData, level: e.target.value })} placeholder="Senior" />
             </Grid>
             <Grid item xs={12}>
               <Autocomplete

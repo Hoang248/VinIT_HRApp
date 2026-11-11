@@ -16,6 +16,7 @@ from app.schemas.criteria import (
     CriteriaApprovalRequest
 )
 from app.schemas.common import OperationResponse
+from app.schemas.rubric import ApplyTemplateRequest
 from app.db.database import SessionLocal
 from sqlalchemy import text
 import json
@@ -605,5 +606,104 @@ async def get_latest_approved_criteria(position_id: UUID, current_user: dict = D
             ORDER BY version_number DESC LIMIT 1
         """), {"id": str(position_id)}).scalar_one_or_none()
         return _load_criteria(db, version_id) if version_id else None
+    finally:
+        db.close()
+
+
+# ---------------- F2.01: apply a published rubric template ----------------
+
+def _require_position_hr(position_id, current_user: dict):
+    if not can_update_application_status(current_user["user_id"], str(position_id)):
+        raise HTTPException(status_code=403, detail="Chỉ HR phụ trách vị trí mới dùng được thư viện rubric cho vị trí này")
+
+
+@router.get("/position/{position_id}/template-matches")
+async def list_template_matches(position_id: UUID, current_user: dict = Depends(get_current_user)):
+    """Published templates, those matching the position's job family/level first."""
+    _require_position_hr(position_id, current_user)
+    db = SessionLocal()
+    try:
+        position = db.execute(text("SELECT job_family_id, level FROM app_private.positions WHERE position_id = :id"),
+                              {"id": str(position_id)}).mappings().first()
+        if not position:
+            raise NotFoundError("Position")
+        rows = db.execute(text("""
+            SELECT v.template_version_id, v.version_number, v.mandatory_weight_total, v.nice_to_have_weight_total,
+                   v.published_at, t.template_id, t.title, t.level_band, t.job_family_id, f.name AS job_family_name,
+                   COUNT(i.template_item_id) FILTER (WHERE i.category = 'MUST_HAVE') AS must_have_count,
+                   COUNT(i.template_item_id) FILTER (WHERE i.category = 'NICE_TO_HAVE') AS nice_to_have_count,
+                   (t.job_family_id = CAST(:family AS uuid)) AS family_match,
+                   (t.level_band IS NOT NULL AND lower(t.level_band) = lower(CAST(:level AS text))) AS level_match
+            FROM app_private.rubric_template_versions v
+            JOIN app_private.rubric_templates t ON t.template_id = v.template_id AND t.status = 'ACTIVE'
+            JOIN app_private.job_families f ON f.job_family_id = t.job_family_id
+            LEFT JOIN app_private.rubric_template_items i ON i.template_version_id = v.template_version_id
+            WHERE v.status = 'PUBLISHED'
+            GROUP BY v.template_version_id, t.template_id, f.name
+            ORDER BY family_match DESC NULLS LAST, level_match DESC NULLS LAST, t.title
+        """), {"family": str(position["job_family_id"]) if position["job_family_id"] else None,
+                "level": position["level"]}).mappings().all()
+        return [{**dict(row), "family_match": bool(row["family_match"]), "level_match": bool(row["level_match"])}
+                for row in rows]
+    finally:
+        db.close()
+
+
+@router.post("/position/{position_id}/apply-template", response_model=CriteriaVersion, status_code=status.HTTP_201_CREATED)
+async def apply_template_to_position(position_id: UUID, request: ApplyTemplateRequest,
+                                     current_user: dict = Depends(get_current_user)):
+    """Clone a published template into a criteria DRAFT (D-04: never auto-approved)."""
+    _require_position_hr(position_id, current_user)
+    user_id = current_user["user_id"]
+    db = SessionLocal()
+    try:
+        # Same lock order as approval and upload: position first.
+        if not db.execute(text("SELECT 1 FROM app_private.positions WHERE position_id = :id FOR UPDATE"),
+                          {"id": str(position_id)}).first():
+            raise NotFoundError("Position")
+        template = db.execute(text("""
+            SELECT v.template_version_id, v.status, v.mandatory_weight_total, v.nice_to_have_weight_total, t.title
+            FROM app_private.rubric_template_versions v
+            JOIN app_private.rubric_templates t ON t.template_id = v.template_id
+            WHERE v.template_version_id = :id FOR SHARE OF v
+        """), {"id": str(request.template_version_id)}).mappings().first()
+        if not template or template["status"] != "PUBLISHED":
+            raise HTTPException(status_code=400, detail="Chỉ áp dụng được template đã xuất bản")
+        if db.execute(text("""
+            SELECT 1 FROM app_private.criteria_versions
+            WHERE position_id = :id AND status IN ('DRAFT', 'PENDING_HR_REVIEW', 'PENDING_HM_APPROVAL') LIMIT 1
+        """), {"id": str(position_id)}).first():
+            raise HTTPException(status_code=409, detail="Vị trí đang có bộ tiêu chí chưa hoàn tất duyệt. Vui lòng xử lý bản đó trước khi áp dụng template.")
+        latest_jd = db.execute(text("""
+            SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1
+        """), {"id": str(position_id)}).scalar_one_or_none()
+        if not latest_jd:
+            raise HTTPException(status_code=400, detail="Vị trí chưa có mô tả công việc")
+        version_number = db.execute(text("""
+            SELECT COALESCE(MAX(version_number), 0) + 1 FROM app_private.criteria_versions WHERE position_id = :id
+        """), {"id": str(position_id)}).scalar_one()
+        new_id = db.execute(text("""
+            INSERT INTO app_private.criteria_versions (position_id, jd_version_id, version_number, origin, status,
+                mandatory_weight_total, nice_to_have_weight_total, source_template_version_id)
+            VALUES (:position, :jd, :version, 'TEMPLATE_CLONE', 'DRAFT', :mandatory, :nice, :template)
+            RETURNING criteria_version_id
+        """), {"position": str(position_id), "jd": str(latest_jd), "version": version_number,
+                "mandatory": template["mandatory_weight_total"], "nice": template["nice_to_have_weight_total"],
+                "template": str(request.template_version_id)}).scalar_one()
+        db.execute(text("""
+            INSERT INTO app_private.criteria_items (criteria_version_id, name, description, category, weight_in_group,
+                expected_evidence_keywords, evidence_guidance, display_order, source_template_item_id)
+            SELECT :new_id, name, description, category, weight_in_group, expected_evidence_keywords,
+                evidence_guidance, display_order, template_item_id
+            FROM app_private.rubric_template_items WHERE template_version_id = :template
+        """), {"new_id": str(new_id), "template": str(request.template_version_id)})
+        _audit(db, user_id, "APPLY_RUBRIC_TEMPLATE", "CRITERIA_VERSION", new_id, position_id,
+               {"template_version_id": str(request.template_version_id), "version_number": version_number})
+        result = _load_criteria(db, new_id)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

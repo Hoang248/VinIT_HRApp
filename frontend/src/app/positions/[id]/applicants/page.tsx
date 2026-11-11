@@ -92,6 +92,8 @@ export default function ApplicantsRankingPage() {
   const [shareRecipientQuery, setShareRecipientQuery] = useState('');
   const [shareRecipientOptions, setShareRecipientOptions] = useState<UserSummary[]>([]);
   const [shareAllowCv, setShareAllowCv] = useState(false);
+  // F2.02: optional scorecard deadline (YYYY-MM-DD); empty = 3 working days.
+  const [shareDueDate, setShareDueDate] = useState('');
   const [shareSubmitting, setShareSubmitting] = useState(false);
 
   const loadRanking = useCallback(async () => {
@@ -252,6 +254,7 @@ export default function ApplicantsRankingPage() {
       return new Set(selected.length ? selected : shortlisted);
     });
     setShareError(null);
+    setShareDueDate('');
     setShareDialogOpen(true);
   };
 
@@ -265,6 +268,8 @@ export default function ApplicantsRankingPage() {
         application_ids: Array.from(selectedIds),
         note: '',
         allow_cv_view: shareAllowCv,
+        // End of the chosen day in the reviewer's local time.
+        ...(shareDueDate ? { due_at: new Date(`${shareDueDate}T17:00:00`).toISOString() } : {}),
       });
       setShareDialogOpen(false);
       setShareRecipient(null);
@@ -732,6 +737,10 @@ export default function ApplicantsRankingPage() {
               label={t("Cho phép người nhận xem và tải CV gốc")}
               sx={{ mt: 2 }}
             />
+            <TextField type="date" fullWidth size="small" sx={{ mt: 2 }} label={t("Hạn hoàn thành scorecard")}
+              value={shareDueDate} onChange={e => setShareDueDate(e.target.value)} InputLabelProps={{ shrink: true }}
+              inputProps={{ min: new Date().toISOString().slice(0, 10) }}
+              helperText={t("Để trống để dùng mặc định 3 ngày làm việc (không tính thứ Bảy, Chủ Nhật; chưa tính ngày lễ). Mỗi ứng viên có một scorecard cho Hiring Manager.")} />
           </Box>
         </DialogContent>
         <DialogActions>

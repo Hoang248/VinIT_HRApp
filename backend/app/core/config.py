@@ -1,5 +1,6 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import Literal, Optional
 
 
 class Settings(BaseSettings):
@@ -37,7 +38,9 @@ class Settings(BaseSettings):
     MAX_BATCH_SIZE_BYTES: int = 250_000_000  # 250 MB
 
     # AI/LLM
-    LLM_PROVIDER: str = "local"  # local/openai/azure/compatible labels; same OpenAI-compatible transport
+    # local/openai/azure/compatible labels share the OpenAI-compatible transport.
+    # "mock" = built-in synthetic AI for development until AI Core exposes its API.
+    LLM_PROVIDER: str = "local"
     LLM_MODEL_NAME: str = "vinuni/hra-llm-7b"
     LLM_API_BASE: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
@@ -64,6 +67,26 @@ class Settings(BaseSettings):
 
     # Security
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # 8 hours
+
+    # Authentication backend.
+    #   "supabase": Supabase Auth issues tokens (default, unchanged behaviour).
+    #   "local":    the backend stores scrypt password hashes in PostgreSQL
+    #               (app_private.local_credentials) and signs its own HS256
+    #               tokens with SUPABASE_JWT_SECRET, which then acts as the
+    #               app's JWT secret. Intended for plain PostgreSQL without Supabase.
+    AUTH_BACKEND: Literal["supabase", "local"] = "supabase"
+    LOCAL_AUTH_MAX_FAILED_ATTEMPTS: int = 5
+    LOCAL_AUTH_LOCKOUT_MINUTES: int = 15
+
+    @model_validator(mode="after")
+    def _guard_development_shortcuts(self):
+        if self.AUTH_BACKEND == "local" and len(self.SUPABASE_JWT_SECRET) < 32:
+            raise ValueError("AUTH_BACKEND=local requires SUPABASE_JWT_SECRET of at least 32 random characters")
+        # The mock AI returns synthetic, heuristic results. It must never
+        # assess real candidates, so it is refused outside development/testing.
+        if self.LLM_PROVIDER == "mock" and self.APP_ENV not in ("development", "testing"):
+            raise ValueError("LLM_PROVIDER=mock is only allowed when APP_ENV is development or testing")
+        return self
 
 
 settings = Settings()

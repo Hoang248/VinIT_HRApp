@@ -5,10 +5,53 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.supabase import get_supabase_client
+from app.services import local_auth
 
 logger = get_logger(__name__)
+
+
+def _insert_profile_and_roles(db, *, user_id: str, display_name: str, roles: list[str],
+                              actor_id: str | None, bootstrap: bool) -> None:
+    db.execute(text("""
+        INSERT INTO app_private.user_profiles (user_id, display_name, account_status, must_change_password)
+        VALUES (:user_id, :display_name, 'ACTIVE', :must_change)
+    """), {"user_id": user_id, "display_name": display_name, "must_change": not bootstrap})
+    for role in roles:
+        db.execute(text("""
+            INSERT INTO app_private.user_role_assignments (user_id, role_code, granted_by)
+            VALUES (:user_id, :role, :actor)
+        """), {"user_id": user_id, "role": role, "actor": actor_id})
+    db.execute(text("""
+        INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, outcome, metadata)
+        VALUES (:actor, :action, 'USER', :user_id, 'ACTIVE', CAST(:metadata AS jsonb))
+    """), {"actor": actor_id or user_id, "action": "BOOTSTRAP_ADMIN" if bootstrap else "CREATE_USER",
+            "user_id": user_id, "metadata": json.dumps({"roles": sorted(roles), "must_change_password": not bootstrap,
+                                                        "auth_backend": settings.AUTH_BACKEND})})
+
+
+def _provision_local_user(db, *, email: str, password: str, display_name: str,
+                          roles: list[str], actor_id: str | None, bootstrap: bool) -> str:
+    """AUTH_BACKEND=local: identity, credentials, profile and roles commit atomically."""
+    user_id = str(uuid4())
+    try:
+        local_auth.create_identity(db, user_id, email, password)
+        _insert_profile_and_roles(db, user_id=user_id, display_name=display_name, roles=roles,
+                                  actor_id=actor_id, bootstrap=bootstrap)
+        db.commit()
+        return user_id
+    except local_auth.LocalIdentityExists:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email đã tồn tại hoặc không thể dùng để tạo tài khoản.") from None
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.error("Local account provisioning failed", error_type=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Không tạo được tài khoản. Vui lòng thử lại.") from None
 
 
 def provision_user(db, *, email: str, password: str, display_name: str,
@@ -21,6 +64,9 @@ def provision_user(db, *, email: str, password: str, display_name: str,
     delete an identity whose DB commit actually succeeded. Operators must inspect
     Auth and app records before retrying an ambiguous failure.
     """
+    if settings.AUTH_BACKEND == "local":
+        return _provision_local_user(db, email=email, password=password, display_name=display_name,
+                                     roles=roles, actor_id=actor_id, bootstrap=bootstrap)
     client = get_supabase_client()
     if client is None:
         raise HTTPException(status_code=503, detail="Dịch vụ tạo tài khoản chưa được cấu hình.")

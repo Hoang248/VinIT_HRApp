@@ -2,7 +2,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { localizeServerMessage } from '@/i18n/serverMessages';
-import type { CriterionInput } from '@/types';
+import type { CriterionInput, TemplateItemInput, ScorecardUpdateInput } from '@/types';
 
 // The browser always uses the same origin. Next.js proxies /v1 to the backend,
 // which also works when the UI is viewed through a remote preview host.
@@ -92,6 +92,51 @@ export const criteriaApi = {
     apiClient.patch(`/criteria/${versionId}/weights`, { mandatory_weight_total: mandatory, nice_to_have_weight_total: nice }),
   getApproved: (positionId: string) =>
     apiClient.get(`/criteria/position/${positionId}/approved`),
+  // F2.01: apply a published rubric template as a criteria draft.
+  getTemplateMatches: (positionId: string) =>
+    apiClient.get(`/criteria/position/${positionId}/template-matches`),
+  applyTemplate: (positionId: string, templateVersionId: string) =>
+    apiClient.post(`/criteria/position/${positionId}/apply-template`, { template_version_id: templateVersionId }),
+};
+
+// F2.01 — Rubric library
+export const rubricApi = {
+  listFamilies: (includeInactive = false) =>
+    apiClient.get('/rubric-library/families', { params: { include_inactive: includeInactive || undefined } }),
+  createFamily: (data: { code: string; name: string; description?: string | null; display_order?: number }) =>
+    apiClient.post('/rubric-library/families', data),
+  updateFamily: (id: string, data: { name?: string; description?: string | null; status?: 'ACTIVE' | 'INACTIVE'; display_order?: number }) =>
+    apiClient.patch(`/rubric-library/families/${id}`, data),
+  listTemplates: (params: { job_family_id?: string; level_band?: string; status?: 'PUBLISHED' | 'DRAFT_ONLY' | 'ALL'; q?: string }) =>
+    apiClient.get('/rubric-library/templates', { params }),
+  createTemplate: (data: { job_family_id: string; title: string; level_band?: string | null; change_note?: string | null }) =>
+    apiClient.post('/rubric-library/templates', data),
+  getTemplate: (id: string) => apiClient.get(`/rubric-library/templates/${id}`),
+  createVersion: (templateId: string, data: { source_version_id?: string; change_note?: string | null }) =>
+    apiClient.post(`/rubric-library/templates/${templateId}/versions`, data),
+  getVersion: (id: string) => apiClient.get(`/rubric-library/template-versions/${id}`),
+  updateVersion: (id: string, data: { mandatory_weight_total?: number; nice_to_have_weight_total?: number; change_note?: string | null }) =>
+    apiClient.patch(`/rubric-library/template-versions/${id}`, data),
+  addItem: (versionId: string, data: TemplateItemInput) =>
+    apiClient.post(`/rubric-library/template-versions/${versionId}/items`, data),
+  updateItem: (itemId: string, data: Partial<TemplateItemInput>) =>
+    apiClient.patch(`/rubric-library/template-items/${itemId}`, data),
+  deleteItem: (itemId: string) => apiClient.delete(`/rubric-library/template-items/${itemId}`),
+  publish: (versionId: string, comment?: string) =>
+    apiClient.post(`/rubric-library/template-versions/${versionId}/publish`, { comment: comment || null }),
+  archive: (versionId: string, comment?: string) =>
+    apiClient.post(`/rubric-library/template-versions/${versionId}/archive`, { comment: comment || null }),
+};
+
+// F2.02 — Structured scorecards
+export const scorecardApi = {
+  mine: (status?: 'NOT_STARTED' | 'IN_PROGRESS' | 'SUBMITTED' | 'OVERDUE' | 'OPEN') =>
+    apiClient.get('/shortlist/my-scorecards', { params: { status } }),
+  get: (id: string) => apiClient.get(`/shortlist/scorecards/${id}`),
+  save: (id: string, data: ScorecardUpdateInput) => apiClient.patch(`/shortlist/scorecards/${id}`, data),
+  submit: (id: string) => apiClient.post(`/shortlist/scorecards/${id}/submit`),
+  reopen: (id: string, reason: string) => apiClient.post(`/shortlist/scorecards/${id}/reopen`, { reason }),
+  summary: (shareId: string) => apiClient.get(`/shortlist/${shareId}/scorecard-summary`),
 };
 
 export const applicationsApi = {

@@ -68,11 +68,13 @@ class Criterion(CriterionBase, TimestampMixin):
     criterion_id: UUID
     criteria_version_id: UUID
     display_order: int
+    source_template_item_id: Optional[UUID] = None
 
 
 class CriteriaVersionBase(BaseSchema):
     jd_version_id: UUID
-    origin: str = Field(default="AI_DRAFT", description="AI_DRAFT or HR_CREATED")
+    origin: str = Field(default="AI_DRAFT", description="AI_DRAFT, HR_CREATED or TEMPLATE_CLONE")
+    source_template_version_id: Optional[UUID] = None
     mandatory_weight_total: float = 70.0
     nice_to_have_weight_total: float = 30.0
     policy_version: Optional[str] = None

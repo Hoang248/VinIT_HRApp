@@ -9,6 +9,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
@@ -17,11 +18,12 @@ const menuItems = [
   { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
   { text: 'Shortlist chia sẻ', icon: <PeopleIcon />, href: '/shortlist' },
   { text: 'Bảng điều khiển', icon: <BarChartIcon />, href: '/dashboard' },
+  { text: 'Thư viện rubric', icon: <LibraryBooksIcon />, href: '/rubric-library', hrOnly: true },
   { text: 'Quản trị AI', icon: <SettingsIcon />, href: '/admin', adminOnly: true },
   { text: 'Quản lý tài khoản', icon: <ManageAccountsIcon />, href: '/admin/users', adminOnly: true },
 ];
 
-export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean }) {
+export default function Sidebar({ mobileOpen, onClose, isAdmin, isHr = false }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean; isHr?: boolean }) {
   const { t } = useI18n();
   const pathname = usePathname();
   const content = (
@@ -34,7 +36,7 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin }: { mobileOpen: 
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.12)' }} />
       <List sx={{ pt: 2 }} component="nav" aria-label={t("Điều hướng chính")}>
-        {menuItems.filter(item => !('adminOnly' in item) || isAdmin).map(item => (
+        {menuItems.filter(item => (!('adminOnly' in item) || isAdmin) && (!('hrOnly' in item) || isHr)).map(item => (
           <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton component={Link} href={item.href} onClick={onClose} selected={item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href)}
               aria-current={(item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href)) ? 'page' : undefined}

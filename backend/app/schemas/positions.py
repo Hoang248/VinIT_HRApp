@@ -23,6 +23,7 @@ class PositionBase(BaseSchema):
     position_code: str = Field(..., description="Unique position code, e.g. REQ-IT-001")
     title: str
     job_family: Optional[str] = None  # e.g. Software Engineering, QA
+    job_family_id: Optional[UUID] = None  # F2.01 taxonomy; job_family text is kept in sync
     org_unit: Optional[str] = None
     level: Optional[str] = None  # e.g. Junior, Mid, Senior
     work_location: Optional[str] = None
@@ -44,6 +45,8 @@ class PositionUpdate(BaseSchema):
     status: Optional[PositionStatus] = None
     # Stored on the status-change history; required when pausing or closing.
     status_reason: Optional[str] = Field(default=None, max_length=1000)
+    job_family_id: Optional[UUID] = None
+    level: Optional[str] = Field(default=None, max_length=100)
     work_location: Optional[str] = None
     work_mode: Optional[str] = None
 
