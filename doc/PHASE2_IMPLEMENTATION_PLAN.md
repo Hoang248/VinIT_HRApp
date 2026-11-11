@@ -15,7 +15,8 @@
 | F2.07 Retention automation | **Loại khỏi vòng triển khai này**; giữ nguyên retention thủ công an toàn của Phase 1 |
 | Candidate Rediscovery | Để ở **cuối Phase 2**, không thuộc batch đầu |
 | F2.08 SSO | **Tạm treo**, không thiết kế/triển khai |
-| F2.03, F2.04, F2.05, F2.06, F2.09 | Chưa lập plan chi tiết ở vòng này |
+| F2.04 QA sampling | **Làm trước batch đầu** (Hoang chốt 11/11/2026); thiết kế và quyết định D-1…D-6 ở `doc/PHASE2_F204_QA_SAMPLING.md` |
+| F2.03, F2.05, F2.06, F2.09 | Chưa lập plan chi tiết ở vòng này |
 | Phase 1 DEP-01…DEP-08 | Vẫn tạm dừng chờ Production; plan này không đóng hoặc thay thế các DEP đó |
 
 Plan này chưa phải lệnh triển khai. Chỉ bắt đầu viết code sau khi người dùng duyệt plan và các quyết định ở Mục 3 được chốt.
@@ -42,7 +43,7 @@ Plan này chưa phải lệnh triển khai. Chỉ bắt đầu viết code sau k
 - SSO và thay đổi authentication.
 - Retention scheduler, cảnh báo xóa, exception hold, OTP/chữ ký điện tử.
 - Candidate Rediscovery.
-- Analytics/override tracking nâng cao, QA inspection queue, cross-position duplicate, OCR ảnh và comparison/export.
+- Analytics/override tracking nâng cao, cross-position duplicate, OCR ảnh và comparison/export.
 - Tự động gộp/xóa hồ sơ ứng viên.
 - Thay đổi thuật toán matching, BGE hoặc LTR.
 

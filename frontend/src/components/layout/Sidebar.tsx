@@ -10,6 +10,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import ApartmentIcon from '@mui/icons-material/Apartment';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
@@ -21,6 +22,7 @@ const menuGroups = [
       { text: 'Tổng quan công việc', icon: <BarChartIcon />, href: '/dashboard' },
       { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
       { text: 'Shortlist & phản hồi', icon: <PeopleIcon />, href: '/shortlist' },
+      { text: 'Kiểm định chất lượng', icon: <FactCheckIcon />, href: '/qa' },
     ],
   },
   {

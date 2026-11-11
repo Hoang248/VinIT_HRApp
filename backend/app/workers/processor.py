@@ -32,6 +32,7 @@ from app.services.semantic_diagnostics import record_semantic_run
 from app.services.ltr import LTRModel, artifact_sha256, extract_ranking_features
 from app.services.semantic_retrieval import merge_candidate_chunks, retrieve_semantic_candidates
 from app.services.redaction import redact_text
+from app.services import qa_sampling
 from app.services.ai_config import (
     get_active_runtime, hydrate_runtime_secret, runtime_context, runtime_snapshot,
 )
@@ -1373,6 +1374,19 @@ class ProcessingWorker:
             },
         ):
             self._generate_ranking(operation_id, db, criteria_version_id=criteria_version_id)
+        self._create_qa_samples(position_id, criteria_version_id, db)
+
+    def _create_qa_samples(self, position_id: str, criteria_version_id: str, db):
+        """F2.04: sample finished batches for QA; never fails the assessment operation."""
+        try:
+            runs = qa_sampling.create_auto_runs_for_position(
+                db, position_id=position_id, criteria_version_id=criteria_version_id)
+            db.commit()
+            if runs:
+                logger.info("QA sample runs created", position_id=position_id, count=len(runs))
+        except Exception as exc:
+            db.rollback()
+            logger.error("QA sample creation failed", position_id=position_id, error_type=type(exc).__name__)
 
     def _generate_ranking(self, operation_id: UUID, db, criteria_version_id: Optional[str] = None):
         """Generate a snapshot for one position and one approved rubric version."""

@@ -519,6 +519,7 @@ def execute_retention_case(*, case_id: str, actor_user_id: str) -> dict:
         db.execute(text("DELETE FROM app_private.ranking_items WHERE application_id=:application_id"), params)
         db.execute(text("DELETE FROM app_private.duplicate_signals WHERE application_id_1=:application_id OR application_id_2=:application_id"), params)
         db.execute(text("DELETE FROM app_private.cv_chunk_embeddings WHERE application_id=:application_id"), params)
+        db.execute(text("DELETE FROM app_private.qa_sample_items WHERE application_id=:application_id"), params)
         db.execute(text("DELETE FROM app_private.assessment_runs WHERE application_id=:application_id"), params)
         db.execute(text("DELETE FROM app_private.profile_versions WHERE application_id=:application_id"), params)
         db.execute(text("DELETE FROM app_private.application_private_notes WHERE application_id=:application_id"), params)
