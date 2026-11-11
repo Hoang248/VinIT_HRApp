@@ -200,6 +200,16 @@ export interface Application {
   updated_at?: string;
 }
 
+export interface RankingCriterionResult {
+  criterion_id: string;
+  criterion_name: string;
+  category: string;
+  outcome: 'STRONG_MATCH' | 'MATCH' | 'UNCLEAR' | 'NO_MATCH';
+  score: number | null;
+  effective_weight: number | null;
+  requires_verification: boolean;
+}
+
 export interface RankingItem {
   rank_number: number | null;
   application_id: string;
@@ -210,6 +220,7 @@ export interface RankingItem {
   ltr_score?: number | null;
   needs_verification: boolean;
   has_mismatch: boolean;
+  criterion_results?: RankingCriterionResult[];
   file_processing_status?: 'COMPLETED' | 'PROCESSING' | 'NEEDS_HR_REVIEW' | 'UNKNOWN';
   file_error?: string;
   has_duplicate_warning?: boolean;

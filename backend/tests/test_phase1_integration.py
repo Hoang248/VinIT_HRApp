@@ -996,8 +996,18 @@ def test_latest_ranking_excludes_candidates_outside_screening_and_old_rubrics(cl
             VALUES (:id,:pos,:app,:jd,:cv,:profile,'COMPLETED','MEETS_MANDATORY',1)"""), {'id': assessment, 'pos': seed['pos'], 'app': seed['app'], 'jd': seed['jd'], 'cv': seed['cv'], 'profile': profile})
         conn.execute(text("INSERT INTO app_private.ranking_items(ranking_run_id,position_id,application_id,assessment_id,rank_number,ranking_status,evidence_coverage) VALUES (:run,:pos,:app,:assessment,1,'MEETS_MANDATORY',1)"),
                      {"run": ranking, "pos": seed["pos"], "app": seed["app"], "assessment": assessment})
+        conn.execute(text("INSERT INTO app_private.criterion_assessment_results(assessment_id,criterion_id,outcome,score) VALUES (:assessment,:criterion,'MATCH',80)"),
+                     {"assessment": assessment, "criterion": seed["criterion"]})
     endpoint = f"/v1/assessments/ranking/latest/{seed['pos']}"
-    assert len(client.get(endpoint, headers=headers(seed["hr"])).json()) == 1
+    latest = client.get(endpoint, headers=headers(seed["hr"])).json()
+    assert len(latest) == 1
+    # The ranking list carries the per-criterion breakdown of the ranked
+    # assessment; the seed rubric is one MUST_HAVE item at 100% of a 70%
+    # group, so its effective weight is 70% of the whole rubric.
+    assert latest[0]["criterion_results"] == [{
+        "criterion_id": seed["criterion"], "criterion_name": "Python", "category": "MUST_HAVE",
+        "outcome": "MATCH", "score": 80.0, "effective_weight": 70.0, "requires_verification": False,
+    }]
     with engine.begin() as conn:
         conn.execute(text("UPDATE app_private.applications SET application_status='INTERVIEW' WHERE application_id=:id"), {"id": seed["app"]})
     assert client.get(endpoint, headers=headers(seed["hr"])).json() == []

@@ -939,5 +939,20 @@
   "Chưa bắt đầu": "Not started",
   "Đang bị chặn": "Blocked",
   "Công việc tuyển dụng": "Recruitment work",
-  "Shortlist & phản hồi": "Shortlist & feedback"
+  "Shortlist & phản hồi": "Shortlist & feedback",
+  "Cách đọc danh sách: điểm một phần chỉ tính trên phần trọng số đã có bằng chứng (cột Độ phủ), chưa phải điểm cuối. Ô chọn ở đầu mỗi dòng chỉ dùng để chọn hồ sơ đã Shortlist khi chia sẻ cho Hiring Manager. Mở rộng từng dòng để xem kết quả theo từng tiêu chí.": "How to read this list: a partial score only counts the rubric weight that already has evidence (Coverage column) and is not the final score. The checkbox at the start of each row only selects Shortlisted applications when sharing with the Hiring Manager. Expand a row to see results per criterion.",
+  "Chưa có kết quả theo tiêu chí. Hãy chạy đánh giá để xem chi tiết.": "No per-criterion results yet. Run the assessment to see details.",
+  "Trọng số {0}%": "Weight {0}%",
+  "Điểm một phần: chỉ tính trên {0}% trọng số tiêu chí đã có bằng chứng, chưa phải điểm cuối.": "Partial score: calculated only on the {0}% of rubric weight that already has evidence; not the final score.",
+  "Điểm cuối: đã tính trên toàn bộ trọng số tiêu chí.": "Final score: calculated on the full rubric weight.",
+  "một phần": "partial",
+  "Chi tiết tiêu chí": "Criterion details",
+  "Chi tiết tiêu chí của {0}": "Criterion details of {0}",
+  "Thu gọn chi tiết tiêu chí": "Collapse criterion details",
+  "Xem kết quả theo từng tiêu chí": "View results per criterion",
+  "Mở hồ sơ để đối chiếu bằng chứng": "Open application to review evidence",
+  "Chọn tất cả hồ sơ Shortlist đang hiển thị để chia sẻ": "Select all visible Shortlisted applications to share",
+  "Chọn hồ sơ để chia sẻ shortlist": "Select application to share the shortlist",
+  "Chỉ chọn được hồ sơ đã Shortlist để chia sẻ cho Hiring Manager": "Only Shortlisted applications can be selected for sharing with the Hiring Manager",
+  "Chuyển hồ sơ sang Shortlist để chọn chia sẻ cho Hiring Manager.": "Move the application to Shortlist to select it for sharing with the Hiring Manager."
 }

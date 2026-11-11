@@ -146,6 +146,23 @@ class ApplicationWithAssessment(Application):
     can_manage_hr_notes: bool = False
 
 
+class RankingCriterionResult(BaseSchema):
+    """Per-criterion summary shown next to a ranking row.
+
+    ``effective_weight`` is the criterion's share of the whole rubric in
+    percent (group total x weight inside the group), so HR can see why a
+    partial score only covers part of the rubric.
+    """
+
+    criterion_id: UUID
+    criterion_name: str
+    category: str
+    outcome: str
+    score: Optional[float] = None
+    effective_weight: Optional[float] = None
+    requires_verification: bool = False
+
+
 class RankingItem(BaseSchema):
     rank_number: Optional[int]
     application_id: UUID
@@ -156,3 +173,4 @@ class RankingItem(BaseSchema):
     ltr_score: Optional[float] = None
     needs_verification: bool
     has_mismatch: bool
+    criterion_results: List[RankingCriterionResult] = Field(default_factory=list)

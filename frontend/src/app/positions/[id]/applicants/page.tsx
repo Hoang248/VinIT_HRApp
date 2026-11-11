@@ -43,6 +43,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import ShareIcon from '@mui/icons-material/Share';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import Checkbox from '@mui/material/Checkbox';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
@@ -73,6 +75,17 @@ import { APPLICATION_STATUSES, isApplicationStatus } from '@/lib/applicationStat
 
 const inScreening = (status?: string) => ['NEW', 'IN_REVIEW', 'SHORTLIST'].includes(status || '');
 
+const OUTCOME_META: Record<string, { label: string; color: string }> = {
+  STRONG_MATCH: { label: 'Đáp ứng tốt', color: '#067647' },
+  MATCH: { label: 'Đáp ứng', color: '#0A2B57' },
+  UNCLEAR: { label: 'Chưa rõ', color: '#B54708' },
+  NO_MATCH: { label: 'Chưa đáp ứng', color: '#C72127' },
+};
+
+/** A score is only final once every rubric weight has clear evidence. */
+const isPartialScore = (item: RankingItem) =>
+  item.matching_score != null && item.evidence_coverage != null && item.evidence_coverage < 1;
+
 export default function ApplicantsRankingPage() {
   const { t } = useI18n();
   const params = useParams();
@@ -100,6 +113,47 @@ export default function ApplicantsRankingPage() {
   const [shareRecipientOptions, setShareRecipientOptions] = useState<UserSummary[]>([]);
   const [shareAllowCv, setShareAllowCv] = useState(false);
   const [shareSubmitting, setShareSubmitting] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (appId: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  };
+
+  const renderCriterionBreakdown = (item: RankingItem) => {
+    const results = item.criterion_results || [];
+    if (!results.length) {
+      return <Typography variant="body2" color="text.secondary">{t("Chưa có kết quả theo tiêu chí. Hãy chạy đánh giá để xem chi tiết.")}</Typography>;
+    }
+    return (
+      <Box sx={{ display: 'grid', gap: 0.75 }}>
+        {results.map(result => {
+          const meta = OUTCOME_META[result.outcome] || OUTCOME_META.UNCLEAR;
+          return (
+            <Box key={result.criterion_id} sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="body2" fontWeight={600} sx={{ minWidth: 180, flex: '1 1 180px' }}>{result.criterion_name}</Typography>
+              <Chip size="small" label={t(result.category === 'MUST_HAVE' ? "Bắt buộc" : "Ưu tiên")} sx={{ height: 20, fontSize: 10, backgroundColor: result.category === 'MUST_HAVE' ? '#FDF2F2' : '#E8F1FC', color: result.category === 'MUST_HAVE' ? '#941616' : '#0A2B57', fontWeight: 600 }} />
+              <Typography variant="caption" color="text.secondary">{t("Trọng số {0}%", result.effective_weight ?? '—')}</Typography>
+              <Chip size="small" variant="outlined" label={t(meta.label)} sx={{ height: 22, fontSize: 11, fontWeight: 700, color: meta.color, borderColor: meta.color }} />
+              <Typography variant="body2" fontWeight={700} sx={{ color: meta.color, minWidth: 44 }}>{result.score == null ? '—' : `${result.score}%`}</Typography>
+              {(result.outcome === 'UNCLEAR' || result.requires_verification) && (
+                <Typography variant="caption" sx={{ color: '#B54708' }}>{t("Cần HR xác minh")}</Typography>
+              )}
+            </Box>
+          );
+        })}
+        {isPartialScore(item) && (
+          <Typography variant="caption" sx={{ color: '#B54708', mt: 0.5 }}>
+            {t("Điểm một phần: chỉ tính trên {0}% trọng số tiêu chí đã có bằng chứng, chưa phải điểm cuối.", Math.round((item.evidence_coverage ?? 0) * 100))}
+          </Typography>
+        )}
+      </Box>
+    );
+  };
 
   const loadRanking = useCallback(async () => {
     try {
@@ -486,6 +540,10 @@ export default function ApplicantsRankingPage() {
         </Box>
       )}
 
+      <Alert severity="info" sx={{ mb: 3 }}>
+        {t("Cách đọc danh sách: điểm một phần chỉ tính trên phần trọng số đã có bằng chứng (cột Độ phủ), chưa phải điểm cuối. Ô chọn ở đầu mỗi dòng chỉ dùng để chọn hồ sơ đã Shortlist khi chia sẻ cho Hiring Manager. Mở rộng từng dòng để xem kết quả theo từng tiêu chí.")}
+      </Alert>
+
       {/* Cards keep the primary actions visible on narrow screens. */}
       <Box sx={{ display: { xs: 'grid', md: 'none' }, gap: 2 }}>
         {filteredItems.length === 0 ? (
@@ -505,8 +563,11 @@ export default function ApplicantsRankingPage() {
                 {item.has_duplicate_warning && <Chip size="small" color="warning" variant="outlined" label={t("Hồ sơ trùng lặp")} />}
                 {item.evidence_coverage != null && item.evidence_coverage < 0.7 && <Chip size="small" color="warning" variant="outlined" label={t("Độ phủ thấp — cần xác minh")} />}
               </Box>
-              <Typography variant="body2" sx={{ mt: 1.5 }}>{t("Điểm: ")}<strong>{item.matching_score == null ? '—' : `${item.matching_score}%`}</strong>{t("· Độ phủ: ")}<strong>{item.evidence_coverage == null ? '—' : `${Math.round(item.evidence_coverage * 100)}%`}</strong></Typography>
+              <Typography variant="body2" sx={{ mt: 1.5 }}>{t("Điểm: ")}<strong>{item.matching_score == null ? '—' : `${item.matching_score}%`}</strong>{isPartialScore(item) && <Chip size="small" label={t("một phần")} sx={{ height: 20, fontSize: 10, ml: 0.5, backgroundColor: '#FFFAEB', color: '#B54708', fontWeight: 700 }} />}{t("· Độ phủ: ")}<strong>{item.evidence_coverage == null ? '—' : `${Math.round(item.evidence_coverage * 100)}%`}</strong></Typography>
+              <Button size="small" onClick={() => toggleExpanded(item.application_id)} endIcon={expandedIds.has(item.application_id) ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />} sx={{ mt: 0.5, px: 0.5 }}>{t("Chi tiết tiêu chí")}</Button>
+              {expandedIds.has(item.application_id) && <Box sx={{ mt: 1 }}>{renderCriterionBreakdown(item)}</Box>}
               {item.is_shortlisted && <FormControlLabel sx={{ display: 'flex', mt: 0.5 }} control={<Checkbox checked={selectedIds.has(item.application_id)} onChange={() => handleToggleSelect(item.application_id)} />} label={t("Chọn để chia sẻ")} />}
+              {!item.is_shortlisted && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>{t("Chuyển hồ sơ sang Shortlist để chọn chia sẻ cho Hiring Manager.")}</Typography>}
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5 }}>
                 <Button component={Link} href={`/positions/${positionId}/applicants/${item.application_id}`} onClick={storeNavigationContext} variant="outlined" size="small">{t("Xem chi tiết")}</Button>
                 {(item.is_shortlisted || item.application_status === 'IN_REVIEW') && <Button size="small" onClick={() => handleToggleShortlist(item.application_id, !!item.is_shortlisted)}>{item.is_shortlisted ? t("Bỏ shortlist") : t("Thêm vào shortlist")}</Button>}
@@ -521,13 +582,17 @@ export default function ApplicantsRankingPage() {
           <TableHead>
             <TableRow>
               <TableCell padding="checkbox" width="40">
-                <Checkbox
-                  inputProps={{ 'aria-label': t("Chọn tất cả hồ sơ shortlist đang hiển thị") }}
-                  checked={filteredItems.filter(i => i.is_shortlisted).length > 0 && filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
-                  indeterminate={selectedIds.size > 0 && !filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
-                  onChange={handleSelectAllVisible}
-                  disabled={filteredItems.filter(i => i.is_shortlisted).length === 0}
-                />
+                <Tooltip title={t("Chọn tất cả hồ sơ Shortlist đang hiển thị để chia sẻ")}>
+                  <span>
+                    <Checkbox
+                      inputProps={{ 'aria-label': t("Chọn tất cả hồ sơ shortlist đang hiển thị") }}
+                      checked={filteredItems.filter(i => i.is_shortlisted).length > 0 && filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
+                      indeterminate={selectedIds.size > 0 && !filteredItems.filter(i => i.is_shortlisted).every(i => selectedIds.has(i.application_id))}
+                      onChange={handleSelectAllVisible}
+                      disabled={filteredItems.filter(i => i.is_shortlisted).length === 0}
+                    />
+                  </span>
+                </Tooltip>
               </TableCell>
               <TableCell width="70">{t("Thứ hạng")}</TableCell>
               <TableCell>{t("Ứng viên")}</TableCell>
@@ -549,14 +614,19 @@ export default function ApplicantsRankingPage() {
               </TableRow>
             ) : (
               filteredItems.map((item) => (
-                <TableRow key={item.application_id} hover selected={selectedIds.has(item.application_id)}>
+                <React.Fragment key={item.application_id}>
+                <TableRow hover selected={selectedIds.has(item.application_id)}>
                   <TableCell padding="checkbox">
-                    <Checkbox
-                      inputProps={{ 'aria-label': t("Chọn hồ sơ {0} để chia sẻ", item.candidate_name || t("ứng viên")) }}
-                      checked={selectedIds.has(item.application_id)}
-                      disabled={!item.is_shortlisted}
-                      onChange={() => handleToggleSelect(item.application_id)}
-                    />
+                    <Tooltip title={item.is_shortlisted ? t("Chọn hồ sơ để chia sẻ shortlist") : t("Chỉ chọn được hồ sơ đã Shortlist để chia sẻ cho Hiring Manager")}>
+                      <span>
+                        <Checkbox
+                          inputProps={{ 'aria-label': t("Chọn hồ sơ {0} để chia sẻ", item.candidate_name || t("ứng viên")) }}
+                          checked={selectedIds.has(item.application_id)}
+                          disabled={!item.is_shortlisted}
+                          onChange={() => handleToggleSelect(item.application_id)}
+                        />
+                      </span>
+                    </Tooltip>
                   </TableCell>
                   <TableCell>
                     <Typography
@@ -607,18 +677,29 @@ export default function ApplicantsRankingPage() {
                   </TableCell>
                   <TableCell>{getMatchingStatusBadge(item)}</TableCell>
                   <TableCell align="center">
-                    <Typography
-                      variant="h4"
-                      sx={{
-                        fontSize: 20,
-                        fontWeight: 'bold',
-                        color: item.evidence_coverage != null && item.evidence_coverage < 0.7 ? '#B54708' : getScoreColor(item.matching_score),
-                      }}
-                    >
-                      {item.matching_score !== null && item.matching_score !== undefined
-                        ? `${item.matching_score}%`
-                        : '—'}
-                    </Typography>
+                    {item.matching_score === null || item.matching_score === undefined ? (
+                      <Typography variant="h4" sx={{ fontSize: 20, fontWeight: 'bold', color: 'text.disabled' }}>—</Typography>
+                    ) : (
+                      <Tooltip title={isPartialScore(item)
+                        ? t("Điểm một phần: chỉ tính trên {0}% trọng số tiêu chí đã có bằng chứng, chưa phải điểm cuối.", Math.round((item.evidence_coverage ?? 0) * 100))
+                        : t("Điểm cuối: đã tính trên toàn bộ trọng số tiêu chí.")}>
+                        <Box>
+                          <Typography
+                            variant="h4"
+                            sx={{
+                              fontSize: 20,
+                              fontWeight: 'bold',
+                              color: isPartialScore(item) ? '#B54708' : getScoreColor(item.matching_score),
+                            }}
+                          >
+                            {`${item.matching_score}%`}
+                          </Typography>
+                          {isPartialScore(item) && (
+                            <Typography variant="caption" sx={{ display: 'block', color: '#B54708', fontWeight: 700 }}>{t("một phần")}</Typography>
+                          )}
+                        </Box>
+                      </Tooltip>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -664,6 +745,17 @@ export default function ApplicantsRankingPage() {
                     </Tooltip>
                   </TableCell>
                   <TableCell align="right">
+                    <Tooltip title={expandedIds.has(item.application_id) ? t("Thu gọn chi tiết tiêu chí") : t("Xem kết quả theo từng tiêu chí")}>
+                      <IconButton
+                        onClick={() => toggleExpanded(item.application_id)}
+                        aria-label={t("Chi tiết tiêu chí của {0}", item.candidate_name || t("ứng viên"))}
+                        aria-expanded={expandedIds.has(item.application_id)}
+                        size="small"
+                        sx={{ color: '#0A2B57' }}
+                      >
+                        {expandedIds.has(item.application_id) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title={t("Xem chi tiết & đối chiếu bằng chứng")}>
                       <IconButton
                         component={Link}
@@ -677,6 +769,23 @@ export default function ApplicantsRankingPage() {
                     </Tooltip>
                   </TableCell>
                 </TableRow>
+                {expandedIds.has(item.application_id) && (
+                  <TableRow>
+                    <TableCell colSpan={8} sx={{ backgroundColor: '#F9FAFB', py: 2 }}>
+                      {renderCriterionBreakdown(item)}
+                      <Button
+                        component={Link}
+                        href={`/positions/${positionId}/applicants/${item.application_id}`}
+                        onClick={storeNavigationContext}
+                        size="small"
+                        sx={{ mt: 1.5 }}
+                      >
+                        {t("Mở hồ sơ để đối chiếu bằng chứng")}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )}
+                </React.Fragment>
               ))
             )}
           </TableBody>
