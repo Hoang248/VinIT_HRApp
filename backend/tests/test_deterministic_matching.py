@@ -113,9 +113,10 @@ def test_negated_skill_mention_is_unresolved_not_a_rule_match():
     result = deterministic_matcher.evaluate_criteria(text, criteria, {})
     assert result["findings"] == []
     assert result["unresolved_criterion_ids"] == ["docker"]
-    # The negation behaviour changed in v1.2; the version is part of the
-    # assessment fingerprint, so existing assessments must be recalculated.
-    assert result["rule_version"] == "deterministic-rules-v1.2"
+    # The negation behaviour changed in v1.2 and Docker synonym grouping in
+    # v1.3; the version is part of the assessment fingerprint, so existing
+    # assessments must be recalculated after either change.
+    assert result["rule_version"] == "deterministic-rules-v1.3"
 
 
 def test_positive_skill_still_matches_when_another_sentence_is_negated():
@@ -140,6 +141,40 @@ def test_vietnamese_negated_skill_mention_is_unresolved():
     )]
     result = deterministic_matcher.evaluate_criteria(
         "KINH NGHIỆM\nChưa có kinh nghiệm Docker hoặc triển khai container.", criteria, {})
+    assert result["findings"] == []
+    assert result["unresolved_criterion_ids"] == ["docker"]
+
+
+def test_docker_synonyms_are_one_concept_and_match_positive_evidence():
+    criteria = [criterion(
+        "docker", "Docker/container delivery", "Docker or containerised deployment experience",
+        category="NICE_TO_HAVE", keywords=["Docker", "container", "Kubernetes"],
+    )]
+    spec = deterministic_matcher.build_requirement_spec(criteria[0])
+    assert [term.label for term in spec.terms] == ["docker"]
+    assert "containers" in spec.terms[0].variants
+    assert "containerised" in spec.terms[0].variants
+
+    cases = {
+        "Delivered services with Docker containers and CI pipelines; maintained containerised staging deployments.": "STRONG_MATCH",
+        "Đóng gói dịch vụ bằng Docker và triển khai lên môi trường staging.": "MATCH",
+        "Packaged internal tools with Docker for staging use.": "MATCH",
+    }
+    for text, expected in cases.items():
+        result = deterministic_matcher.evaluate_criteria(f"WORK EXPERIENCE\n{text}", criteria, {})
+        assert result["findings"], text
+        assert result["findings"][0]["outcome"] == expected
+        assert result["findings"][0]["decision_source"] == "RULE"
+
+
+def test_docker_remains_unresolved_when_note_says_it_is_unclear():
+    criteria = [criterion(
+        "docker", "Docker/container delivery", "Docker or containerised deployment experience",
+        category="NICE_TO_HAVE", keywords=["Docker", "container", "Kubernetes"],
+    )]
+    result = deterministic_matcher.evaluate_criteria(
+        "Skills\nJava, Spring Boot, MySQL.\n\n"
+        "Note: PostgreSQL and Docker remain unclear.", criteria, {})
     assert result["findings"] == []
     assert result["unresolved_criterion_ids"] == ["docker"]
 

@@ -40,6 +40,11 @@ def test_staging_manifest_is_synthetic_and_complete():
     # NO_MATCH; HR must verify before any rejection.
     assert java_only["expected_criteria"]["python_backend"] == "UNCLEAR"
     assert "remains UNCLEAR" in java_only["expected_gate"]
+    partial = next(candidate for candidate in manifest["candidates"] if candidate["key"] == "partial_backend")
+    # The Python rubric keeps its 4-year requirement; a stated 2 years is
+    # therefore UNCLEAR for HR verification, not a MATCH or automatic NO_MATCH.
+    assert partial["expected_criteria"]["python_backend"] == "UNCLEAR"
+    assert partial["expected_criteria"]["docker"] == "UNCLEAR"
 
 
 def test_generate_staging_docx_fixtures(tmp_path):

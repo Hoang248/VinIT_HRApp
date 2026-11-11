@@ -141,11 +141,11 @@
         "phone": "+84 000 000 002"
       },
       "expected_criteria": {
-        "python_backend": "MATCH",
+        "python_backend": "UNCLEAR",
         "postgresql": "STRONG_MATCH",
         "docker": "UNCLEAR"
       },
-      "expected_gate": "Docker must remain UNCLEAR and reduce evidence coverage; it must not be scored as NO_MATCH."
+      "expected_gate": "Python remains UNCLEAR because the CV states 2 years against the 4-year requirement; Docker must also remain UNCLEAR and reduce evidence coverage. Neither may be scored as NO_MATCH without HR verification."
     },
     {
       "key": "java_only",

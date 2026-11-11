@@ -152,6 +152,12 @@ NEGATION_CUES = (
     "khong co", "chua co", "khong", "chua", "thieu",
 )
 CONTRAST_CUES = ("but", "however", "instead", "nhung", "tuy nhien")
+# Trailing uncertainty ("Docker remains unclear") is also absence evidence,
+# even though the cue appears after the keyword.
+UNCERTAIN_CUES = (
+    "remain unclear", "remains unclear", "is unclear", "are unclear",
+    "still unclear", "chua ro", "khong ro",
+)
 
 DEGREE_PATTERNS: tuple[tuple[int, tuple[str, ...]], ...] = (
     (5, ("phd", "ph d", "doctorate", "doctoral degree", "tien si")),
@@ -428,6 +434,45 @@ class DeterministicMatchingEngine:
             groups[label] = TermGroup(label=label, variants=tuple(sorted(variants)))
 
     @staticmethod
+    def _merge_container_delivery_terms(groups: dict[str, TermGroup]) -> dict[str, TermGroup]:
+        """Treat Docker/container/Kubernetes keywords as one delivery concept.
+
+        Rubrics commonly list these as alternative evidence for the same
+        criterion ("Docker or containerised deployment").  Keeping them as
+        separate denominator terms made a CV that only says "Docker" score
+        1/4 coverage and fall through to the LLM.  Merge only when at least
+        two of the synonym labels are present, so a Kubernetes-only rubric
+        is not silently broadened to Docker.
+        """
+        synonym_labels = {"docker", "container", "kubernetes"}
+        phrase_label = "docker container delivery"
+        if len(synonym_labels & set(groups)) < 2 and phrase_label not in groups:
+            return groups
+        variants = {
+            "container", "containers", "containerised", "containerized",
+            "containerisation", "containerization", "container delivery",
+            "container deployment", "container deployments", "docker",
+            "docker container", "docker containers", "docker delivery",
+            "docker deployment", "docker deployments", "kubernetes", "k8s",
+        }
+        for label in synonym_labels | {phrase_label}:
+            if label in groups:
+                variants.update(groups[label].variants)
+        merged: dict[str, TermGroup] = {}
+        inserted = False
+        for label, group in groups.items():
+            if label in synonym_labels or label == phrase_label:
+                if not inserted:
+                    merged["docker"] = TermGroup(
+                        label="docker", variants=tuple(sorted(variants)))
+                    inserted = True
+                continue
+            merged[label] = group
+        if not inserted:
+            merged["docker"] = TermGroup(label="docker", variants=tuple(sorted(variants)))
+        return merged
+
+    @staticmethod
     def _parse_min_years(combined: str) -> float | None:
         normalized = str(combined or "").lower()
         values: list[float] = []
@@ -478,6 +523,7 @@ class DeterministicMatchingEngine:
         if isinstance(raw_terms, list):
             for term in raw_terms:
                 self._add_term(groups, term)
+        groups = self._merge_container_delivery_terms(groups)
         terms = tuple(list(groups.values())[:12]) or inferred.terms
 
         def pick(key: str, default: Any) -> Any:
@@ -572,6 +618,7 @@ class DeterministicMatchingEngine:
         else:
             kind = "SKILL"
 
+        groups = self._merge_container_delivery_terms(groups)
         return RequirementSpec(
             criterion_id=str(criterion.get("criterion_id") or ""),
             name=name,
@@ -758,9 +805,14 @@ class DeterministicMatchingEngine:
 
     @classmethod
     def _is_negated_occurrence(cls, padded_sentence: str, term_start: int) -> bool:
+        # "Docker remains unclear" states uncertainty after the keyword.
+        if any(f" {cue} " in padded_sentence[term_start:] for cue in UNCERTAIN_CUES):
+            return True
         negation_ends = [
             end for _start, end in cls._cue_positions(padded_sentence, NEGATION_CUES)
-            if end <= term_start
+            # The cue's trailing space is also the term needle's leading
+            # space, so an immediately preceding cue ends at term_start + 1.
+            if end <= term_start + 1
         ]
         if not negation_ends:
             return False
@@ -801,6 +853,13 @@ class DeterministicMatchingEngine:
         for sentence in cls._sentences(chunk.text):
             found.update(cls._positive_labels_in_sentence(spec, sentence))
         return [term.label for term in spec.terms if term.label in found]
+
+    @classmethod
+    def _positive_sentence_count(cls, spec: RequirementSpec, chunk: DocumentChunk) -> int:
+        return sum(
+            1 for sentence in cls._sentences(chunk.text)
+            if cls._positive_labels_in_sentence(spec, sentence)
+        )
 
     @staticmethod
     def _section_factor(kind: str, section: str) -> float:
@@ -1211,6 +1270,12 @@ class DeterministicMatchingEngine:
         strong = (
             (duration_years and max(duration_years) >= 3)
             or (len(best.matched_labels) >= 2 and best.coverage >= 0.8
+                and best.chunk.section in {"WORK", "PROJECT"})
+            # A single-concept rubric (e.g. Docker delivery after synonym
+            # grouping) can still be strong when work evidence repeats it in
+            # independent sentences.
+            or (best.coverage >= 0.8
+                and self._positive_sentence_count(spec, best.chunk) >= 2
                 and best.chunk.section in {"WORK", "PROJECT"})
         )
         outcome = "STRONG_MATCH" if strong else "MATCH"
