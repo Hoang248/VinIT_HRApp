@@ -113,6 +113,9 @@ def test_negated_skill_mention_is_unresolved_not_a_rule_match():
     result = deterministic_matcher.evaluate_criteria(text, criteria, {})
     assert result["findings"] == []
     assert result["unresolved_criterion_ids"] == ["docker"]
+    # The negation behaviour changed in v1.2; the version is part of the
+    # assessment fingerprint, so existing assessments must be recalculated.
+    assert result["rule_version"] == "deterministic-rules-v1.2"
 
 
 def test_positive_skill_still_matches_when_another_sentence_is_negated():
