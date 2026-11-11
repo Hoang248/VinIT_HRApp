@@ -200,6 +200,18 @@ def normalize_text(value: Any) -> str:
     return " ".join(alnum.split())
 
 
+def _accentless_lower(value: Any) -> str:
+    """Lowercase and strip accents without touching digits or punctuation.
+
+    Duration phrases such as Vietnamese "5 năm" must still match the
+    accent-free cue "nam", while decimal values ("7.5 years") keep their
+    separator for the numeric patterns.
+    """
+    lowered = str(value or "").lower().replace("đ", "d")
+    decomposed = unicodedata.normalize("NFKD", lowered)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
 def _contains_phrase(normalized_text: str, phrase: str) -> bool:
     phrase = normalize_text(phrase)
     if not phrase:
@@ -473,8 +485,41 @@ class DeterministicMatchingEngine:
         return merged
 
     @staticmethod
+    def _merge_python_framework_terms(groups: dict[str, TermGroup]) -> dict[str, TermGroup]:
+        """Treat FastAPI/Django/Flask keywords as one framework concept.
+
+        Rubrics list these frameworks as alternative evidence for Python
+        backend work ("FastAPI, Django or Flask").  Keeping them as separate
+        denominator terms capped a FastAPI-only CV at 3/5 coverage, blocked
+        STRONG_MATCH and pushed otherwise clear CVs to the LLM fallback.
+        Merge only when at least two framework labels are present, so a
+        rubric that specifically requires Django keeps its exact meaning.
+        """
+        framework_labels = {"fastapi", "django", "flask"}
+        if len(framework_labels & set(groups)) < 2:
+            return groups
+        variants = {"fastapi", "django", "flask"}
+        for label in framework_labels:
+            if label in groups:
+                variants.update(groups[label].variants)
+        merged: dict[str, TermGroup] = {}
+        inserted = False
+        for label, group in groups.items():
+            if label in framework_labels:
+                if not inserted:
+                    merged["python framework"] = TermGroup(
+                        label="python framework", variants=tuple(sorted(variants)))
+                    inserted = True
+                continue
+            merged[label] = group
+        if not inserted:
+            merged["python framework"] = TermGroup(
+                label="python framework", variants=tuple(sorted(variants)))
+        return merged
+
+    @staticmethod
     def _parse_min_years(combined: str) -> float | None:
-        normalized = str(combined or "").lower()
+        normalized = _accentless_lower(combined)
         values: list[float] = []
         for match in re.finditer(
             r"(\d+(?:[.,]\d+)?)\s*(?:-|to)\s*(\d+(?:[.,]\d+)?)\s*(?:years?|yrs?|nam)\b",
@@ -524,6 +569,7 @@ class DeterministicMatchingEngine:
             for term in raw_terms:
                 self._add_term(groups, term)
         groups = self._merge_container_delivery_terms(groups)
+        groups = self._merge_python_framework_terms(groups)
         terms = tuple(list(groups.values())[:12]) or inferred.terms
 
         def pick(key: str, default: Any) -> Any:
@@ -619,6 +665,7 @@ class DeterministicMatchingEngine:
             kind = "SKILL"
 
         groups = self._merge_container_delivery_terms(groups)
+        groups = self._merge_python_framework_terms(groups)
         return RequirementSpec(
             criterion_id=str(criterion.get("criterion_id") or ""),
             name=name,
@@ -642,7 +689,7 @@ class DeterministicMatchingEngine:
             float(match.group(1).replace(",", "."))
             for match in re.finditer(
                 r"(\d+(?:[.,]\d+)?)\s*\+?\s*(?:years?|yrs?|nam)\b",
-                str(text or "").lower(),
+                _accentless_lower(text),
             )
         ]
         number_words = {
@@ -659,7 +706,7 @@ class DeterministicMatchingEngine:
     @staticmethod
     def _date_intervals_in(text: str, current_year: int) -> list[tuple[int, int]]:
         """Return [start_month, end_month) intervals from date ranges."""
-        lowered = str(text or "").lower()
+        lowered = _accentless_lower(text)
         intervals: list[tuple[int, int]] = []
         pattern = re.compile(
             r"(?:(0?[1-9]|1[0-2])\s*/\s*)?(20\d{2})\s*(?:-|–|—|\bto\b|\buntil\b)\s*"
@@ -1292,8 +1339,34 @@ class DeterministicMatchingEngine:
         chunks: list[DocumentChunk],
         candidate_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        if spec.kind == "YEARS":
-            return self._evaluate_years(spec, chunks, candidate_profile)
+        if spec.kind == "YEARS" or (spec.kind == "SKILL" and spec.min_years is not None):
+            # A quantified duration in the criterion is a gate, not a hint:
+            # stored specs may keep kind=SKILL (an HR-edited or AI-drafted
+            # spec) while min_years still comes from the approved wording.
+            # The skill rule alone must never declare a MATCH when the CV
+            # states fewer years than required, nor when no duration can be
+            # quantified at all; both stay unresolved for HR/LLM review.
+            finding = self._evaluate_years(spec, chunks, candidate_profile)
+            if finding is None or finding["outcome"] == "NO_MATCH":
+                return finding
+            # Full skill coverage in work evidence can still lift the plain
+            # years MATCH to STRONG_MATCH; the duration gate stays decisive.
+            strong_skill = any(
+                len(candidate.matched_labels) >= 2
+                and candidate.coverage >= 0.8
+                and candidate.chunk.section in {"WORK", "PROJECT"}
+                for candidate in self._candidates(spec, chunks)
+            )
+            if strong_skill and finding["outcome"] == "MATCH":
+                finding = {
+                    **finding,
+                    "outcome": "STRONG_MATCH",
+                    "reasoning": (
+                        finding["reasoning"]
+                        + " Skill terms are also fully covered in WORK evidence."
+                    ),
+                }
+            return finding
         if spec.kind == "DEGREE":
             return self._evaluate_degree(spec, chunks, candidate_profile)
         if spec.kind == "LANGUAGE":

@@ -113,10 +113,11 @@ def test_negated_skill_mention_is_unresolved_not_a_rule_match():
     result = deterministic_matcher.evaluate_criteria(text, criteria, {})
     assert result["findings"] == []
     assert result["unresolved_criterion_ids"] == ["docker"]
-    # The negation behaviour changed in v1.2 and Docker synonym grouping in
-    # v1.3; the version is part of the assessment fingerprint, so existing
-    # assessments must be recalculated after either change.
-    assert result["rule_version"] == "deterministic-rules-v1.3"
+    # The negation behaviour changed in v1.2, Docker synonym grouping in
+    # v1.3, and the Python years gate/framework grouping in v1.4; the
+    # version is part of the assessment fingerprint, so existing
+    # assessments must be recalculated after any of these changes.
+    assert result["rule_version"] == "deterministic-rules-v1.4"
 
 
 def test_positive_skill_still_matches_when_another_sentence_is_negated():
@@ -264,6 +265,72 @@ def test_phrase_constituent_token_does_not_satisfy_skill():
     assert result["findings"] == []
     assert result["unresolved_criterion_ids"] == ["c1"]
     assert result["fallback_chunks"]["c1"]
+
+
+def _production_python_criterion():
+    """The IT-0004 shape: HR-stored spec stays SKILL, years live in wording."""
+    item = criterion(
+        "python", "Python backend experience",
+        "At least 4 years building production Python backend APIs.",
+        keywords=["Python", "backend APIs", "FastAPI", "Django", "Flask"],
+    )
+    item["requirement_spec"] = {
+        "kind": "SKILL",
+        "terms": ["Python", "backend APIs", "FastAPI", "Django", "Flask"],
+        "min_years": None,
+        "required_languages": [],
+    }
+    return item
+
+
+def test_python_framework_alternatives_are_one_concept():
+    spec = deterministic_matcher.build_requirement_spec(_production_python_criterion())
+    assert [term.label for term in spec.terms] == ["python", "backend apis", "python framework"]
+    assert spec.min_years == 4.0
+    # A Django-specific rubric must not be broadened to other frameworks.
+    django_only = criterion("d", "Django", "Django experience", keywords=["Django"])
+    django_spec = deterministic_matcher.build_requirement_spec(django_only)
+    assert "python framework" not in [term.label for term in django_spec.terms]
+
+
+def test_skill_spec_with_years_wording_uses_years_gate():
+    criteria = [_production_python_criterion()]
+    strong = deterministic_matcher.evaluate_criteria(
+        "Summary\nBackend engineer with 6 years of experience building production Python backend APIs.\n\n"
+        "Experience\n- Built Python backend APIs with FastAPI and PostgreSQL.", criteria, {})
+    assert strong["findings"][0]["outcome"] == "STRONG_MATCH"
+    assert strong["findings"][0]["reasoning"].startswith("Deterministic years rule")
+
+    five_years = deterministic_matcher.evaluate_criteria(
+        "Summary\nPython backend engineer with 5 years of API development experience.\n\n"
+        "Experience\n- Built Python backend APIs and PostgreSQL-backed services.", criteria, {})
+    assert five_years["findings"][0]["outcome"] == "MATCH"
+    assert five_years["findings"][0]["reasoning"].startswith("Deterministic years rule")
+
+    # Stated 2 years against a 4-year gate stays unresolved, never a skill
+    # MATCH and never an automatic NO_MATCH from an unreliable fragment.
+    two_years = deterministic_matcher.evaluate_criteria(
+        "Summary\nBackend developer with 2 years of Python experience.\n\n"
+        "Experience\n- Developed Python backend APIs with FastAPI for order processing.", criteria, {})
+    assert two_years["findings"] == []
+    assert two_years["unresolved_criterion_ids"] == ["python"]
+
+    # Full skill coverage without any quantified duration is also
+    # unresolved: the years gate cannot be verified from skills alone.
+    no_years = deterministic_matcher.evaluate_criteria(
+        "Experience\n- Delivered Python backend APIs with FastAPI and PostgreSQL.", criteria, {})
+    assert no_years["findings"] == []
+    assert no_years["unresolved_criterion_ids"] == ["python"]
+
+
+def test_vietnamese_years_are_quantified_and_can_strong_match():
+    criteria = [_production_python_criterion()]
+    result = deterministic_matcher.evaluate_criteria(
+        "Tóm tắt\nKỹ sư backend với 5 năm kinh nghiệm phát triển API Python cho hệ thống nội bộ.\n\n"
+        "Kinh nghiệm\n- Phát triển backend APIs bằng Python và FastAPI cho quy trình phê duyệt.",
+        criteria, {})
+    assert result["candidate_years_experience"] == 5
+    assert result["findings"][0]["outcome"] == "STRONG_MATCH"
 
 
 def test_explicit_requirement_spec_overrides_text_inference():
