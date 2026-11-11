@@ -24,3 +24,6 @@ data/
 # IDE
 .vscode/
 .idea/
+
+# Short pytest temp dir used on Windows (see LOCAL_DEV.md)
+.pt/
