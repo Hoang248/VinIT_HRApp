@@ -152,6 +152,7 @@ class GenerateCriteriaRequest(BaseSchema):
 
 class ApprovalAction(str, Enum):
     APPROVE = "APPROVE"
+    DIRECT_APPROVE = "DIRECT_APPROVE"
     REJECT = "REJECT"
     REQUEST_CHANGES = "REQUEST_CHANGES"
 

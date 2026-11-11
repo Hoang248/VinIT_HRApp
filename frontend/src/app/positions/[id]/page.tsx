@@ -40,6 +40,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import TuneIcon from '@mui/icons-material/Tune';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -278,7 +279,7 @@ export default function PositionDetailPage() {
     } finally { setGenerating(false); }
   };
 
-  const handleApprove = async (action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) => {
+  const handleApprove = async (action: 'APPROVE' | 'DIRECT_APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) => {
     if (!currentCriteria || approving) return;
     try {
       setApproving(true); setError(null);
@@ -418,6 +419,7 @@ export default function PositionDetailPage() {
   const mySystemRoles = new Set(me?.system_roles || []);
   const isHR = myPositionRoles.has('HR_RECRUITER') || myPositionRoles.has('HR_LEAD') || mySystemRoles.has('ADMIN') || mySystemRoles.has('HR_LEAD');
   const isHM = myPositionRoles.has('HIRING_MANAGER');
+  const canDirectApprove = mySystemRoles.has('ADMIN') || mySystemRoles.has('HR_LEAD') || myPositionRoles.has('HR_LEAD');
   const isSameApprover = !!currentCriteria?.approved_by_hr && currentCriteria.approved_by_hr === me?.user_id;
   const canEditCriteria = isHR && !!currentCriteria && ['DRAFT', 'PENDING_HR_REVIEW'].includes(currentCriteria.status);
   const criteriaByCategory = (category: Criterion['category']) => currentCriteria?.criteria.filter(item => item.category === category) || [];
@@ -770,8 +772,8 @@ export default function PositionDetailPage() {
                   {approvalHistory.map(event => (
                     <Box key={event.event_id} sx={{ py: 1, borderTop: '1px solid #EDF1F5' }}>
                       <Typography variant="body2" fontWeight={600}>
-                        {event.reviewer_name || t("Người duyệt")} · {event.reviewer_role === 'HIRING_MANAGER' ? 'Hiring Manager' : 'HR'} ·{' '}
-                        {{ APPROVE: t("Đã duyệt"), REQUEST_CHANGES: t("Yêu cầu chỉnh sửa"), REJECT: t("Từ chối") }[event.decision as 'APPROVE' | 'REQUEST_CHANGES' | 'REJECT']}
+                        {event.reviewer_name || t("Người duyệt")} · {event.reviewer_role === 'HIRING_MANAGER' ? 'Hiring Manager' : event.reviewer_role === 'ADMIN' ? 'Admin' : event.reviewer_role === 'HR_LEAD' ? 'HR Lead' : 'HR'} ·{' '}
+                        {{ APPROVE: t("Đã duyệt"), DIRECT_APPROVE: t("Duyệt trực tiếp"), REQUEST_CHANGES: t("Yêu cầu chỉnh sửa"), REJECT: t("Từ chối") }[event.decision as 'APPROVE' | 'DIRECT_APPROVE' | 'REQUEST_CHANGES' | 'REJECT']}
                       </Typography>
                       <Typography variant="caption">{new Date(event.decided_at).toLocaleString(dateLocale)}</Typography>
                       {event.comment && <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{event.comment}</Typography>}
@@ -802,11 +804,17 @@ export default function PositionDetailPage() {
                               : t("Sau khi HR duyệt, hệ thống sẽ chuyển sang bước phê duyệt của Hiring Manager.")}
                           </Typography>
                           <Typography variant="caption" color="text.disabled" sx={{ mt: 0.5, display: 'block' }}>{t("                            Vai trò của bạn:")} {[
-                              isHR && 'HR Recruiter',
+                              mySystemRoles.has('ADMIN') && 'Admin',
+                              (mySystemRoles.has('HR_LEAD') || myPositionRoles.has('HR_LEAD')) && 'HR Lead',
+                              myPositionRoles.has('HR_RECRUITER') && 'HR Recruiter',
                               isHM && 'Hiring Manager',
-                              !isHR && !isHM && (me?.system_roles?.length ? me.system_roles.join(', ') : t("Chưa gán vai trò")),
-                            ].filter(Boolean).join(' · ')}
-                          </Typography>
+                              !isHR && !isHM && !canDirectApprove && (me?.system_roles?.length ? me.system_roles.join(', ') : t("Chưa gán vai trò")),
+                            ].filter(Boolean).join(' · ')}</Typography>
+                          {canDirectApprove && (
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                              {t("Admin hoặc HR Lead có thể duyệt trực tiếp, không cần chờ Hiring Manager; luồng HR → HM vẫn giữ nguyên.")}
+                            </Typography>
+                          )}
                         </Box>
                       </Box>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -829,6 +837,15 @@ export default function PositionDetailPage() {
                                   onClick={() => handleApprove('APPROVE')}
                                   disabled={approving || criteriaStale || !itemWeightsValid}
                                 >{t("HR duyệt & gửi HM")}</Button>
+                                {canDirectApprove && (
+                                  <Button
+                                    variant="contained"
+                                    color="warning"
+                                    startIcon={<AdminPanelSettingsIcon />}
+                                    onClick={() => handleApprove('DIRECT_APPROVE')}
+                                    disabled={approving || criteriaStale || !itemWeightsValid}
+                                  >{t("Admin/HR Lead duyệt trực tiếp")}</Button>
+                                )}
                               </>
                             )}
                             {!isHR && (
@@ -854,7 +871,16 @@ export default function PositionDetailPage() {
                                   disabled={approving || criteriaStale || isSameApprover || !itemWeightsValid}
                               >{t("HM duyệt chuyên môn")}</Button>
                             )}
-                            {!isHM && (
+                            {canDirectApprove && (
+                              <Button
+                                variant="contained"
+                                color="warning"
+                                startIcon={<AdminPanelSettingsIcon />}
+                                onClick={() => handleApprove('DIRECT_APPROVE')}
+                                disabled={approving || criteriaStale || !itemWeightsValid}
+                              >{t("Admin/HR Lead duyệt trực tiếp")}</Button>
+                            )}
+                            {!isHM && !canDirectApprove && (
                               <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>{t("Chờ Hiring Manager duyệt")}</Typography>
                             )}
                           </>

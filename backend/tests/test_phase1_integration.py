@@ -162,6 +162,71 @@ def test_dual_approval_requires_distinct_accounts_even_with_both_roles(client, s
     final = client.post(url, headers=headers(seed["hm"]), json={"action": "APPROVE"})
     assert final.status_code == 200 and final.json()["status"] == "APPROVED"
 
+
+def test_admin_and_hr_lead_can_directly_approve_without_hm(client, seed):
+    admin, lead = uid(), uid()
+    with engine.begin() as conn:
+        for user_id, role in ((admin, "ADMIN"), (lead, "HR_LEAD")):
+            conn.execute(text("INSERT INTO auth.users(id) VALUES (:id)"), {"id": user_id})
+            conn.execute(text("INSERT INTO app_private.user_profiles(user_id, display_name) VALUES (:id, :name)"),
+                         {"id": user_id, "name": role.title()})
+            conn.execute(text("INSERT INTO app_private.user_role_assignments(user_id, role_code) VALUES (:id, :role)"),
+                         {"id": user_id, "role": role})
+
+    route = f"/v1/criteria/{seed['cv']}/approve"
+    assert client.post(route, headers=headers(seed["hr"]), json={"action": "DIRECT_APPROVE"}).status_code == 403
+    assert client.post(route, headers=headers(seed["hm"]), json={"action": "DIRECT_APPROVE"}).status_code == 403
+
+    # HR Lead can finalize a draft directly; HM approval remains bypassed,
+    # not impersonated, so approved_by_hm stays empty.
+    response = client.post(route, headers=headers(lead), json={"action": "DIRECT_APPROVE"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "APPROVED"
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT status, approved_by_hr, approved_by_hm
+            FROM app_private.criteria_versions WHERE criteria_version_id = :id
+        """), {"id": seed["cv"]}).mappings().one()
+        events = conn.execute(text("""
+            SELECT reviewer_role, decision FROM app_private.criteria_approval_events
+            WHERE criteria_version_id = :id ORDER BY decided_at, event_id
+        """), {"id": seed["cv"]}).mappings().all()
+    assert row["status"] == "APPROVED" and row["approved_by_hm"] is None
+    assert [(event["reviewer_role"], event["decision"]) for event in events] == [("HR_LEAD", "DIRECT_APPROVE")]
+
+    # Admin can also finalize after the normal HR step, preserving the HR
+    # approver while still recording that HM was bypassed.
+    version_id, item_id = uid(), uid()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO app_private.criteria_versions
+                (criteria_version_id, position_id, jd_version_id, version_number, status)
+            VALUES (:id, :pos, :jd, 2, 'DRAFT')
+        """), {"id": version_id, "pos": seed["pos"], "jd": seed["jd"]})
+        conn.execute(text("""
+            INSERT INTO app_private.criteria_items
+                (criterion_id, criteria_version_id, name, description, category, weight_in_group, display_order)
+            VALUES (:id, :version, 'Python', 'Python experience', 'MUST_HAVE', 100, 1)
+        """), {"id": item_id, "version": version_id})
+    route2 = f"/v1/criteria/{version_id}/approve"
+    assert client.post(route2, headers=headers(seed["hr"]), json={"action": "APPROVE"}).json()["status"] == "PENDING_HM_APPROVAL"
+    response = client.post(route2, headers=headers(admin), json={"action": "DIRECT_APPROVE"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "APPROVED"
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT status, approved_by_hr::text AS approved_by_hr, approved_by_hm
+            FROM app_private.criteria_versions WHERE criteria_version_id = :id
+        """), {"id": version_id}).mappings().one()
+        events = conn.execute(text("""
+            SELECT reviewer_role, decision FROM app_private.criteria_approval_events
+            WHERE criteria_version_id = :id ORDER BY decided_at, event_id
+        """), {"id": version_id}).mappings().all()
+    assert row["approved_by_hr"] == seed["hr"] and row["approved_by_hm"] is None
+    assert [(event["reviewer_role"], event["decision"]) for event in events] == [
+        ("HR_RECRUITER", "APPROVE"), ("ADMIN", "DIRECT_APPROVE")]
+
+
 def test_status_shortlist_permissions_feedback_and_revocation(client, seed):
     base = f"/v1/applications/{seed['app']}"
     change = lambda user, status, reason=None: client.patch(base + "/status", headers=headers(seed[user]), json={"new_status": status, "reason": reason})

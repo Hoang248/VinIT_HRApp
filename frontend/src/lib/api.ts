@@ -82,7 +82,7 @@ export const criteriaApi = {
   getById: (id: string) => apiClient.get(`/criteria/${id}`),
   generateDraft: (positionId: string) =>
     apiClient.post(`/criteria/generate/${positionId}`),
-  approve: (id: string, action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
+  approve: (id: string, action: 'APPROVE' | 'DIRECT_APPROVE' | 'REJECT' | 'REQUEST_CHANGES', comment?: string) =>
     apiClient.post(`/criteria/${id}/approve`, { action, comment }),
   getApprovalEvents: (id: string) => apiClient.get(`/criteria/${id}/approval-events`),
   createItem: (versionId: string, data: { name: string; description: string; category: 'MUST_HAVE' | 'NICE_TO_HAVE'; weight_in_group: number; expected_evidence_keywords: string[]; requirement_spec?: import('@/types').RequirementSpec | null }) =>

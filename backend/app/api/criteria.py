@@ -260,10 +260,17 @@ def criteria_decision(current_status: str, action: ApprovalAction, position_role
     is_hr = bool({"HR_RECRUITER", "HR_LEAD"} & position_roles) or bool({"ADMIN", "HR_LEAD"} & system_roles)
     is_hm = "HIRING_MANAGER" in position_roles
     # The approval trail records the capacity used; system roles are preserved
-    # separately in audit metadata (the approval enum has no ADMIN value).
+    # separately in audit metadata.
     hr_role = "HR_LEAD" if "HR_LEAD" in (system_roles | position_roles) and "HR_RECRUITER" not in position_roles else "HR_RECRUITER"
+    can_direct_approve = bool({"ADMIN", "HR_LEAD"} & system_roles) or "HR_LEAD" in position_roles
+    direct_role = "ADMIN" if "ADMIN" in system_roles else "HR_LEAD"
 
-    if action == ApprovalAction.APPROVE:
+    if action == ApprovalAction.DIRECT_APPROVE:
+        if current_status in ("DRAFT", "PENDING_HR_REVIEW", "PENDING_HM_APPROVAL"):
+            if not can_direct_approve:
+                raise HTTPException(status_code=403, detail="Chỉ Admin hoặc HR Lead mới có thể duyệt trực tiếp, không qua Hiring Manager")
+            return "APPROVED", direct_role
+    elif action == ApprovalAction.APPROVE:
         if current_status in ("DRAFT", "PENDING_HR_REVIEW"):
             if not is_hr:
                 raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới có thể duyệt và gửi tiêu chí cho Hiring Manager")
@@ -290,7 +297,7 @@ async def approve_criteria(
     request: CriteriaApprovalRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Record the HR and HM decisions atomically, without an HR-only bypass."""
+    """Record HR/HM decisions atomically, plus the Admin/HR Lead direct path."""
     user_id = current_user["user_id"]
     cv_id_str = str(criteria_version_id)
     comment = (request.comment or "").strip() or None
@@ -331,9 +338,11 @@ async def approve_criteria(
             latest_jd = db.execute(text("SELECT jd_version_id FROM app_private.jd_versions WHERE position_id = :id ORDER BY version_number DESC LIMIT 1"), {"id": position_id}).scalar_one_or_none()
             if str(latest_jd) != str(cv["jd_version_id"]):
                 raise HTTPException(status_code=409, detail="JD đã thay đổi. Vui lòng tạo và duyệt tiêu chí cho phiên bản JD mới nhất.")
-        if new_status == "APPROVED":
+        if new_status == "APPROVED" and request.action != ApprovalAction.DIRECT_APPROVE:
             # One account may hold both roles.  The position and criteria rows
             # are locked above so this check and the decision are indivisible.
+            # DIRECT_APPROVE is the explicit Admin/HR Lead bypass, so it does
+            # not require a prior, distinct HR approver.
             if not cv["approved_by_hr"] or str(cv["approved_by_hr"]) == str(user_id):
                 raise HTTPException(status_code=409, detail="Hai bước duyệt phải do hai tài khoản khác nhau thực hiện")
         if new_status == "APPROVED" and db.execute(text("""
@@ -350,6 +359,10 @@ async def approve_criteria(
             _materialize_requirement_specs(db, cv_id_str)
             _validate_item_weight_totals(db, cv_id_str)
         if new_status == "APPROVED":
+            if request.action == ApprovalAction.DIRECT_APPROVE:
+                # A direct approval may start from a draft, before the normal
+                # HR step would have materialized inferred requirement specs.
+                _materialize_requirement_specs(db, cv_id_str)
             _validate_item_weight_totals(db, cv_id_str)
 
         db.execute(text("""
@@ -359,11 +372,14 @@ async def approve_criteria(
                                       WHEN :new_status = 'DRAFT' THEN NULL ELSE approved_by_hr END,
                 approved_by_hr_at = CASE WHEN :new_status = 'PENDING_HM_APPROVAL' THEN NOW()
                                          WHEN :new_status = 'DRAFT' THEN NULL ELSE approved_by_hr_at END,
-                approved_by_hm = CASE WHEN :new_status = 'APPROVED' THEN CAST(:user_id AS uuid) ELSE NULL END,
-                approved_by_hm_at = CASE WHEN :new_status = 'APPROVED' THEN NOW() ELSE NULL END,
+                approved_by_hm = CASE WHEN :new_status = 'APPROVED' AND NOT :direct_approve THEN CAST(:user_id AS uuid)
+                                      WHEN :new_status = 'APPROVED' THEN approved_by_hm ELSE NULL END,
+                approved_by_hm_at = CASE WHEN :new_status = 'APPROVED' AND NOT :direct_approve THEN NOW()
+                                         WHEN :new_status = 'APPROVED' THEN approved_by_hm_at ELSE NULL END,
                 updated_at = NOW()
             WHERE criteria_version_id = :cv_id
-        """), {"new_status": new_status, "user_id": user_id, "cv_id": cv_id_str})
+        """), {"new_status": new_status, "user_id": user_id, "cv_id": cv_id_str,
+                "direct_approve": request.action == ApprovalAction.DIRECT_APPROVE})
         db.execute(text("""
             INSERT INTO app_private.criteria_approval_events
                 (criteria_version_id, reviewed_by, reviewer_role, decision, comment)
@@ -378,7 +394,9 @@ async def approve_criteria(
         """), {"user_id": user_id, "cv_id": cv_id_str, "position_id": position_id,
                 "outcome": new_status, "metadata": json.dumps({"decision": request.action.value,
                     "reviewer_role": reviewer_role, "system_roles": sorted(system_roles),
-                    "position_roles": sorted(position_roles)})})
+                    "position_roles": sorted(position_roles),
+                    "direct_approve": request.action == ApprovalAction.DIRECT_APPROVE,
+                    "bypassed_hm": request.action == ApprovalAction.DIRECT_APPROVE})})
         updated = dict(db.execute(text("SELECT * FROM app_private.criteria_versions WHERE criteria_version_id = :id"),
                                   {"id": cv_id_str}).mappings().one())
         updated["criteria"] = [dict(row) for row in db.execute(text("""
