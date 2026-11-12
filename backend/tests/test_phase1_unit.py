@@ -359,6 +359,31 @@ def test_criteria_direct_approval_is_admin_or_hr_lead_only():
 
 
 @pytest.mark.asyncio
+async def test_profile_accepts_certifications_returned_as_plain_names(monkeypatch):
+    """gpt-4o-mini lists certifications as strings; that must not fail the CV."""
+    from app.services.llm_client import LLMClient
+    class FakeResponse:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": __import__("json").dumps({
+            "candidate_identifier": "fake", "total_years_experience": 3, "education": [], "work_history": [],
+            "skills": ["Python"], "certifications": ["AWS Solutions Architect", {"name": "CCNA"}],
+            "languages": [], "projects": []})}}]}
+    class FakeClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs): return FakeResponse()
+    monkeypatch.setattr("app.services.llm_client.httpx.AsyncClient", FakeClient)
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr("app.services.llm_client.get_active_runtime", lambda db: {
+        "provider": "local", "model_name": settings.LLM_MODEL_NAME, "api_base": settings.LLM_API_BASE, "temperature_default": .1})
+    llm = LLMClient(); llm.base_url = "http://127.0.0.1:11434/v1"
+    profile = await llm.extract_candidate_profile("Synthetic CV with AWS and CCNA certificates.", "synthetic-id")
+    assert [c["name"] for c in profile["certifications"]] == ["AWS Solutions Architect", "CCNA"]
+
+
+@pytest.mark.asyncio
 async def test_real_llm_boundary_redacts_cv_profile_and_rubric_and_sets_guardrails(monkeypatch):
     from app.services.llm_client import LLMClient
     captured = []

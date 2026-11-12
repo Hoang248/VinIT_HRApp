@@ -556,10 +556,18 @@ STRICT PRIVACY & ANTI-BIAS RULES:
             },
         )
 
+        # Models often list certifications as plain names ("AWS SAA"); keep them
+        # as {"name": ...} objects like the rest of the profile instead of failing
+        # the whole CV or silently dropping them when facts are stored.
+        if isinstance(result, dict) and isinstance(result.get("certifications"), list):
+            result["certifications"] = [{"name": item} if isinstance(item, str) else item
+                                        for item in result["certifications"]]
         try:
             CandidateProfileSchema.model_validate(result)
         except ValidationError as e:
-            logger.error("LLM profile extraction failed schema validation")
+            # Field locations and error types only, never the extracted values.
+            logger.error("LLM profile extraction failed schema validation",
+                         fields=[{"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()][:20])
             raise LLMError("Extracted candidate profile failed validation")
 
         result = sanitize_profile_page_numbers(redact_professional_profile(result))
