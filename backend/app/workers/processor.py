@@ -495,6 +495,7 @@ class ProcessingWorker:
                                                            db.info["owner"]["token"])
 
                 # Update document processing run
+                from app.services.quality import ocr_mean_confidence
                 run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
                 db.execute(text(f"""
                     UPDATE app_private.document_processing_runs
@@ -502,13 +503,15 @@ class ProcessingWorker:
                         extraction_type = :extraction_type,
                         processor_version = 'v1.0',
                         error_code = NULL,
-                        extracted_text_storage_path = :extracted_path
+                        extracted_text_storage_path = :extracted_path,
+                        ocr_mean_confidence = :ocr_mean_confidence
                     WHERE {run_filter}
                 """), {
                     "document_id": document_id,
                     "run_id": doc.get("processing_run_id"),
                     "extraction_type": doc_type.value,
-                    "extracted_path": extracted_path
+                    "extracted_path": extracted_path,
+                    "ocr_mean_confidence": ocr_mean_confidence(raw_pages)
                 })
 
                 # Update document status to COMPLETED
@@ -643,7 +646,8 @@ class ProcessingWorker:
                         "application_id": application_id,
                         "display_name": display_name, "email": email, "phone": phone
                     })
-
+                    from app.services.cross_duplicates import refresh_application
+                    refresh_application(db, str(application_id))
                     db.commit()
 
                 except LLMError as e:
@@ -1388,11 +1392,13 @@ class ProcessingWorker:
                         UPDATE app_private.assessment_runs
                         SET status = 'COMPLETED', matching_status = :matching_status, matching_score = :score,
                             evidence_coverage = :coverage, completed_at = NOW(),
+                            source_extracted_text_path = :source_text_path,
                             prompt_version = :prompt_version,
                             provider_model_snapshot = CAST(:provider_snapshot AS jsonb)
                         WHERE assessment_id = :assessment_id
                     """), {"assessment_id": assessment_id, "matching_status": match_status,
                             "score": score, "coverage": coverage, "prompt_version": prompt_version,
+                            "source_text_path": app['extracted_text_storage_path'],
                             "provider_snapshot": json.dumps(provider_snapshot)})
                     for result in results:
                         result_id = db.execute(text("""
@@ -1574,6 +1580,8 @@ class ProcessingWorker:
                 )
             """), {"position_id": position_id, "first": first, "second": second,
                     "signal_type": signal_type, "confidence": confidence})
+        from app.services.quality import generate_samples
+        generate_samples(db, str(position_id))
         db.commit()
         logger.info("Ranking generated", position_id=position_id, ranking_run_id=ranking_run_id, count=len(ranked))
 

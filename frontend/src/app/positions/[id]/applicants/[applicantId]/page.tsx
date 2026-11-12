@@ -49,6 +49,7 @@ import CandidateProfilePanel from '@/components/candidates/CandidateProfilePanel
 import EvidenceCard from '@/components/candidates/EvidenceCard';
 import CVDocumentViewer from '@/components/candidates/CVDocumentViewer';
 import HRNotesPanel from '@/components/candidates/HRNotesPanel';
+import CrossDuplicatesPanel from '@/components/candidates/CrossDuplicatesPanel';
 import { readApplicantNavigation, type ApplicantNavigationContext } from '@/lib/applicantReview';
 import type { ApplicationWithAssessment } from '@/types';
 import { APPLICATION_STATUSES, APPLICATION_TRANSITIONS, isApplicationStatus } from '@/lib/applicationStatus';
@@ -486,6 +487,8 @@ export default function ApplicantDetailPage() {
 
       {application.can_view_cv && <CandidateProfilePanel key={applicantId} applicationId={applicantId} canEdit={!!application.can_update_status} onSaved={() => { loadData(); }} />}
       {application.can_manage_hr_notes && <HRNotesPanel key={applicantId} applicationId={applicantId} />}
+      {application.can_update_status && <CrossDuplicatesPanel key={`duplicates-${applicantId}`} applicationId={applicantId}
+        versionKey={JSON.stringify(application.identity)} />}
 
       {application.can_update_status && (
         <Accordion disableGutters elevation={0} sx={{ mb: 3, border: '1px solid #E4E7EC', borderRadius: '8px !important', '&:before': { display: 'none' } }}>
