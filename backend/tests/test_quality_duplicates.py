@@ -252,3 +252,31 @@ def test_sampling_uses_only_each_applications_latest_completed_assessment(client
         cases = conn.execute(text('SELECT assessment_id,reasons FROM app_private.quality_inspections WHERE position_id=:p'),
                              {'p': seed['pos']}).mappings().all()
     assert [(str(c['assessment_id']), c['reasons']) for c in cases] == [(str(new), ['RANDOM_SAMPLE'])]
+
+
+@integration
+def test_backfill_scans_existing_applications_dry_run_first_and_is_rerunnable(seed):
+    import importlib.util
+    from pathlib import Path
+    from sqlalchemy.orm import sessionmaker
+    spec = importlib.util.spec_from_file_location(
+        'backfill_cross_duplicates', Path(__file__).resolve().parents[1] / 'scripts' / 'backfill_cross_duplicates.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    factory = sessionmaker(bind=engine)
+    def count():
+        with engine.connect() as conn:
+            return conn.execute(text("SELECT review_status,COUNT(*) FROM app_private.cross_position_duplicates GROUP BY 1")).all()
+    # Two applications in different positions that predate detection: no signal yet.
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.application_identities SET email='old@example.test' WHERE application_id IN (:a,:b)"),
+                     {'a': seed['app'], 'b': seed['app2']})
+    assert count() == []
+    dry = module.backfill(factory, apply=False)
+    assert dry['applications_scanned'] == 2 and dry['after'] == {'PENDING': 1}
+    assert count() == []  # dry run wrote nothing
+    assert module.backfill(factory, apply=True)['after'] == {'PENDING': 1}
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_private.cross_position_duplicates SET review_status='DISMISSED'"))
+    # Re-running keeps the HR decision and creates no duplicate rows.
+    assert module.backfill(factory, apply=True)['after'] == {'DISMISSED': 1}
+    assert module.backfill(factory, apply=False, position_id=seed['pos2'])['applications_scanned'] == 1
