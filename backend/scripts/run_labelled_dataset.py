@@ -52,6 +52,7 @@ def main() -> int:
     parser.add_argument("--users-file", required=True, type=Path)
     parser.add_argument("--api", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--limit", type=int, default=None, help="Only the first N jobs")
+    parser.add_argument("--marker", default=MARKER, help="Title prefix for this run, e.g. [CVFAKE-OPENAI]")
     parser.add_argument("--report", type=Path, default=None, help="Write the JSON report here")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -82,7 +83,7 @@ def main() -> int:
     results = []
     for job in jobs[: args.limit]:
         row = labels.get(job["id"])
-        title = f"{MARKER} {job['title']} — {job.get('company') or ''}".strip(" —")[:200]
+        title = f"{args.marker} {job['title']} — {job.get('company') or ''}".strip(" —")[:200]
         entry = {"job_id": job["id"], "title": job["title"], "company": job.get("company")}
         results.append(entry)
         if not row or len(row) != 3:
