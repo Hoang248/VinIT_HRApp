@@ -46,7 +46,7 @@ export default function CVIntakePanel({ files, onFiles, onRemove, onUpload, uplo
           <Box>
             <Typography variant="h3" sx={{ fontSize: 17, color: '#0A2B57' }}>{t("Tiếp nhận CV")}</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {t("Kéo thả hoặc chọn tệp PDF/DOCX. Hệ thống kiểm tra định dạng và dung lượng trước khi gửi.")}
+              {t("Kéo thả hoặc chọn tệp PDF/DOCX/JPG/PNG (tối đa 10 MB mỗi tệp). Hệ thống kiểm tra định dạng và dung lượng trước khi gửi.")}
             </Typography>
             <Typography variant="caption" color="text.secondary">{t("Tối đa 50 file, mỗi file ≤ 10MB, tổng lô ≤ 250MB")}</Typography>
           </Box>
@@ -59,7 +59,7 @@ export default function CVIntakePanel({ files, onFiles, onRemove, onUpload, uplo
           ref={inputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept=".pdf,.docx,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png"
           onChange={event => {
             onFiles(Array.from(event.target.files || []));
             event.target.value = '';

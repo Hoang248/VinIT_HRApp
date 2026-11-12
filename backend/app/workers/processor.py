@@ -21,7 +21,11 @@ from app.db.database import SessionLocal, engine
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services import langfuse_observability as observability
-from app.services.document_processor import document_processor
+from app.services.document_processor import (
+    DocumentQualityError,
+    document_processor,
+    document_quality_summary,
+)
 from app.services.llm_client import (
     llm_client, LLMError, normalize_profile_page_number, sanitize_profile_page_numbers,
 )
@@ -63,6 +67,16 @@ def _database_error_metadata(exc: BaseException) -> dict:
 # Processing queue polling interval (seconds)
 POLL_INTERVAL_SECONDS = 5
 HEARTBEAT_SECONDS = 20
+
+
+# Bumped with F2.06 (image OCR, DOCX tables and embedded images).
+DOCUMENT_PROCESSOR_VERSION = "v1.1"
+
+
+def _numeric_quality(quality: dict) -> dict:
+    """Keep only numeric/enumerated diagnostics; never text."""
+    return {key: value for key, value in (quality or {}).items()
+            if isinstance(value, (int, float, bool)) or key == "source"}
 
 
 class LostOwnership(RuntimeError):
@@ -496,22 +510,26 @@ class ProcessingWorker:
 
                 # Update document processing run
                 from app.services.quality import ocr_mean_confidence
+                quality_summary = document_quality_summary(raw_pages)
                 run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
                 db.execute(text(f"""
                     UPDATE app_private.document_processing_runs
                     SET status = 'COMPLETED',
                         extraction_type = :extraction_type,
-                        processor_version = 'v1.0',
+                        processor_version = :processor_version,
                         error_code = NULL,
                         extracted_text_storage_path = :extracted_path,
-                        ocr_mean_confidence = :ocr_mean_confidence
+                        ocr_mean_confidence = :ocr_mean_confidence,
+                        image_quality = CAST(:image_quality AS jsonb)
                     WHERE {run_filter}
                 """), {
                     "document_id": document_id,
                     "run_id": doc.get("processing_run_id"),
                     "extraction_type": doc_type.value,
+                    "processor_version": DOCUMENT_PROCESSOR_VERSION,
                     "extracted_path": extracted_path,
-                    "ocr_mean_confidence": ocr_mean_confidence(raw_pages)
+                    "ocr_mean_confidence": ocr_mean_confidence(raw_pages),
+                    "image_quality": json.dumps(quality_summary) if quality_summary else None,
                 })
 
                 # Update document status to COMPLETED
@@ -709,6 +727,29 @@ class ProcessingWorker:
                 db.rollback()
                 loop.close()
                 raise
+            except DocumentQualityError as e:
+                # F2.06: valid file, but too low resolution / blurry to read
+                # reliably. Manual queue with a specific, text-free reason.
+                logger.info("Document needs manual review", document_id=document_id, error_code=e.code)
+                db.rollback()
+                db.execute(text("""
+                    UPDATE app_private.application_documents
+                    SET file_processing_status = 'NEEDS_HR_REVIEW', processing_error = :error
+                    WHERE document_id = :document_id
+                """), {"document_id": document_id, "error": e.message})
+                run_filter = "run_id = :run_id" if doc.get("processing_run_id") else "document_id = :document_id"
+                db.execute(text(f"""
+                    UPDATE app_private.document_processing_runs
+                    SET status = 'FAILED', error_code = :error_code,
+                        image_quality = CAST(:image_quality AS jsonb)
+                    WHERE {run_filter} AND status <> 'COMPLETED'
+                """), {"document_id": document_id, "run_id": doc.get("processing_run_id"),
+                        "error_code": e.code,
+                        "image_quality": json.dumps(_numeric_quality(e.quality))})
+                needs_review_count += 1
+                db.execute(text("UPDATE app_private.cv_batches SET failed_files = failed_files + 1 WHERE batch_id = :batch_id"), {"batch_id": batch_id})
+                db.commit()
+                loop.close()
             except Exception as e:
                 logger.error("Document processing failed", document_id=document_id,
                              error_type=type(e).__name__, **_database_error_metadata(e))

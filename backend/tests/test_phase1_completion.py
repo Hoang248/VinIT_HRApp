@@ -42,7 +42,8 @@ def test_retention_queue_is_scoped_and_reports_confirm_rights(client, seed):
     assert [p["position_id"] for p in body["closed_positions"]] == [seed["pos"]]
     assert "application_identities" not in str(body) and "Candidate" not in str(body)
 
-    assert client.get("/v1/retention/queue", headers=headers(seed["hm"])).json() == {"cases": [], "closed_positions": []}
+    hm_queue = client.get("/v1/retention/queue", headers=headers(seed["hm"])).json()
+    assert hm_queue["cases"] == [] and hm_queue["closed_positions"] == []
     assert client.get("/v1/retention/queue", headers=headers(seed["hr"]), params={"status": "BOGUS"}).status_code == 400
     assert client.get("/v1/retention/queue", headers=headers(seed["hr"]), params={"status": "DELETED"}).json()["cases"] == []
 

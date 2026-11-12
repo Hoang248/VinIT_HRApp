@@ -67,6 +67,22 @@ def client():
     client.close()
 
 
+def purge_with_otp(client, case_id, user):
+    """F2.07 purge flow: request a one-time code, then execute with it."""
+    from app.core.config import settings
+    previous = settings.RETENTION_OTP_DEV_ECHO
+    settings.RETENTION_OTP_DEV_ECHO = True
+    try:
+        challenge = client.post(f"/v1/retention/cases/{case_id}/purge-otp", headers=headers(user))
+        assert challenge.status_code == 200, challenge.text
+        body = challenge.json()
+        assert body["channel"] == "DEV_ECHO" and len(body["dev_code"]) == 6
+    finally:
+        settings.RETENTION_OTP_DEV_ECHO = previous
+    return client.post(f"/v1/retention/cases/{case_id}/execute", headers=headers(user),
+                       json={"challenge_id": body["challenge_id"], "otp": body["dev_code"]})
+
+
 def headers(user):
     return {"x-test-user": user}
 
@@ -1654,7 +1670,9 @@ def test_retention_workflow_purges_candidate_and_audit_chain_is_append_only(clie
     assert confirmed.json()["status"] == "SCHEDULED_FOR_DELETION"
     assert client.post(f"/v1/retention/cases/{case_id}/execute", headers=headers(seed["hm"])).status_code == 403
 
-    executed = client.post(f"/v1/retention/cases/{case_id}/execute", headers=headers(seed["hr"]))
+    # F2.07: physical purge needs a one-time code (echoed only in testing).
+    assert client.post(f"/v1/retention/cases/{case_id}/execute", headers=headers(seed["hr"])).status_code == 428
+    executed = purge_with_otp(client, case_id, seed["hr"])
     assert executed.status_code == 200, executed.text
     summary = executed.json()["result_summary"]
     assert executed.json()["status"] == "DELETED"
@@ -1785,7 +1803,7 @@ def test_retention_execute_does_not_delete_database_records_when_storage_fails(c
                             json={"reason": "Storage failure fixture"})
     assert confirmed.status_code == 200, confirmed.text
 
-    failed = client.post(f"/v1/retention/cases/{case_id}/execute", headers=headers(seed["hr"]))
+    failed = purge_with_otp(client, case_id, seed["hr"])
     assert failed.status_code == 500
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM app_private.applications WHERE application_id = :id"),

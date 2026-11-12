@@ -267,13 +267,22 @@ export const adminApi = {
 };
 
 // F1.10 / S-19 — retention queue and explicit, audited deletion.
+// F2.07 — exception hold, reminders and a one-time code before purge.
 export const retentionApi = {
-  queue: (status?: 'PENDING' | 'SCHEDULED_FOR_DELETION' | 'DELETED' | 'CANCELLED') =>
+  queue: (status?: 'PENDING' | 'SCHEDULED_FOR_DELETION' | 'ON_HOLD' | 'DELETED' | 'CANCELLED') =>
     apiClient.get('/retention/queue', { params: { status } }),
   generate: (positionId: string) => apiClient.post(`/retention/positions/${positionId}/cases/generate`),
   confirm: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/confirm`, {}),
   cancel: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/cancel`, {}),
-  execute: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/execute`),
+  requestPurgeOtp: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/purge-otp`),
+  execute: (caseId: string, challengeId?: string, otp?: string) =>
+    apiClient.post(`/retention/cases/${caseId}/execute`, challengeId ? { challenge_id: challengeId, otp } : {}),
+  hold: (caseId: string, data: { reason_code: string; legal_approval_reference: string; hold_until?: string | null }) =>
+    apiClient.post(`/retention/cases/${caseId}/hold`, data),
+  releaseHold: (caseId: string) => apiClient.post(`/retention/cases/${caseId}/release-hold`),
+  notifications: (unreadOnly = false) => apiClient.get('/retention/notifications', { params: { unread_only: unreadOnly } }),
+  markNotificationRead: (id: string) => apiClient.post(`/retention/notifications/${id}/read`),
+  runCycle: () => apiClient.post('/retention/cycle/run'),
 };
 
 // F1.10 / S-20 — audit trail (Admin only; metadata is never returned).

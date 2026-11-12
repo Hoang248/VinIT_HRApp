@@ -42,6 +42,22 @@ class Settings(BaseSettings):
     MAX_FILES_PER_BATCH: int = 50
     MAX_BATCH_SIZE_BYTES: int = 250_000_000  # 250 MB
 
+    # F2.06 — image CVs (JPG/PNG) and images embedded in DOCX.
+    # Tesseract language packs, joined with "+" (e.g. "eng+vie"). Every pack
+    # listed here must be installed on the worker host.
+    OCR_LANGUAGES: str = "eng"
+    # Decompression-bomb guard: images above this pixel count are rejected.
+    OCR_MAX_IMAGE_PIXELS: int = 16_000_000
+    # Below this effective resolution the CV goes to the HR manual queue.
+    OCR_MIN_DPI: int = 150
+    # Variance of the Laplacian on the normalised grayscale image. Lower means
+    # blurrier. Proposed default from a synthetic A4 test (readable at 35,
+    # garbled at 10); recalibrate on a labelled image set before go-live.
+    OCR_MIN_SHARPNESS: float = 20.0
+    # Embedded DOCX images smaller than this (logos, icons) are not OCR-ed.
+    OCR_DOCX_MIN_IMAGE_PIXELS: int = 40_000
+    OCR_DOCX_MAX_IMAGES: int = 10
+
     # AI/LLM
     # local/openai/azure/compatible labels share the OpenAI-compatible transport.
     # "mock" = built-in synthetic AI for development until AI Core exposes its API.
@@ -128,6 +144,30 @@ class Settings(BaseSettings):
 
     # Retention
     RETENTION_MONTHS: int = 12
+    # F2.07 — reminder milestones before the due date (days) and the window in
+    # which cases appear in the console before they are due.
+    RETENTION_NOTICE_DAYS: list[int] = [30, 15, 7]
+    # The periodic cycle (case sync, reopen guard, reminders) is off until
+    # Legal & Privacy approves the process. It never deletes data by itself.
+    RETENTION_SCHEDULER_ENABLED: bool = False
+    RETENTION_SCHEDULER_INTERVAL_MINUTES: int = 60
+    # Physical purge needs a one-time code sent to the confirming user.
+    RETENTION_PURGE_REQUIRE_OTP: bool = True
+    RETENTION_OTP_TTL_MINUTES: int = 10
+    RETENTION_OTP_MAX_ATTEMPTS: int = 5
+    # Development/testing only: return the OTP in the API response when no
+    # email channel is configured. Refused in production by the validator.
+    RETENTION_OTP_DEV_ECHO: bool = False
+    # Frontend base URL used in reminder emails.
+    APP_PUBLIC_URL: str = "http://localhost:3000"
+
+    # Outbound email (retention reminders and purge OTP). Disabled when empty.
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
+    SMTP_STARTTLS: bool = True
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -153,6 +193,10 @@ class Settings(BaseSettings):
         # assess real candidates, so it is refused outside development/testing.
         if self.LLM_PROVIDER == "mock" and self.APP_ENV not in ("development", "testing"):
             raise ValueError("LLM_PROVIDER=mock is only allowed when APP_ENV is development or testing")
+        if self.RETENTION_OTP_DEV_ECHO and self.APP_ENV not in ("development", "testing"):
+            raise ValueError("RETENTION_OTP_DEV_ECHO is only allowed when APP_ENV is development or testing")
+        if any(day < 1 for day in self.RETENTION_NOTICE_DAYS):
+            raise ValueError("RETENTION_NOTICE_DAYS must contain positive day counts")
         return self
 
 

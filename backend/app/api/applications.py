@@ -28,7 +28,7 @@ from app.schemas.common import OperationResponse
 from app.db.supabase import get_supabase_client
 from app.db.database import SessionLocal
 from sqlalchemy import text
-from app.services.document_processor import document_processor
+from app.services.document_processor import MIME_EXTENSIONS, document_processor
 import os
 import json
 import aiofiles
@@ -117,7 +117,7 @@ async def create_cv_batch(position_id: UUID, files: List[UploadFile] = File(...)
                     INSERT INTO app_private.applications (position_id, created_by)
                     VALUES (:position_id, :user_id) RETURNING application_id
                 """), {"position_id": position_id_str, "user_id": user_id}).scalar_one()
-                extension = '.pdf' if detected_mime == 'application/pdf' else '.docx'
+                extension = MIME_EXTENSIONS[detected_mime]
                 storage_path = f"{position_id_str}/{app_id}/{uuid4()}{extension}"
                 # Track before I/O so even a partially written file or an
                 # upload that errors after writing is eligible for cleanup.

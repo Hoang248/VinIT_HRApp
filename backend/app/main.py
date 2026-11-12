@@ -8,6 +8,7 @@ from app.core.logging import setup_logging, get_logger
 from app.api import api_router
 from app.services.langfuse_observability import shutdown as shutdown_langfuse
 from app.workers.processor import worker
+from app.workers.retention_scheduler import retention_scheduler
 
 # Setup logging first
 setup_logging()
@@ -86,11 +87,15 @@ def create_app() -> FastAPI:
         if settings.APP_ENV != "testing":
             worker.start()
             logger.info("Background processing worker started automatically")
+        # F2.07: off by default until Legal & Privacy approves the process.
+        if settings.APP_ENV != "testing" and settings.RETENTION_SCHEDULER_ENABLED:
+            retention_scheduler.start()
 
     @app.on_event("shutdown")
     async def shutdown_event():
         logger.info("Shutting down VinUni HRA Backend")
         worker.stop()
+        retention_scheduler.stop()
         shutdown_langfuse()
 
     return app
