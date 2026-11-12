@@ -2,7 +2,7 @@
 
 > File này ghi lại quá trình rà soát, lập plan và triển khai Phase 2 theo quy ước giống `Update_Excute_P1.md`: trạng thái tổng quan, thay đổi file/code/migration, test đã chạy và kết quả, commit hash sau khi push, blocker và điều kiện mở khóa.
 >
-> **Trạng thái hiện tại:** đã hoàn thành rà soát tài liệu/code và lập plan chi tiết cho batch đầu Workflow Core. **Chưa triển khai tính năng nghiệp vụ Phase 2 F2.01/F2.02; plan đang chờ duyệt và các quyết định nghiệp vụ D-01…D-10 đang chờ chốt. Lộ trình UI/UX Recruitment Workspace UX-0…UX-4 đã được triển khai ở code và kiểm chứng tự động; usability/staging vẫn là gate riêng. Langfuse AI Observability đã có plan riêng; LF-1, LF-2A và LF-3A đã triển khai ở code ở chế độ tắt mặc định, metadata-first, fail-open; chưa bật server/staging và chưa gửi trace thật.**
+> **Cập nhật 12/11/2026 trên nhánh `khangduong`:** F2.01, phần scorecard F2.02 và F2.03 đã có code từ các commit `96b7587` / `1eeeffd`. Theo yêu cầu mới, F2.04 kiểm định chất lượng và F2.05 cảnh báo trùng chéo vị trí đã bổ sung backend, giao diện, migration `00017` và tests. Đã kiểm tra trên PostgreSQL dùng một lần và browser với dữ liệu tổng hợp; chưa deploy hay áp migration lên Supabase/VPS. Chi tiết tại [PHASE2_04_05.md](doc/PHASE2_04_05.md). Các phần rà soát/plan phía dưới là lịch sử, không thay thế hiện trạng code này. Các gate production và Langfuse staging vẫn riêng biệt.
 >
 > **F2.08 SSO: TẠM TREO** theo quyết định của người dùng; không đưa vào plan ở vòng này.
 
@@ -15,7 +15,10 @@
 | P2-1 | Chốt phạm vi ưu tiên đầu tiên | ĐÃ CHỐT | Workflow cốt lõi F2.01 + F2.02; F2.07 loại khỏi vòng này; Candidate Rediscovery để cuối Phase 2 |
 | P2-2 | Lập plan triển khai chi tiết batch đầu | HOÀN THÀNH — CHỜ DUYỆT PLAN | `doc/PHASE2_IMPLEMENTATION_PLAN.md` |
 | P2-2.1 | Chốt quyết định nghiệp vụ D-01…D-10 trong plan batch đầu | CHỜ HR/HR LEAD DUYỆT | Mục 3 của plan chi tiết |
-| P2-3 | Triển khai/test/CI batch Workflow Core | CHƯA BẮT ĐẦU | Chỉ thực hiện sau khi plan và D-01…D-10 được duyệt |
+| P2-3 | Triển khai/test/CI batch Workflow Core | ĐÃ CÓ CODE — CHƯA NGHIỆM THU MÔI TRƯỜNG ĐÍCH | `96b7587`, test Phase 2 workflow trên PostgreSQL local |
+| F2.03 | Báo cáo vận hành và HR override | ĐÃ CÓ CODE — CHƯA NGHIỆM THU MÔI TRƯỜNG ĐÍCH | `1eeeffd`, `test_hr_analytics.py` |
+| F2.04 | QA sampling, HR Lead review và feedback | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL | Migration `00017`, `test_quality_duplicates.py`, browser smoke; xem tài liệu batch mới |
+| F2.05 | Cảnh báo trùng chéo vị trí, phạm vi quyền và review | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL | Migration `00017`, `test_quality_duplicates.py`, browser smoke; không tự gộp/xóa |
 | UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
 | UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 | LF-0 | Lập tài liệu, lộ trình và plan triển khai Langfuse AI Observability | HOÀN THÀNH | `doc/LANGFUSE_IMPLEMENTATION_PLAN.md` |

@@ -39,6 +39,23 @@ apiClient.interceptors.response.use(
 
 export default apiClient;
 
+export const qualityApi = {
+  list: (params: { position_id?: string; status?: string; offset?: number }) => apiClient.get('/quality/inspections', { params }),
+  sample: (positionId: string) => apiClient.post(`/quality/positions/${positionId}/sample`),
+  detail: (id: string) => apiClient.get(`/quality/inspections/${id}`),
+  source: (id: string) => apiClient.get(`/quality/inspections/${id}/source`, { responseType: 'blob' }),
+  text: (id: string) => apiClient.get(`/quality/inspections/${id}/text`),
+  feedback: (id: string) => apiClient.get(`/quality/inspections/${id}/feedback`),
+  claim: (id: string, revision: number) => apiClient.post(`/quality/inspections/${id}/claim`, { expected_revision: revision }),
+  submit: (id: string, data: unknown) => apiClient.post(`/quality/inspections/${id}/submit`, data),
+};
+
+export const crossDuplicatesApi = {
+  list: (id: string) => apiClient.get(`/cross-duplicates/applications/${id}`),
+  scan: (id: string) => apiClient.post(`/cross-duplicates/applications/${id}/scan`),
+  review: (id: string, decision: 'CONFIRMED' | 'DISMISSED') => apiClient.post(`/cross-duplicates/signals/${id}/review`, { decision }),
+};
+
 // API Functions
 export const authApi = {
   login: (email: string, password: string) =>

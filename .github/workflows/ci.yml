@@ -57,6 +57,12 @@ jobs:
           backend/app/workers/processor.py
           backend/app/api/admin.py
           backend/app/api/retention.py
+          backend/app/api/quality.py
+          backend/app/api/cross_duplicates.py
+          backend/app/services/quality.py
+          backend/app/services/cross_duplicates.py
+          backend/app/services/identity_matching.py
+          backend/app/services/review_access.py
           backend/scripts
           backend/tests
 

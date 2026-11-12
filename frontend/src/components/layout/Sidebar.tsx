@@ -27,6 +27,7 @@ const menuGroups = [
       { text: 'Shortlist & phản hồi', icon: <PeopleIcon />, href: '/shortlist' },
       { text: 'Thư viện rubric', icon: <LibraryBooksIcon />, href: '/rubric-library', hrOnly: true },
       { text: 'Báo cáo vận hành', icon: <InsightsIcon />, href: '/reports', hrOnly: true },
+      { text: 'Kiểm định chất lượng', icon: <HistoryIcon />, href: '/quality', leadOnly: true },
       { text: 'Lưu trữ & xóa dữ liệu', icon: <DeleteSweepIcon />, href: '/retention', hrOnly: true },
     ],
   },
@@ -42,7 +43,7 @@ const menuGroups = [
   },
 ];
 
-export default function Sidebar({ mobileOpen, onClose, isAdmin, isHr = false }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean; isHr?: boolean }) {
+export default function Sidebar({ mobileOpen, onClose, isAdmin, isHr = false, isLead = false }: { mobileOpen: boolean; onClose: () => void; isAdmin: boolean; isHr?: boolean; isLead?: boolean }) {
   const { t } = useI18n();
   const pathname = usePathname();
   const content = (
@@ -60,7 +61,7 @@ export default function Sidebar({ mobileOpen, onClose, isAdmin, isHr = false }: 
             <Typography variant="overline" sx={{ display: 'block', px: 3, pt: 1.5, pb: 0.75, color: 'rgba(255,255,255,.62)', fontSize: 10 }}>
               {t(group.label)}
             </Typography>
-            {group.items.filter(item => !('hrOnly' in item) || isHr).map(item => {
+            {group.items.filter(item => (!('hrOnly' in item) || isHr) && (!('leadOnly' in item) || isLead)).map(item => {
               const selected = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
               return (
                 <ListItem key={item.href} disablePadding sx={{ mb: 0.5 }}>
