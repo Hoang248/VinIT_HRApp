@@ -226,6 +226,7 @@ export default function ApplicantDetailPage() {
   const statusLabel = currentStatus ? APPLICATION_STATUSES[currentStatus] : null;
   const selectedLabel = isApplicationStatus(newStatus) ? t(APPLICATION_STATUSES[newStatus].label) : newStatus;
   const isPdf = application.documents?.[0]?.mime_type === 'application/pdf' || /\.pdf$/i.test(application.documents?.[0]?.original_filename || '');
+  const isImage = /^image\/(jpeg|png)$/.test(application.documents?.[0]?.mime_type || '') || /\.(jpe?g|png)$/i.test(application.documents?.[0]?.original_filename || '');
   const navigationIndex = navigationContext?.applicationIds.indexOf(applicantId) ?? -1;
   const previousApplicantId = navigationIndex > 0 ? navigationContext?.applicationIds[navigationIndex - 1] : undefined;
   const nextApplicantId = navigationContext && navigationIndex >= 0 && navigationIndex < navigationContext.applicationIds.length - 1
@@ -478,6 +479,7 @@ export default function ApplicantDetailPage() {
             cvUrl={cvUrl}
             cvError={cvError}
             isPdf={isPdf}
+            isImage={isImage}
             canViewCv={Boolean(application.can_view_cv)}
             selectedPage={selectedPage}
             onPageChange={jumpToPage}

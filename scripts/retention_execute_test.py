@@ -95,7 +95,17 @@ def main():
     if input("Nhap XOA VINH VIEN IT-0005 de xoa, hoac Enter de dung: ").strip() != "XOA VINH VIEN IT-0005":
         print("Da dung, chua gui execute.")
         return 0
-    status, result = request("POST", f"{API}/retention/cases/{CASE}/execute", headers)
+    # F2.07: the purge needs a one-time code sent to the confirming user.
+    status, challenge = request("POST", f"{API}/retention/cases/{CASE}/purge-otp", headers)
+    if status != 200 or not isinstance(challenge, dict) or not challenge.get("challenge_id"):
+        print(f"Khong lay duoc ma OTP: HTTP {status}. Chua gui execute.")
+        return 1
+    otp = input("Nhap ma OTP 6 so vua nhan qua email, hoac Enter de dung: ").strip()
+    if not otp:
+        print("Da dung, chua gui execute.")
+        return 0
+    status, result = request("POST", f"{API}/retention/cases/{CASE}/execute", headers,
+                             {"challenge_id": challenge["challenge_id"], "otp": otp})
     state = result.get("status") if isinstance(result, dict) else None
     print(f"Execute HR Lead: HTTP {status}, status={state}")
     if status != 200 or state != "DELETED":

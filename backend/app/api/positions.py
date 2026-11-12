@@ -7,6 +7,7 @@ from app.core.permissions import check_position_access, can_update_application_s
 from app.schemas.positions import (Position, PositionCreate, PositionUpdate, PositionWithStats, PositionStatus,
                                    PositionStatusEvent, JDVersionCreate)
 from app.db.database import SessionLocal
+from app.services.retention_automation import cancel_cases_of_reopened_positions
 from app.services.departments import DepartmentError, next_position_code
 from app.services.workspace import build_workflow
 from sqlalchemy import text
@@ -389,6 +390,10 @@ async def update_position(position_id: UUID, update: PositionUpdate, current_use
                 VALUES (:id, :previous, :new_status, :user_id, :reason)
             """), {"id": str(position_id), "previous": previous, "new_status": allowed["status"], "user_id": user_id,
                     "reason": status_reason})
+            if previous == "CLOSED":
+                # F2.07: reopening restarts the retention period, so open
+                # retention cases of the previous closure must not proceed.
+                cancel_cases_of_reopened_positions(db, position_id=str(position_id), actor_user_id=user_id)
         db.execute(text("""
             INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
             VALUES (:user_id, 'UPDATE_POSITION', 'POSITION', :id, :id, 'SUCCESS', CAST(:metadata AS jsonb))

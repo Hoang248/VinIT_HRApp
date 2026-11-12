@@ -10,12 +10,14 @@ interface CVDocumentViewerProps {
   cvUrl: string | null;
   cvError: string | null;
   isPdf: boolean;
+  // F2.06: JPG/PNG CVs are shown inline so HR can compare evidence with the original image.
+  isImage?: boolean;
   canViewCv: boolean;
   selectedPage: number;
   onPageChange: (page: number) => void;
 }
 
-export default function CVDocumentViewer({ cvUrl, cvError, isPdf, canViewCv, selectedPage, onPageChange }: CVDocumentViewerProps) {
+export default function CVDocumentViewer({ cvUrl, cvError, isPdf, isImage = false, canViewCv, selectedPage, onPageChange }: CVDocumentViewerProps) {
   const { t } = useI18n();
   return (
     <>
@@ -45,6 +47,11 @@ export default function CVDocumentViewer({ cvUrl, cvError, isPdf, canViewCv, sel
           {cvUrl && isPdf ? (
             <Box sx={{ height: '100%', backgroundColor: '#525659', padding: 2 }}>
               <iframe id="cv-pdf-viewer" src={`${cvUrl}#page=${selectedPage}`} width="100%" height="100%" style={{ border: 'none', backgroundColor: 'white' }} title={t("CV gốc")} />
+            </Box>
+          ) : cvUrl && isImage ? (
+            <Box sx={{ height: '100%', backgroundColor: '#525659', padding: 2, overflow: 'auto' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={cvUrl} alt={t("CV gốc")} style={{ maxWidth: '100%', backgroundColor: 'white', display: 'block', margin: '0 auto' }} />
             </Box>
           ) : (
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'text.secondary', p: 3, textAlign: 'center' }}>

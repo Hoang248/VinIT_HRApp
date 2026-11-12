@@ -82,7 +82,10 @@ function Inspection({ id, onChanged }: { id: string; onChanged: () => void }) {
       <Grid item xs={12} md={6}>
         {sourceError && <Alert severity="warning">{t('Chưa thể đọc CV nguồn. Có thể thử lại sau.')}</Alert>}
         {source && (mime.includes('pdf') ? <iframe title={t('CV gốc để kiểm định')} src={`${source}#page=${page}`} style={{ width: '100%', height: 650, border: 0 }} />
-          : <Button component="a" href={source} download="source.docx">{t('Tải tài liệu nguồn để đối soát')}</Button>)}
+          : mime.startsWith('image/')
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={source} alt={t('CV gốc để kiểm định')} style={{ maxWidth: '100%', display: 'block' }} />
+            : <Button component="a" href={source} download="source.docx">{t('Tải tài liệu nguồn để đối soát')}</Button>)}
       </Grid>
       <Grid item xs={12} md={6}>
         <Typography variant="subtitle1">{t('Văn bản trích xuất')}</Typography>

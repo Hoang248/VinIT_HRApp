@@ -12,13 +12,19 @@ The workflow is deliberately manual and per application:
 
 No candidate name, email, filename, quote or CV text is written to retention
 summaries or audit metadata.
+
+F2.07 adds (see ``retention_automation``): cases appear up to the largest
+reminder window before they are due, a case can be put ON_HOLD with a Legal
+approval reference, reopening a position cancels its open cases, and the
+physical purge needs a one-time code.
 """
 from __future__ import annotations
 
 import calendar
 import hashlib
 import json
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
@@ -28,6 +34,13 @@ from app.core.config import settings
 from app.db.database import SessionLocal
 
 RETENTION_CONFIRM_PERMISSIONS = ("CONFIRM_DELETION", "RETENTION_CONFIRM")
+OPEN_CASE_STATUSES = ("PENDING", "SCHEDULED_FOR_DELETION", "ON_HOLD")
+HOLD_REASON_CODES = ("COMPLAINT", "INSPECTION", "LEGAL_REQUEST", "OTHER_LEGAL_BASIS")
+
+
+def notice_window_days() -> int:
+    """Cases are listed this many days before they are due (largest reminder)."""
+    return max(settings.RETENTION_NOTICE_DAYS or [0])
 
 
 class RetentionError(Exception):
@@ -143,9 +156,28 @@ def delete_storage_objects(
     raise RetentionError("Storage backend không hợp lệ", status_code=500)
 
 
+def days_until(due_date: datetime | None, now: datetime | None = None) -> int | None:
+    """Whole days left until ``due_date`` (rounded up); 0 or less means due."""
+    if not due_date:
+        return None
+    seconds = (_as_utc(due_date) - (now or _now())).total_seconds()
+    return math.ceil(seconds / 86400)
+
+
 def public_case(row: dict[str, Any]) -> dict[str, Any]:
     due_date = row.get("due_date")
     status = row.get("status")
+    hold = None
+    if row.get("hold_id"):
+        hold_until = row.get("hold_until")
+        hold = {
+            "hold_id": str(row["hold_id"]),
+            "reason_code": row.get("hold_reason_code"),
+            "legal_approval_reference": row.get("legal_approval_reference"),
+            "hold_until": hold_until,
+            "is_expired": bool(hold_until and hold_until < _now().date()),
+            "created_at": row.get("hold_created_at"),
+        }
     return {
         "retention_case_id": str(row["retention_case_id"]),
         "application_id": str(row["application_id"]) if row.get("application_id") else None,
@@ -159,16 +191,32 @@ def public_case(row: dict[str, Any]) -> dict[str, Any]:
         "confirmed_by": str(row["confirmed_by"]) if row.get("confirmed_by") else None,
         "confirmed_at": row.get("confirmed_at"),
         "created_at": row.get("created_at"),
+        "days_until_due": days_until(due_date) if status in OPEN_CASE_STATUSES else None,
+        "cancel_reason": row.get("cancel_reason"),
+        "hold": hold,
     }
+
+
+CASE_COLUMNS = """
+    c.retention_case_id, c.application_id, c.position_id,
+    c.application_opaque_id, c.policy_version, c.position_closed_at,
+    c.due_date, c.status, c.confirmed_by, c.confirmed_at, c.created_at,
+    c.cancel_reason,
+    h.hold_id, h.reason_code AS hold_reason_code, h.legal_approval_reference,
+    h.hold_until, h.created_at AS hold_created_at
+"""
+CASE_JOINS = """
+    LEFT JOIN app_private.retention_holds h
+           ON h.retention_case_id = c.retention_case_id AND h.released_at IS NULL
+"""
 
 
 def _case_query(*, for_update: bool = False) -> str:
     suffix = " FOR UPDATE OF c" if for_update else ""
     return f"""
-        SELECT c.retention_case_id, c.application_id, c.position_id,
-               c.application_opaque_id, c.policy_version, c.position_closed_at,
-               c.due_date, c.status, c.confirmed_by, c.confirmed_at, c.created_at
+        SELECT {CASE_COLUMNS}
         FROM app_private.application_retention_cases c
+        {CASE_JOINS}
         WHERE c.retention_case_id = :case_id{suffix}
     """
 
@@ -218,7 +266,24 @@ def can_confirm_retention(db, user_id: str, position_id: str) -> bool:
            "permissions": list(RETENTION_CONFIRM_PERMISSIONS)}).first() is not None
 
 
-def _audit(db, *, actor_user_id: str, action: str, case: dict, outcome: str, metadata: dict) -> None:
+def assert_position_still_closed(db, case: dict) -> None:
+    """Refuse retention actions when the closure that started the case is gone.
+
+    A reopened position (and a re-closed one, which has a new ``closed_at``)
+    restarts the retention period, so a case of the old closure must not
+    lead to deletion.
+    """
+    position = db.execute(text("""
+        SELECT status, closed_at FROM app_private.positions WHERE position_id = :position_id
+    """), {"position_id": str(case["position_id"])}).mappings().first() if case.get("position_id") else None
+    if (not position or position["status"] != "CLOSED" or not position["closed_at"]
+            or not case.get("position_closed_at")
+            or _as_utc(position["closed_at"]) != _as_utc(case["position_closed_at"])):
+        raise RetentionError("Vị trí đã được mở lại hoặc đóng lại; chu kỳ retention của case này không còn hiệu lực",
+                             status_code=409)
+
+
+def _audit(db, *, actor_user_id: str | None, action: str, case: dict, outcome: str, metadata: dict) -> None:
     db.execute(text("""
         INSERT INTO app_private.audit_events
             (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
@@ -231,7 +296,13 @@ def _audit(db, *, actor_user_id: str, action: str, case: dict, outcome: str, met
     })
 
 
-def generate_retention_cases(db, *, position_id: str, actor_user_id: str) -> dict:
+def generate_retention_cases(db, *, position_id: str, actor_user_id: str | None) -> dict:
+    """Create PENDING cases for a closed position that is due or nearly due.
+
+    Cases appear ``notice_window_days()`` before the due date so HR sees them
+    in the console while reminders run. Confirmation still waits for the
+    due date. ``actor_user_id`` is None when the scheduled cycle runs it.
+    """
     position = db.execute(text("""
         SELECT position_id, status, closed_at FROM app_private.positions
         WHERE position_id = :position_id FOR UPDATE
@@ -252,7 +323,7 @@ def generate_retention_cases(db, *, position_id: str, actor_user_id: str) -> dic
     months = int(policy["retention_months"] or settings.RETENTION_MONTHS)
     closed_at = _as_utc(position["closed_at"])
     due_date = add_months(closed_at, months)
-    if due_date > _now():
+    if due_date - timedelta(days=notice_window_days()) > _now():
         return {"position_id": position_id, "policy_version": policy["policy_version"],
                 "retention_months": months, "due_date": due_date, "created_count": 0, "cases": []}
 
@@ -262,7 +333,7 @@ def generate_retention_cases(db, *, position_id: str, actor_user_id: str) -> dic
           AND NOT EXISTS (
               SELECT 1 FROM app_private.application_retention_cases c
               WHERE c.application_id = applications.application_id
-                AND c.status IN ('PENDING', 'SCHEDULED_FOR_DELETION', 'DELETED')
+                AND c.status IN ('PENDING', 'SCHEDULED_FOR_DELETION', 'ON_HOLD', 'DELETED')
           )
         ORDER BY created_at, application_id
     """), {"position_id": position_id}).mappings().all()
@@ -278,7 +349,7 @@ def generate_retention_cases(db, *, position_id: str, actor_user_id: str) -> dic
                     :closed_at, :due_date, 'PENDING')
             RETURNING retention_case_id, application_id, position_id, application_opaque_id,
                       policy_version, position_closed_at, due_date, status,
-                      confirmed_by, confirmed_at, created_at
+                      confirmed_by, confirmed_at, created_at, cancel_reason
         """), {
             "application_id": application_id, "position_id": position_id,
             "opaque_id": application_opaque_id(application_id),
@@ -305,8 +376,11 @@ def confirm_retention_case(db, *, case_id: str, actor_user_id: str) -> dict:
         raise RetentionError("Retention case đã được xóa dữ liệu", status_code=409)
     if case["status"] == "CANCELLED":
         raise RetentionError("Retention case đã bị hủy", status_code=409)
+    if case["status"] == "ON_HOLD":
+        raise RetentionError("Retention case đang tạm hoãn xóa; cần gỡ tạm hoãn trước", status_code=409)
     if _as_utc(case["due_date"]) > _now():
         raise RetentionError("Retention case chưa đến hạn xóa", status_code=422)
+    assert_position_still_closed(db, case)
     if case["status"] == "PENDING":
         db.execute(text("""
             UPDATE app_private.application_retention_cases
@@ -352,9 +426,14 @@ def cancel_retention_case(db, *, case_id: str, actor_user_id: str) -> dict:
     if case["status"] != "CANCELLED":
         db.execute(text("""
             UPDATE app_private.application_retention_cases
-            SET status = 'CANCELLED'
+            SET status = 'CANCELLED', cancel_reason = 'MANUAL', cancelled_at = NOW()
             WHERE retention_case_id = :case_id
         """), {"case_id": case_id})
+        db.execute(text("""
+            UPDATE app_private.retention_holds
+            SET released_by = :actor, released_at = NOW(), release_reason = 'MANUAL'
+            WHERE retention_case_id = :case_id AND released_at IS NULL
+        """), {"case_id": case_id, "actor": actor_user_id})
         db.execute(text("""
             UPDATE app_private.deletion_jobs
             SET status = 'FAILED', error = 'CANCELLED_BEFORE_EXECUTION', completed_at = NOW()
@@ -423,6 +502,7 @@ def execute_retention_case(*, case_id: str, actor_user_id: str) -> dict:
             raise RetentionError("Retention case không còn application để xóa", status_code=409)
         if _as_utc(case["due_date"]) > _now():
             raise RetentionError("Retention case chưa đến hạn xóa", status_code=409)
+        assert_position_still_closed(db, case)
         latest_job = db.execute(text("""
             SELECT job_id, status FROM app_private.deletion_jobs
             WHERE retention_case_id = :case_id
@@ -577,3 +657,66 @@ def execute_retention_case(*, case_id: str, actor_user_id: str) -> dict:
         raise RetentionError("Không thể hoàn tất xóa dữ liệu ứng viên", status_code=500) from exc
     finally:
         db.close()
+
+
+def place_hold(db, *, case_id: str, actor_user_id: str, reason_code: str,
+               legal_approval_reference: str, hold_until=None) -> dict:
+    """Retention Exception Hold: keep the data past the due date (F2.07).
+
+    Requires a reason code and the reference of the Legal & Privacy approval
+    document. Any pending deletion job is stopped; releasing the hold returns
+    the case to PENDING, so deletion must be confirmed again.
+    """
+    if reason_code not in HOLD_REASON_CODES:
+        raise RetentionError("Lý do tạm hoãn không hợp lệ", status_code=400)
+    case = get_case(db, case_id, for_update=True)
+    if case["status"] not in ("PENDING", "SCHEDULED_FOR_DELETION"):
+        raise RetentionError("Chỉ tạm hoãn được case đang chờ xác nhận hoặc chờ xóa", status_code=409)
+    if hold_until is not None and hold_until <= _now().date():
+        raise RetentionError("Ngày hết tạm hoãn phải sau hôm nay", status_code=400)
+    db.execute(text("""
+        INSERT INTO app_private.retention_holds
+            (retention_case_id, reason_code, legal_approval_reference, hold_until, created_by)
+        VALUES (:case_id, :reason_code, :reference, :hold_until, :actor)
+    """), {"case_id": case_id, "reason_code": reason_code, "reference": legal_approval_reference,
+           "hold_until": hold_until, "actor": actor_user_id})
+    db.execute(text("""
+        UPDATE app_private.application_retention_cases
+        SET status = 'ON_HOLD', confirmed_by = NULL, confirmed_at = NULL
+        WHERE retention_case_id = :case_id
+    """), {"case_id": case_id})
+    db.execute(text("""
+        UPDATE app_private.deletion_jobs
+        SET status = 'FAILED', error = 'ON_HOLD_BEFORE_EXECUTION', completed_at = NOW()
+        WHERE retention_case_id = :case_id AND status IN ('PENDING', 'PROCESSING')
+    """), {"case_id": case_id})
+    _audit(db, actor_user_id=actor_user_id, action="PLACE_RETENTION_HOLD", case=case,
+           outcome="ON_HOLD", metadata={
+               "application_opaque_id": case.get("application_opaque_id"),
+               "reason_code": reason_code,
+               "legal_approval_reference": legal_approval_reference,
+               "hold_until": hold_until.isoformat() if hold_until else None,
+               "previous_status": case["status"],
+           })
+    return public_case(get_case(db, case_id))
+
+
+def release_hold(db, *, case_id: str, actor_user_id: str) -> dict:
+    case = get_case(db, case_id, for_update=True)
+    if case["status"] != "ON_HOLD":
+        raise RetentionError("Case không ở trạng thái tạm hoãn", status_code=409)
+    db.execute(text("""
+        UPDATE app_private.retention_holds
+        SET released_by = :actor, released_at = NOW(), release_reason = 'MANUAL'
+        WHERE retention_case_id = :case_id AND released_at IS NULL
+    """), {"case_id": case_id, "actor": actor_user_id})
+    db.execute(text("""
+        UPDATE app_private.application_retention_cases SET status = 'PENDING'
+        WHERE retention_case_id = :case_id
+    """), {"case_id": case_id})
+    _audit(db, actor_user_id=actor_user_id, action="RELEASE_RETENTION_HOLD", case=case,
+           outcome="PENDING", metadata={
+               "application_opaque_id": case.get("application_opaque_id"),
+               "reason_code": case.get("hold_reason_code"),
+           })
+    return public_case(get_case(db, case_id))

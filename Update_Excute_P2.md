@@ -4,6 +4,8 @@
 >
 > **Cập nhật 12/11/2026 trên nhánh `khangduong`:** F2.01, phần scorecard F2.02 và F2.03 đã có code từ các commit `96b7587` / `1eeeffd`. Theo yêu cầu mới, F2.04 kiểm định chất lượng và F2.05 cảnh báo trùng chéo vị trí đã bổ sung backend, giao diện, migration `00017` và tests. Đã kiểm tra trên PostgreSQL dùng một lần và browser với dữ liệu tổng hợp; chưa deploy hay áp migration lên Supabase/VPS. Chi tiết tại [PHASE2_04_05.md](doc/PHASE2_04_05.md). Các phần rà soát/plan phía dưới là lịch sử, không thay thế hiện trạng code này. Các gate production và Langfuse staging vẫn riêng biệt.
 >
+> **Cập nhật 12/11/2026 (tiếp):** F2.06 (OCR ảnh JPG/PNG và ảnh nhúng DOCX, tiền xử lý, hàng đợi thủ công cho ảnh DPI thấp/mờ) và F2.07 (nhắc hạn 30/15/7 ngày, tạm hoãn có số văn bản Pháp chế, OTP trước khi xóa vật lý, hủy case khi vị trí mở lại) đã có code, migration `00018` và tests; chu kỳ retention tự động tắt mặc định chờ Pháp chế duyệt. Chi tiết tại [PHASE2_06_07.md](doc/PHASE2_06_07.md). Quyết định "F2.07 loại khỏi vòng này" ở mục 4.1 là của vòng 07/11, nay đã được làm theo yêu cầu mới.
+>
 > **F2.08 SSO: TẠM TREO** theo quyết định của người dùng; không đưa vào plan ở vòng này.
 
 ## 1. Trạng thái tổng quan
@@ -19,6 +21,8 @@
 | F2.03 | Báo cáo vận hành và HR override | ĐÃ CÓ CODE — CHƯA NGHIỆM THU MÔI TRƯỜNG ĐÍCH | `1eeeffd`, `test_hr_analytics.py` |
 | F2.04 | QA sampling, HR Lead review và feedback | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL | Migration `00017`, `test_quality_duplicates.py`, browser smoke; xem tài liệu batch mới |
 | F2.05 | Cảnh báo trùng chéo vị trí, phạm vi quyền và review | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL | Migration `00017`, `test_quality_duplicates.py`, browser smoke; không tự gộp/xóa |
+| F2.06 | OCR ảnh JPG/PNG, ảnh nhúng và bảng trong DOCX, tiền xử lý, cổng DPI/độ nét | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL | Migration `00018`, `test_ocr_images_retention.py`; ngưỡng độ nét là đề xuất, chưa đo > 98% |
+| F2.07 | Nhắc hạn retention, tạm hoãn có văn bản Pháp chế, OTP khi xóa, reset khi mở lại | ĐÃ TRIỂN KHAI, KIỂM THỬ LOCAL — CHỜ PHÁP CHẾ | Migration `00018`, `test_ocr_images_retention.py`; scheduler tắt mặc định |
 | UX-PLAN | Lập plan nâng cấp UI/UX Recruitment Workspace từ review GPT 2026-11-08 | HOÀN THÀNH | `doc/FRONTEND_UI_UX_UPGRADE_PLAN.md` |
 | UX-0…UX-4 | Triển khai Recruitment Workspace: Work Queue, Position Workspace, Applicant/Candidate Review, CV Intake và polish | ĐÃ TRIỂN KHAI Ở CODE — CHỜ CI/STAGING | Backend/frontend/test thay đổi trong batch UI/UX; usability trên staging chưa thực hiện |
 | LF-0 | Lập tài liệu, lộ trình và plan triển khai Langfuse AI Observability | HOÀN THÀNH | `doc/LANGFUSE_IMPLEMENTATION_PLAN.md` |

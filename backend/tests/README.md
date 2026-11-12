@@ -34,7 +34,8 @@ for f in supabase/migrations/00001_initial_schema.sql \
          supabase/migrations/00014_phase2_workflow_core.sql \
          supabase/migrations/00015_local_auth.sql \
          supabase/migrations/00016_hr_override_tracking.sql \
-         supabase/migrations/00017_quality_and_cross_duplicates.sql; do
+         supabase/migrations/00017_quality_and_cross_duplicates.sql \
+         supabase/migrations/00018_ocr_images_and_retention_automation.sql; do
   psql 'postgresql://postgres@127.0.0.1:55432/hra_phase1_test' -v ON_ERROR_STOP=1 -f "$f"
 done
 ```
