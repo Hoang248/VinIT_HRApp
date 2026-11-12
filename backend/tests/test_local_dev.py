@@ -1,6 +1,5 @@
 """Running without Supabase (AUTH_BACKEND=local) and without AI Core (LLM_PROVIDER=mock)."""
 import asyncio
-import json
 import os
 from uuid import uuid4
 
