@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.deterministic_matching import deterministic_matcher
 
 
@@ -344,3 +346,23 @@ def test_explicit_requirement_spec_overrides_text_inference():
     assert spec.kind == "YEARS"
     assert spec.min_years == 5
     assert [term.label for term in spec.terms] == ["python"]
+
+
+@pytest.mark.parametrize("name, description, expected_kind", [
+    ("Communication", "Excellent communication and cross-functional collaboration skills", "SKILL"),
+    ("Python", "Strong Python proficiency with hands-on PyTorch experience", "SKILL"),
+    ("LLM", "3+ years of experience training and fine-tuning large language models", "YEARS"),
+    ("Teamwork", "Fluent collaboration across teams", "SKILL"),
+    ("English", "English proficiency, IELTS 6.5 or above", "LANGUAGE"),
+    ("Degree", "Bachelor degree in Computer Science", "DEGREE"),
+])
+def test_inferred_requirement_kind_always_satisfies_the_stored_spec_schema(name, description, expected_kind):
+    """Regression: 'communication'/'proficiency'/'language models' were inferred as
+    LANGUAGE without any language or level, so the generated rubric could not be
+    serialised (HTTP 500 after the draft was already saved)."""
+    from app.api.criteria import _stored_requirement_spec
+    from app.schemas.criteria import RequirementSpec as RequirementSpecSchema
+    stored = _stored_requirement_spec({"name": name, "description": description, "category": "MUST_HAVE",
+                                       "expected_evidence_keywords": []})
+    assert stored["kind"] == expected_kind
+    RequirementSpecSchema.model_validate(stored)

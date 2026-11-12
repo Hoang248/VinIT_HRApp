@@ -15,7 +15,7 @@ from typing import Any
 
 MOCK_MARK = "[MOCK AI]"
 
-_NICE_HINTS = ("nice to have", "nice-to-have", "preferred", "is a plus", "a plus", "bonus", "desirable",
+_NICE_HINTS = ("nice to have", "nice-to-have", "preferred", "is a plus", "a plus", "is a bonus", "bonus points", "desirable",
                "ưu tiên", "là lợi thế", "điểm cộng")
 _REQUIREMENT_HINTS = ("require", "must", "experience", "years", "skill", "degree", "knowledge", "proficien",
                       "familiar", "ability", "strong", "solid", "background", "certif",
@@ -52,26 +52,59 @@ def _title(sentence: str) -> str:
     return (title[:120] + "…") if len(title) > 120 else title
 
 
+_SKILL_LIST = re.compile(r"^(?:required |key |technical )?skills?\s*:\s*(.+)$", re.IGNORECASE)
+_BENEFIT_HINTS = ("insurance", "annual leave", "salary", "allowance", "team building", "benefit", "13th",
+                  "bảo hiểm", "nghỉ phép", "lương", "phúc lợi")
+
+
+def _skill_criteria(jd: str) -> list[dict]:
+    """An explicit "Skills: A, B, C" line becomes one criterion per skill — the
+    clearest requirement signal a keyword heuristic can use."""
+    skills: list[str] = []
+    for line in jd.splitlines():
+        match = _SKILL_LIST.match(line.strip())
+        if not match:
+            continue
+        for skill in re.split(r"[,;/|]", match.group(1)):
+            skill = skill.strip(" .")
+            if 1 < len(skill) <= 60 and skill.lower() not in {s.lower() for s in skills}:
+                skills.append(skill)
+    return [{
+        "name": skill, "description": f"Demonstrated experience with {skill}.", "category": "MUST_HAVE",
+        "expected_evidence_keywords": [skill], "jd_reference_text": f"Skills: {skill}",
+        "evidence_guidance": f"{MOCK_MARK} Tìm trong CV dự án/kinh nghiệm nhắc tới: {skill}.",
+    } for skill in skills[:8]]
+
+
 def _criteria_from_jd(payload: dict) -> dict:
-    sentences = _sentences(payload.get("untrusted_job_description", ""))
+    jd = payload.get("untrusted_job_description", "")
+    skill_items = _skill_criteria(jd)
+    sentences = [s for s in _sentences(jd) if not _SKILL_LIST.match(s)]
     must, nice = [], []
     for sentence in sentences:
         low = sentence.lower()
+        # Headings ("Your skills & qualifications") and benefit lines are not requirements.
+        if len(sentence.split()) < 6 or any(h in low for h in _BENEFIT_HINTS):
+            continue
         if any(h in low for h in _NICE_HINTS):
             nice.append(sentence)
         elif any(h in low for h in _REQUIREMENT_HINTS):
             must.append(sentence)
-    if not must and sentences:
+    if not must and not skill_items and sentences:
         must = sentences[:1]
-    must, nice = must[:8], nice[:5]
+    must, nice = must[:max(0, 8 - len(skill_items))], nice[:5]
     criteria = []
-    for group, items, total in (("MUST_HAVE", must, 70.0 if nice else 100.0), ("NICE_TO_HAVE", nice, 30.0)):
+    total_must = 70.0 if nice else 100.0
+    for item in skill_items:
+        criteria.append({**item, "weight": round(total_must / (len(skill_items) + len(must)), 2)})
+    for group, items, total, count in (("MUST_HAVE", must, total_must, len(skill_items) + len(must)),
+                                       ("NICE_TO_HAVE", nice, 30.0, len(nice))):
         for sentence in items:
             criteria.append({
                 "name": _title(sentence),
                 "description": sentence[:4000],
                 "category": group,
-                "weight": round(total / len(items), 2),
+                "weight": round(total / count, 2),
                 "expected_evidence_keywords": _keywords(sentence) or _keywords(_title(sentence)),
                 "jd_reference_text": sentence[:4000],
                 "evidence_guidance": f"{MOCK_MARK} Tìm trong CV các dự án/kinh nghiệm nhắc tới: {', '.join(_keywords(sentence)) or 'nội dung tiêu chí'}.",

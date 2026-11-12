@@ -653,11 +653,17 @@ class DeterministicMatchingEngine:
                            "communication", "tieng", "ngoai ngu", "giao tiep")
         ) or bool(required_languages and qualitative_rank is not None)
 
-        if has_language:
+        # An inferred kind must carry the threshold its kind needs, otherwise the
+        # stored spec fails RequirementSpec validation and the rubric cannot be
+        # returned. Words such as "communication", "Python proficiency" or
+        # "large language models" are not a foreign-language requirement unless
+        # a natural language or a test level is actually named.
+        language_is_measurable = bool(required_languages or ielts or toeic or cefr)
+        if has_language and language_is_measurable:
             kind = "LANGUAGE"
         elif has_certification:
             kind = "CERTIFICATION"
-        elif has_degree:
+        elif has_degree and required_degree is not None:
             kind = "DEGREE"
         elif min_years is not None:
             kind = "YEARS"
