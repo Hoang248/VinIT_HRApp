@@ -131,6 +131,8 @@ class ApplicationStatusUpdate(BaseSchema):
     new_status: ApplicationStatus
     reason: Optional[str] = Field(default=None, max_length=1000)
     note: Optional[str] = Field(default=None, max_length=2000)
+    # F2.03: required when the decision contradicts the AI conclusion.
+    override_reason_code: Optional[str] = Field(default=None, max_length=50)
 
 
 class ApplicationWithAssessment(Application):

@@ -183,8 +183,11 @@ export const applicationsApi = {
   addPrivateNote: (id: string, content: string) => apiClient.post(`/applications/${id}/private-notes`, { content }),
   getStatusEvents: (id: string) => apiClient.get(`/applications/${id}/status-events`),
   reprocess: (id: string) => apiClient.post(`/applications/${id}/reprocess`),
-  updateStatus: (id: string, newStatus: string, reason?: string, note?: string) =>
-    apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note }),
+  updateStatus: (id: string, newStatus: string, reason?: string, note?: string, overrideReasonCode?: string) =>
+    apiClient.patch(`/applications/${id}/status`, { new_status: newStatus, reason, note, override_reason_code: overrideReasonCode }),
+  // F2.03: does this decision contradict the AI conclusion (and so need a reason)?
+  checkOverride: (id: string, newStatus: string) =>
+    apiClient.get(`/applications/${id}/override-check`, { params: { new_status: newStatus } }),
   getCvUrl: (id: string) => apiClient.get(`/applications/${id}/cv-download-url`),
   getCvBlob: (id: string) => apiClient.get(`/applications/${id}/cv-file`, { responseType: 'blob' }),
 };
@@ -261,4 +264,10 @@ export const auditApi = {
   list: (params: { action_type?: string; actor_user_id?: string; position_id?: string; date_from?: string; date_to?: string; page?: number; page_size?: number }) =>
     apiClient.get('/admin/audit/events', { params }),
   verify: () => apiClient.get('/admin/audit/verify'),
+};
+
+// F2.03 — operational analytics (pilot report).
+export const analyticsApi = {
+  operations: (params: { date_from?: string; date_to?: string; position_id?: string; department_id?: string }) =>
+    apiClient.get('/analytics/operations', { params }),
 };

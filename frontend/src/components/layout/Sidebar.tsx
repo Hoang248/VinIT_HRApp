@@ -13,6 +13,7 @@ import ApartmentIcon from '@mui/icons-material/Apartment';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import HistoryIcon from '@mui/icons-material/History';
+import InsightsIcon from '@mui/icons-material/Insights';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 
@@ -25,6 +26,7 @@ const menuGroups = [
       { text: 'Vị trí tuyển dụng', icon: <WorkIcon />, href: '/positions' },
       { text: 'Shortlist & phản hồi', icon: <PeopleIcon />, href: '/shortlist' },
       { text: 'Thư viện rubric', icon: <LibraryBooksIcon />, href: '/rubric-library', hrOnly: true },
+      { text: 'Báo cáo vận hành', icon: <InsightsIcon />, href: '/reports', hrOnly: true },
       { text: 'Lưu trữ & xóa dữ liệu', icon: <DeleteSweepIcon />, href: '/retention', hrOnly: true },
     ],
   },

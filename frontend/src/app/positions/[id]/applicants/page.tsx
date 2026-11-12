@@ -60,6 +60,7 @@ import Link from 'next/link';
 import { assessmentsApi, operationsApi, applicationsApi, shortlistApi } from '@/lib/api';
 import StatusBadge from '@/components/common/StatusBadge';
 import QueueFilterChips from '@/components/applicants/QueueFilterChips';
+import { useOverrideGate } from '@/components/applicants/OverrideReasonDialog';
 import OperationProgressPanel from '@/components/workflow/OperationProgressPanel';
 import {
   applicantQueueCounts,
@@ -91,6 +92,7 @@ export default function ApplicantsRankingPage() {
   const params = useParams();
   const positionId = params.id as string;
 
+  const overrideGate = useOverrideGate();
   const [rankingItems, setRankingItems] = useState<RankingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [assessing, setAssessing] = useState(false);
@@ -365,7 +367,9 @@ export default function ApplicantsRankingPage() {
   const handleToggleShortlist = async (appId: string, currentlyShortlisted: boolean) => {
     const newStatus = currentlyShortlisted ? 'IN_REVIEW' : 'SHORTLIST';
     try {
-      await applicationsApi.updateStatus(appId, newStatus);
+      const decision = await overrideGate.confirm(appId, newStatus);
+      if (!decision) return;
+      await applicationsApi.updateStatus(appId, newStatus, undefined, decision.overrideNote, decision.overrideReasonCode);
       await loadRanking();
     } catch (err: any) {
       setError(err.response?.data?.detail || t("Không thể cập nhật trạng thái"));
@@ -878,6 +882,7 @@ export default function ApplicantsRankingPage() {
         </DialogActions>
       </Dialog>
       <Snackbar open={!!notice} autoHideDuration={5000} onClose={() => setNotice(null)} message={notice ? t(notice) : ""} />
+      {overrideGate.dialog}
     </Box>
   );
 }

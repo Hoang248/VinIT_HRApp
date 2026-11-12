@@ -350,7 +350,10 @@ def test_upload_worker_runs_scoped_pipeline_with_stubbed_ai(client, seed, tmp_pa
     assessment_id = detail.json()["latest_assessment"]["assessment_id"]
     assert client.get(f"/v1/assessments/{assessment_id}", headers=headers(seed["hr"])).status_code == 200
     for state in ("IN_REVIEW", "SHORTLIST"):
-        assert client.patch(f"/v1/applications/{uploaded_app}/status", headers=headers(seed["hr"]), json={"new_status": state}).status_code == 200
+        # F2.03: shortlisting a candidate the AI did not mark MEETS_MANDATORY is an
+        # override and needs a reason code; the code is ignored otherwise.
+        assert client.patch(f"/v1/applications/{uploaded_app}/status", headers=headers(seed["hr"]),
+                            json={"new_status": state, "override_reason_code": "IMPLICIT_EVIDENCE"}).status_code == 200
     share_payload = {"position_id": seed["pos"], "shared_with_user_id": seed["hm"], "application_ids": [uploaded_app], "allow_cv_view": False}
     shared = client.post("/v1/shortlist/share", headers=headers(seed["hr"]), json=share_payload).json()["share_id"]
     summary = client.get(f"/v1/applications/{uploaded_app}", headers=headers(seed["hm"]))

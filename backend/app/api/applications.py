@@ -8,6 +8,7 @@ from app.core.permissions import (
 )
 from app.services.ai_config import sanitize_provider_snapshot
 from app.core.config import settings
+from app.services.override_rules import REASON_CODES, classify_override, override_reason_error
 from app.core.logging import get_logger
 from app.core.exceptions import (
     FileValidationError,
@@ -468,6 +469,51 @@ async def list_application_status_events(application_id: UUID, current_user: dic
         db.close()
 
 
+def _current_ai_conclusion(db, app_id: str) -> dict:
+    """The AI conclusion HR sees now: the latest completed assessment for the
+    current profile under the approved criteria of the latest JD."""
+    row = db.execute(text("""
+        SELECT ar.assessment_id, ar.matching_status, ar.matching_score, ar.evidence_coverage
+        FROM app_private.assessment_runs ar
+        JOIN app_private.applications a ON a.application_id = ar.application_id
+        WHERE ar.application_id = :app_id AND ar.status = 'COMPLETED'
+          AND ar.profile_version_id = (SELECT profile_version_id FROM app_private.profile_versions
+              WHERE application_id = a.application_id AND status = 'COMPLETED' ORDER BY version_number DESC LIMIT 1)
+          AND ar.criteria_version_id = (SELECT c.criteria_version_id FROM app_private.criteria_versions c
+              WHERE c.position_id = a.position_id AND c.status = 'APPROVED'
+                AND c.jd_version_id = (SELECT jd_version_id FROM app_private.jd_versions
+                    WHERE position_id = a.position_id ORDER BY version_number DESC LIMIT 1)
+              ORDER BY c.version_number DESC LIMIT 1)
+        ORDER BY ar.created_at DESC LIMIT 1
+    """), {"app_id": app_id}).mappings().first()
+    return dict(row) if row else {"assessment_id": None, "matching_status": None, "matching_score": None,
+                                  "evidence_coverage": None}
+
+
+@router.get("/{application_id}/override-check")
+async def check_status_override(application_id: UUID, new_status: ApplicationStatus,
+                                current_user: dict = Depends(get_current_user)):
+    """F2.03: tell the UI whether a status change would contradict the AI, so
+    it can ask for a reason before submitting."""
+    app_id = str(application_id)
+    db = SessionLocal()
+    try:
+        position_id = db.execute(text("SELECT position_id FROM app_private.applications WHERE application_id = :id"),
+                                 {"id": app_id}).scalar_one_or_none()
+        if not position_id:
+            raise NotFoundError("Application")
+        if not can_update_application_status(current_user["user_id"], str(position_id)):
+            raise HTTPException(status_code=403, detail="Chỉ HR phụ trách mới được cập nhật trạng thái hồ sơ")
+        ai = _current_ai_conclusion(db, app_id)
+        direction = classify_override(new_status.value, ai["matching_status"])
+        return {"is_override": direction is not None, "direction": direction,
+                "ai_matching_status": ai["matching_status"], "ai_matching_score": ai["matching_score"],
+                "ai_evidence_coverage": ai["evidence_coverage"],
+                "reason_codes": [{"code": code, "label": label} for code, label in REASON_CODES.items()]}
+    finally:
+        db.close()
+
+
 @router.patch("/{application_id}/status", response_model=Application)
 async def update_application_status(
     application_id: UUID,
@@ -493,20 +539,37 @@ async def update_application_status(
         note = (update.note or "").strip() or None
         if new_status in (ApplicationStatus.REJECTED_SCREENING, ApplicationStatus.REJECTED_INTERVIEW) and not reason:
             raise HTTPException(status_code=400, detail="Vui lòng nhập lý do loại hồ sơ")
+        # F2.03: snapshot the AI conclusion at decision time; an override needs a reason code.
+        ai = _current_ai_conclusion(db, app_id)
+        direction = classify_override(new_status.value, ai["matching_status"])
+        override_reason = (update.override_reason_code or "").strip().upper() or None
+        problem = override_reason_error(direction, override_reason, note)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+        if direction is None:
+            override_reason = None
         changed = db.execute(text("""
             UPDATE app_private.applications SET application_status = :new_status, updated_at = NOW()
             WHERE application_id = :app_id RETURNING *
         """), {"new_status": new_status.value, "app_id": app_id}).mappings().one()
         db.execute(text("""
             INSERT INTO app_private.application_status_events
-                (application_id, previous_status, new_status, changed_by, reason_code, note)
-            VALUES (:app_id, :previous, :new_status, :user_id, :reason, :note)
+                (application_id, previous_status, new_status, changed_by, reason_code, note,
+                 ai_assessment_id, ai_matching_status, ai_matching_score, ai_evidence_coverage,
+                 override_direction, override_reason_code)
+            VALUES (:app_id, :previous, :new_status, :user_id, :reason, :note,
+                    :ai_assessment_id, :ai_status, :ai_score, :ai_coverage, :direction, :override_reason)
         """), {"app_id": app_id, "previous": current_status.value, "new_status": new_status.value,
-                "user_id": user_id, "reason": reason, "note": note})
+                "user_id": user_id, "reason": reason, "note": note,
+                "ai_assessment_id": str(ai["assessment_id"]) if ai["assessment_id"] else None,
+                "ai_status": ai["matching_status"], "ai_score": ai["matching_score"],
+                "ai_coverage": ai["evidence_coverage"], "direction": direction, "override_reason": override_reason})
         db.execute(text("""
-            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome)
-            VALUES (:user_id, 'UPDATE_APPLICATION_STATUS', 'APPLICATION', :app_id, :position_id, :outcome)
-        """), {"user_id": user_id, "app_id": app_id, "position_id": str(app["position_id"]), "outcome": new_status.value})
+            INSERT INTO app_private.audit_events (actor_user_id, action_type, object_type, object_id, position_id, outcome, metadata)
+            VALUES (:user_id, 'UPDATE_APPLICATION_STATUS', 'APPLICATION', :app_id, :position_id, :outcome, CAST(:metadata AS jsonb))
+        """), {"user_id": user_id, "app_id": app_id, "position_id": str(app["position_id"]), "outcome": new_status.value,
+                "metadata": json.dumps({"override_direction": direction, "override_reason_code": override_reason})
+                if direction else None})
         db.commit()
         return dict(changed)
     except Exception:

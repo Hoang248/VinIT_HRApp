@@ -42,6 +42,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { applicationsApi, operationsApi } from '@/lib/api';
+import { useOverrideGate } from '@/components/applicants/OverrideReasonDialog';
 import StatusBadge from '@/components/common/StatusBadge';
 import StickyActionBar from '@/components/common/StickyActionBar';
 import CandidateProfilePanel from '@/components/candidates/CandidateProfilePanel';
@@ -68,6 +69,7 @@ export default function ApplicantDetailPage() {
   const positionId = params.id as string;
   const applicantId = params.applicantId as string;
 
+  const overrideGate = useOverrideGate();
   const [application, setApplication] = useState<ApplicationWithAssessment | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +157,10 @@ export default function ApplicantDetailPage() {
     if (rejected && !statusReason.trim()) { setStatusError(t("Vui lòng nhập lý do loại hồ sơ.")); return; }
     try {
       setStatusSubmitting(true); setStatusError(null);
-      await applicationsApi.updateStatus(applicantId, newStatus, statusReason.trim() || undefined, statusNote.trim() || undefined);
+      const decision = await overrideGate.confirm(applicantId, newStatus);
+      if (!decision) return;
+      const note = [statusNote.trim(), decision.overrideNote].filter(Boolean).join('\n') || undefined;
+      await applicationsApi.updateStatus(applicantId, newStatus, statusReason.trim() || undefined, note, decision.overrideReasonCode);
       setStatusDialogOpen(false); setSuccess(true);
       await loadData();
     } catch (err: any) {
@@ -530,6 +535,7 @@ export default function ApplicantDetailPage() {
         message={t("Đã cập nhật trạng thái hồ sơ")} />
       <Snackbar open={reprocessNotice} autoHideDuration={4000} onClose={() => setReprocessNotice(false)}
         message={t("Đã đưa CV vào hàng đợi xử lý lại.")} />
+      {overrideGate.dialog}
     </Box>
   );
 }
