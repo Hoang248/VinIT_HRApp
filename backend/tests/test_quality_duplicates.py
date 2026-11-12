@@ -48,6 +48,16 @@ def test_samples_include_all_risks_and_freeze_random_selection():
     assert risk_reasons(0.64, 2) == []
 
 
+def test_borderline_band_follows_configured_coverage_threshold(monkeypatch):
+    from app.services.quality import settings
+    monkeypatch.setattr(settings, 'MIN_EVIDENCE_COVERAGE', 0.7)
+    assert risk_reasons(0.70, 0) == risk_reasons(0.65, 0) == risk_reasons(0.75, 0) == ['BORDERLINE_COVERAGE']
+    assert risk_reasons(0.76, 0) == []
+    monkeypatch.setattr(settings, 'MIN_EVIDENCE_COVERAGE', 0.6)
+    assert risk_reasons(0.60, 0) == risk_reasons(0.55, 0) == ['BORDERLINE_COVERAGE']
+    assert risk_reasons(0.70, 0) == []
+
+
 def test_ocr_confidence_discards_sentinels_and_does_not_store_text():
     assert ocr_mean_confidence([{'ocr_confidence': {'conf': ['-1','80','100','nan',None], 'text': ['private']}}]) == 90
     assert ocr_mean_confidence([{'content': 'native text'}]) is None
@@ -219,3 +229,26 @@ def test_new_tables_are_not_browser_readable():
         for table in ('quality_inspections','quality_flags','quality_inspection_events','cross_position_duplicates'):
             for role in ('anon','authenticated'):
                 assert conn.execute(text("SELECT has_table_privilege(:r,:t,'SELECT')"), {'r':role,'t':'app_private.'+table}).scalar_one() is False
+
+
+@integration
+def test_sampling_uses_only_each_applications_latest_completed_assessment(client, seed):
+    from app.services.quality import generate_samples
+    application_id = _assessed_application(seed, 'MEETS_MANDATORY', 'Synthetic reassessed QA')
+    with engine.begin() as conn:
+        old = conn.execute(text('SELECT assessment_id FROM app_private.assessment_runs WHERE application_id=:a'),
+                           {'a': application_id}).scalar_one()
+        # The old run sits in the borderline band; the reassessment does not.
+        conn.execute(text("UPDATE app_private.assessment_runs SET evidence_coverage=0.70,completed_at=NOW()-INTERVAL '1 day' WHERE assessment_id=:a"),
+                     {'a': old})
+        new = conn.execute(text("""
+            INSERT INTO app_private.assessment_runs(position_id,application_id,jd_version_id,criteria_version_id,profile_version_id,
+                                                   policy_version,status,matching_status,matching_score,evidence_coverage,completed_at)
+            SELECT position_id,application_id,jd_version_id,criteria_version_id,profile_version_id,
+                   policy_version,'COMPLETED','MEETS_MANDATORY',90,0.95,NOW()
+            FROM app_private.assessment_runs WHERE assessment_id=:a RETURNING assessment_id
+        """), {'a': old}).scalar_one()
+        assert generate_samples(conn, seed['pos']) == 1
+        cases = conn.execute(text('SELECT assessment_id,reasons FROM app_private.quality_inspections WHERE position_id=:p'),
+                             {'p': seed['pos']}).mappings().all()
+    assert [(str(c['assessment_id']), c['reasons']) for c in cases] == [(str(new), ['RANDOM_SAMPLE'])]

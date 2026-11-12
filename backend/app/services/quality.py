@@ -30,11 +30,16 @@ def ocr_mean_confidence(pages: list[dict]) -> float | None:
     return round(sum(values) / len(values), 2) if values else None
 
 
+BORDERLINE_COVERAGE_MARGIN = 0.05  # "sát ngưỡng": within ±5 points of the configured threshold
+
+
 def risk_reasons(coverage: float | None, mandatory_no_match: int) -> list[str]:
     reasons = []
     if mandatory_no_match == 1:
         reasons.append('SINGLE_MANDATORY_MISS')
-    if coverage is not None and 0.65 <= float(coverage) <= 0.75:
+    # Follow the threshold matching actually uses, so changing the config moves the band too.
+    threshold = settings.MIN_EVIDENCE_COVERAGE
+    if coverage is not None and abs(float(coverage) - threshold) <= BORDERLINE_COVERAGE_MARGIN + 1e-9:
         reasons.append('BORDERLINE_COVERAGE')
     return reasons
 
@@ -53,16 +58,27 @@ def select_samples(rows: list[dict], selected_random: set[str], position_id: str
 def generate_samples(db, position_id: str) -> int:
     # Serialize sample selection across concurrent workers and manual scans.
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {'key': f'quality:{position_id}'})
+    # Reassessment adds a new run and leaves the old one COMPLETED; only each
+    # application's latest completed run is current, so only those are sampled.
     rows = [dict(row) for row in db.execute(text("""
-        SELECT a.assessment_id,a.evidence_coverage,
+        WITH latest AS (
+            SELECT DISTINCT ON (application_id) assessment_id,evidence_coverage
+            FROM app_private.assessment_runs
+            WHERE position_id=:p AND status='COMPLETED'
+            ORDER BY application_id,completed_at DESC NULLS LAST,created_at DESC,assessment_id DESC
+        )
+        SELECT l.assessment_id,l.evidence_coverage,
           (SELECT COUNT(*) FROM app_private.criterion_assessment_results r
            JOIN app_private.criteria_items c ON c.criterion_id=r.criterion_id
-           WHERE r.assessment_id=a.assessment_id AND c.category='MUST_HAVE' AND r.outcome='NO_MATCH') AS mandatory_misses
-        FROM app_private.assessment_runs a WHERE a.position_id=:p AND a.status='COMPLETED'
+           WHERE r.assessment_id=l.assessment_id AND c.category='MUST_HAVE' AND r.outcome='NO_MATCH') AS mandatory_misses
+        FROM latest l
     """), {'p': position_id}).mappings()]
     existing = {str(r['assessment_id']): r['reasons'] for r in db.execute(text(
         'SELECT assessment_id,reasons FROM app_private.quality_inspections WHERE position_id=:p'), {'p': position_id}).mappings()}
-    random = {key for key, reasons in existing.items() if 'RANDOM_SAMPLE' in reasons}
+    current = {str(r['assessment_id']) for r in rows}
+    # Cases on superseded runs stay in the queue (never removed) but no longer
+    # count towards the random quota of the current cohort.
+    random = {key for key, reasons in existing.items() if 'RANDOM_SAMPLE' in reasons and key in current}
     created = 0
     for assessment_id, reasons in select_samples(rows, random, position_id).items():
         if assessment_id in existing:
